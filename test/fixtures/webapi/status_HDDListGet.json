@@ -1,0 +1,12 @@
+{
+ "errorcode": 0,
+ "number": 1,
+ "HDD": [
+  {
+   "id": 0,
+   "internalFlag": 0,
+   "mountStatus": 1,
+   "registerFlag": 1
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+{
+ "errorcode": 0,
+ "client": {
+  "ipv4Addr": "192.0.2.1",
+  "macAddr": "00:11:22:33:44:55",
+  "registerFlag": 1,
+  "name": "test-client",
+  "userAgent": "tmhb-test",
+  "cn": "",
+  "lastAccessDate": "2026-01-01T00:00:00+09:00"
+ }
+}

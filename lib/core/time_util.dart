@@ -20,14 +20,15 @@ DateTime? parseNasneDateTime(String? value) {
 
 /// Formats [value] the way the device expects on input:
 /// `2026-11-18T04:00:00+09:00` (colon offset form, plan 11.7).
+///
+/// The nasne is a Japan-only product and every measured timestamp
+/// uses the +0900 offset, so the wall clock is rendered in JST
+/// (UTC+9, no DST) regardless of the runtime's local zone: a
+/// reservation means "this wall time at the device".
 String formatNasneDateTime(DateTime value) {
   String two(int v) => v.toString().padLeft(2, '0');
-  final local = value.toLocal();
-  final offset = value.timeZoneOffset;
-  final sign = offset.isNegative ? '-' : '+';
-  final abs = offset.abs();
-  final base = '${local.year.toString().padLeft(4, '0')}-${two(local.month)}-'
-      '${two(local.day)}T${two(local.hour)}:${two(local.minute)}:'
-      '${two(local.second)}';
-  return '$base$sign${two(abs.inHours)}:${two(abs.inMinutes % 60)}';
+  final jst = value.toUtc().add(const Duration(hours: 9));
+  return '${jst.year.toString().padLeft(4, '0')}-${two(jst.month)}-'
+      '${two(jst.day)}T${two(jst.hour)}:${two(jst.minute)}:'
+      '${two(jst.second)}+09:00';
 }

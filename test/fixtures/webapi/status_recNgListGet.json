@@ -1,0 +1,96 @@
+{
+ "errorcode": 0,
+ "number": 3,
+ "item": [
+  {
+   "id": "10000000000000000009",
+   "title": "テスト番組タイトル",
+   "scheduledStartDateTime": "2026-11-11T20:30:00+09:00",
+   "scheduledDuration": 900,
+   "scheduledConditionID": "1",
+   "scheduledChannelID": 56840,
+   "broadcastingType": 2,
+   "desiredMatchingID": {
+    "networkId": 30849,
+    "transportStreamId": 30849,
+    "serviceId": 56840,
+    "eventId": 12500
+   },
+   "desiredQualityMode": 100,
+   "genreIdNum": 3,
+   "genreId": [
+    {
+     "id": 9215,
+     "type": 2
+    },
+    {
+     "id": 33791,
+     "type": 2
+    },
+    {
+     "id": 44031,
+     "type": 2
+    }
+   ],
+   "reservationCreatorID": 2000,
+   "recordDestinationID": 1,
+   "ngID": 3
+  },
+  {
+   "id": "10000000000000000009",
+   "title": "テスト番組タイトル",
+   "scheduledStartDateTime": "2026-11-11T20:45:00+09:00",
+   "scheduledDuration": 900,
+   "scheduledConditionID": "1",
+   "scheduledChannelID": 56840,
+   "broadcastingType": 2,
+   "desiredMatchingID": {
+    "networkId": 30849,
+    "transportStreamId": 30849,
+    "serviceId": 56840,
+    "eventId": 12501
+   },
+   "desiredQualityMode": 101,
+   "genreIdNum": 2,
+   "genreId": [
+    {
+     "id": 255,
+     "type": 2
+    },
+    {
+     "id": 46335,
+     "type": 2
+    }
+   ],
+   "reservationCreatorID": 2000,
+   "recordDestinationID": 1,
+   "ngID": 3
+  },
+  {
+   "id": "10000000000000000009",
+   "title": "テスト番組タイトル",
+   "scheduledStartDateTime": "2026-11-15T18:45:00+09:00",
+   "scheduledDuration": 900,
+   "scheduledConditionID": "1",
+   "scheduledChannelID": 56832,
+   "broadcastingType": 2,
+   "desiredMatchingID": {
+    "networkId": 30848,
+    "transportStreamId": 30848,
+    "serviceId": 56832,
+    "eventId": 47102
+   },
+   "desiredQualityMode": 100,
+   "genreIdNum": 1,
+   "genreId": [
+    {
+     "id": 2559,
+     "type": 2
+    }
+   ],
+   "reservationCreatorID": 2000,
+   "recordDestinationID": 1,
+   "ngID": 3
+  }
+ ]
+}

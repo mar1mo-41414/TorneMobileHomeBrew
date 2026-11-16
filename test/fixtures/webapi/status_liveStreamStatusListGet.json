@@ -1,0 +1,96 @@
+{
+ "errorcode": 0,
+ "powerStatus": {
+  "status": 2
+ },
+ "tuningStatus": {
+  "status": 0,
+  "networkId": 0,
+  "transportStreamId": 0,
+  "serviceId": 0
+ },
+ "BCASCardInsertStatus": {
+  "status": 1
+ },
+ "externalHDDStatus": {
+  "generation": 0,
+  "status": 0
+ },
+ "tvTimerInfoStatus": {
+  "nowId": "",
+  "nextId": ""
+ },
+ "dtvChannelList": {
+  "generation": 1
+ },
+ "bsChannelList": {
+  "generation": 1
+ },
+ "csChannelList": {
+  "generation": 1
+ },
+ "tvTimerList": {
+  "generation": 1
+ },
+ "recContentsList": {
+  "generation": 1
+ },
+ "EMMMail": {
+  "generation": 0
+ },
+ "boardListCS1": {
+  "generation": 0
+ },
+ "boardListCS2": {
+  "generation": 0
+ },
+ "boardMessageCS1": {
+  "generation": 0
+ },
+ "boardMessageCS2": {
+  "generation": 0
+ },
+ "recNgList": {
+  "generation": 1
+ },
+ "dtvChannelLogo": {
+  "generation": 1
+ },
+ "bsChannelLogo": {
+  "generation": 1
+ },
+ "csChannelLogo": {
+  "generation": 1
+ },
+ "dmsStreamStopReasonList": {
+  "generation": 0
+ },
+ "tsSignalStatus": {
+  "status": 0
+ },
+ "tunerLockStatus": {
+  "status": 0
+ },
+ "signalStrengthStatus": {
+  "status": 0
+ },
+ "ECMLastResponseCode": {
+  "returnCode": 0,
+  "sw": 0
+ },
+ "CAMsg": {
+  "generation": 0
+ },
+ "EMMMsg": {
+  "generation": 0
+ },
+ "EIT_PF": {
+  "generation": 0
+ },
+ "parentalRate": {
+  "rate": 0
+ },
+ "liveStreamingStopReason": {
+  "reason": 0
+ }
+}

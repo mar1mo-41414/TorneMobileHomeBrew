@@ -1,0 +1,17 @@
+{
+ "errorcode": 0,
+ "HDD": {
+  "id": 0,
+  "internalFlag": 0,
+  "mountStatus": 1,
+  "registerFlag": 1,
+  "format": "xfs",
+  "name": "hdd0",
+  "vendorID": "ATA",
+  "productID": "TOSHIBA MQ01ABD0",
+  "serialNumber": "SERIAL0000",
+  "usedVolumeSize": 2397589504,
+  "freeVolumeSize": 496123510784,
+  "totalVolumeSize": 498521100288
+ }
+}

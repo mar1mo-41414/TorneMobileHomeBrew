@@ -1,0 +1,10 @@
+{
+ "errorcode": 0,
+ "enableDHCPFlag": 1,
+ "ipv4Addr": "192.0.2.1",
+ "subnetMask": "255.255.255.0",
+ "primaryDNS": "192.0.2.254",
+ "secondaryDNS": "192.0.2.254",
+ "gateway": "192.0.2.254",
+ "macAddr": "00:11:22:33:44:55"
+}
