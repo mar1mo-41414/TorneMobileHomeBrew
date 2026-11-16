@@ -83,31 +83,67 @@ Uint8List _event({
   return out.toBytes();
 }
 
-Uint8List _block(List<int> eventsBytes) {
+/// CRC-32/MPEG-2, written independently of the parser's copy so
+/// the fixture builder and the parser cross-check each other.
+int _crc32Mpeg(List<int> data) {
+  var crc = 0xffffffff;
+  for (final byte in data) {
+    crc ^= byte << 24;
+    for (var bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x80000000) != 0
+          ? ((crc << 1) ^ 0x04c11db7) & 0xffffffff
+          : (crc << 1) & 0xffffffff;
+    }
+  }
+  return crc;
+}
+
+/// One EIT section for the synthetic channel, in the real layout
+/// (plan 22): 14-byte header, events, trailing CRC-32/MPEG-2.
+Uint8List _section({
+  required int tableId,
+  required int sectionNumber,
+  required List<int> eventsBytes,
+}) {
   final out = BytesBuilder();
-  out.add([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]); // +0..6 filler
-  out.add([0x33, 0x33]); // +7 serviceId
-  out.add([0xe1]); // +9 flags
-  out.add([0x00, 0x00]); // +10
-  out.add([0x11, 0x11]); // +12 networkId
-  out.add([0x22, 0x22]); // +14 transportStreamId
-  out.add([0x00, 0x00]); // +16
+  final sectionLength = 11 + eventsBytes.length + 4;
+  out.add([tableId]);
+  out.add([0xb0 | ((sectionLength >> 8) & 0x0f), sectionLength & 0xff]);
+  out.add([0x33, 0x33]); // +3 serviceId
+  out.add([0xc1]); // +5 version 0, current
+  out.add([sectionNumber, 0x3f]); // +6 section_number, last
+  out.add([0x22, 0x22]); // +8 transportStreamId
+  out.add([0x11, 0x11]); // +10 originalNetworkId
+  out.add([0x3f, 0x50]); // +12 segment last, last table id
   out.add(eventsBytes);
+  final crc = _crc32Mpeg(out.toBytes());
+  out.add([(crc >> 24) & 0xff, (crc >> 16) & 0xff, (crc >> 8) & 0xff, crc & 0xff]);
   return out.toBytes();
 }
 
-/// One service block with two events on 2026-11-16 (MJD 61360):
+/// Two events on 2026-11-16 (MJD 61360), carried the ARIB way:
+/// a basic section (0x50) with the 0x4D/0x54 side and an extended
+/// section (0x58) with the 0x4E side, listing the SAME events —
 /// a titled 09:55-10:25 event and a no-information 10:25 event.
+/// The parser must merge the copies into two guide events.
 Uint8List syntheticPlaintext() {
-  final ev1 = _event(
+  final ev1Basic = _event(
     id: 0x101,
     mjd: 61360,
     timeBcd: [0x09, 0x55, 0x00],
     durationBcd: [0x00, 0x30, 0x00],
     descriptors: [
       ..._shortEvent(_titleTv, const []),
-      ..._extendedEvent(_labelContent, _valueContent),
       ..._descriptor(0x54, [0x70]),
+    ],
+  );
+  final ev1Extended = _event(
+    id: 0x101,
+    mjd: 61360,
+    timeBcd: [0x09, 0x55, 0x00],
+    durationBcd: [0x00, 0x30, 0x00],
+    descriptors: [
+      ..._extendedEvent(_labelContent, _valueContent),
     ],
   );
   final ev2 = _event(
@@ -116,7 +152,14 @@ Uint8List syntheticPlaintext() {
     timeBcd: [0x10, 0x25, 0x00],
     durationBcd: [0x00, 0x05, 0x00],
   );
-  return _block([...ev1, ...ev2]);
+  return Uint8List.fromList([
+    ..._section(
+        tableId: 0x50, sectionNumber: 32, eventsBytes: [...ev1Basic, ...ev2]),
+    ..._section(
+        tableId: 0x58,
+        sectionNumber: 32,
+        eventsBytes: [...ev1Extended, ...ev2]),
+  ]);
 }
 
 /// Wraps a plaintext the way the device does: zlib, then XOR.
@@ -214,8 +257,14 @@ void main() {
     });
   });
 
+  group('CRC-32/MPEG-2', () {
+    test('known-answer vector', () {
+      expect(crc32Mpeg('123456789'.codeUnits), 0x0376e6e7);
+    });
+  });
+
   group('EPG plaintext parser', () {
-    test('parses blocks, events, descriptors and JST times', () {
+    test('parses sections, merges basic/extended copies, JST times', () {
       final guide = parseEpgGuide(
         syntheticPlaintext(),
         const [_channel],
@@ -238,6 +287,41 @@ void main() {
       expect(events[1].title, isNull);
       expect(guide.eventCount, 2);
       expect(guide.from, DateTime.utc(2026, 11, 16, 0, 55));
+    });
+
+    test('a section with a broken CRC is ignored', () {
+      final extra = _event(
+        id: 0x103,
+        mjd: 61360,
+        timeBcd: [0x11, 0x00, 0x00],
+        durationBcd: [0x00, 0x10, 0x00],
+        descriptors: [..._shortEvent(_titleTv, const [])],
+      );
+      final corrupt = _section(
+          tableId: 0x50, sectionNumber: 40, eventsBytes: extra);
+      corrupt[20] ^= 0xff; // damage an event byte; the CRC no longer matches
+      final plain = Uint8List.fromList([...syntheticPlaintext(), ...corrupt]);
+      final guide = parseEpgGuide(plain, const [_channel],
+          broadcastingType: 2);
+      expect(guide.eventCount, 2);
+    });
+
+    test('an extended-only copy keeps its description, title stays null',
+        () {
+      final ev = _event(
+        id: 0x104,
+        mjd: 61360,
+        timeBcd: [0x12, 0x00, 0x00],
+        durationBcd: [0x00, 0x15, 0x00],
+        descriptors: [..._extendedEvent(_labelContent, _valueContent)],
+      );
+      final plain = _section(
+          tableId: 0x58, sectionNumber: 48, eventsBytes: ev);
+      final guide = parseEpgGuide(plain, const [_channel],
+          broadcastingType: 2);
+      final event = guide.services.single.events.single;
+      expect(event.title, isNull);
+      expect(event.description, '番組');
     });
 
     test('response wrapping round-trips (XOR + zlib)', () {
@@ -352,6 +436,140 @@ void main() {
       expect(find.text('テスト局'), findsOneWidget);
       expect(find.text('テスト番組'), findsOneWidget);
       expect(find.textContaining('今日'), findsOneWidget);
+    });
+
+    testWidgets('a short (5 min) event still renders its title',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      final now = DateTime.now().toUtc();
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          EpgServiceGuide(
+            channel: _channel,
+            events: [
+              EpgEvent(
+                eventId: 1,
+                start: now.subtract(const Duration(minutes: 10)),
+                duration: const Duration(minutes: 30),
+                title: '長い番組',
+              ),
+              EpgEvent(
+                eventId: 2,
+                start: now,
+                duration: const Duration(minutes: 5),
+                title: '短い番組',
+              ),
+            ],
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider.overrideWithValue(
+                InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // The 5-minute tile is 11px tall: previously the title was
+      // only rendered for tiles of 26px or more (plan 22).
+      expect(find.text('短い番組'), findsOneWidget);
+      expect(find.text('長い番組'), findsOneWidget);
+    });
+
+    testWidgets('horizontal scrolling settles on a column boundary',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      Channel channelN(int n) => Channel(
+            broadcastingType: 2,
+            networkId: 0x1111,
+            transportStreamId: 0x2222,
+            serviceId: 0x3300 + n,
+            serviceType: 1,
+            channelNumber: n + 1,
+            serviceName: '局$n',
+          );
+      final now = DateTime.now().toUtc();
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          for (var i = 0; i < 6; i++)
+            EpgServiceGuide(
+              channel: channelN(i),
+              events: [
+                EpgEvent(
+                  eventId: 1,
+                  start: now.subtract(const Duration(minutes: 10)),
+                  duration: const Duration(minutes: 30),
+                  title: '番組$i',
+                ),
+              ],
+            ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider.overrideWithValue(
+                InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final scv = find.byWidgetPredicate((w) =>
+          w is SingleChildScrollView &&
+          w.scrollDirection == Axis.horizontal);
+      expect(scv, findsOneWidget);
+      await tester.timedDrag(
+          scv, const Offset(-260, 0), const Duration(milliseconds: 500));
+      // Let the snap spring run to rest (bounded pumps instead of
+      // pumpAndSettle, whose fake-time timeout interacts badly
+      // with the timed drag's clock).
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final scrollable = tester.state<ScrollableState>(find.descendant(
+          of: scv,
+          matching: find.byWidgetPredicate((w) =>
+              w is Scrollable && w.axisDirection == AxisDirection.right)));
+      // The grid must come to rest exactly on a column boundary,
+      // never mid-column (plan 22): the scroll moved, and the
+      // settled offset is a whole number of columns.
+      final pixels = scrollable.position.pixels;
+      expect(pixels, greaterThan(0));
+      expect(pixels % 172, anyOf(closeTo(0, 1.0), closeTo(172, 1.0)));
     });
   });
 }

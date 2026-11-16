@@ -3,14 +3,23 @@
 /// Both `EPGGet` responses and `channelLogoDataGet` responses are
 /// obfuscated with a single-byte XOR (0x9d) and carry zlib streams:
 ///
-/// - EPG: one zlib stream whose plaintext is a sequence of service
-///   blocks. Each block has an 18-byte header holding the service
-///   triple (serviceId at +7, networkId at +12, transportStreamId
-///   at +14, all big-endian), followed by EIT-style events:
-///   `[eventId u16][start MJD u16][start BCD h/m/s][duration BCD
-///   h/m/s][descriptorsLength u16][descriptors]`. Descriptors are
-///   standard EIT: 0x4D short event, 0x4E extended event, 0x54
-///   content. Text fields are ARIB STD-B24 (arib_b24.dart).
+/// - EPG: one zlib stream whose plaintext is a concatenation of
+///   EIT sections, each trailed by a CRC-32/MPEG-2 (plan 22). The
+///   14-byte section header holds the service triple (serviceId
+///   at +3, transportStreamId at +8, originalNetworkId at +10,
+///   all big-endian) and the section length; events follow in the
+///   usual EIT form: `[eventId u16][start MJD u16][start BCD
+///   h/m/s][duration BCD h/m/s][running/freeCA + descriptorsLength
+///   (u12)][descriptors]`. Descriptors are standard EIT: 0x4D
+///   short event, 0x4E extended event, 0x54 content. Text fields
+///   are ARIB STD-B24 (arib_b24.dart).
+///   The schedule is split the ARIB way: for each segment the
+///   dataset carries a "basic" section (table_id 0x50-0x57, the
+///   0x4D/0x54 side) and an "extended" section (table_id
+///   0x58-0x5F, the 0x4E side) listing the SAME events, so one
+///   broadcast event appears once per section flavour. The parser
+///   merges the copies of an event (keyed by eventId + start)
+///   into a single guide entry (plan 22).
 /// - Logos: a sequence of zlib streams, each decompressing to a
 ///   20-byte header + PNG. The header holds the decompressed
 ///   length (u16 BE at +2), the serviceId (u16 BE at +14) and the
@@ -61,72 +70,128 @@ DateTime _eitStart(int mjd, int h, int m, int s) {
       .subtract(const Duration(hours: 9));
 }
 
-/// One located service block in the EPG plaintext.
-class _Block {
-  const _Block(this.offset, this.channel);
+/// CRC-32/MPEG-2: polynomial 0x04C11DB7, initial value 0xFFFFFFFF,
+/// no input/output reflection, no final XOR. Every EIT section is
+/// trailed by this checksum computed over the whole section, so a
+/// complete section (checksum included) evaluates to zero.
+int crc32Mpeg(List<int> data, [int start = 0, int? end]) {
+  var crc = 0xffffffff;
+  final limit = end ?? data.length;
+  for (var i = start; i < limit; i++) {
+    crc ^= data[i] << 24;
+    for (var bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x80000000) != 0
+          ? ((crc << 1) ^ 0x04c11db7) & 0xffffffff
+          : (crc << 1) & 0xffffffff;
+    }
+  }
+  return crc;
+}
+
+/// One located EIT section in the EPG plaintext.
+class _Section {
+  const _Section(this.offset, this.totalLength, this.channel);
   final int offset;
+  final int totalLength;
   final Channel channel;
 }
 
-/// Finds the service blocks in [plain]. Blocks are anchored on the
-/// (networkId, transportStreamId) byte pair of a known channel with
-/// the serviceId verified at the fixed header offset — six matched
-/// bytes, which event data does not produce in practice (the full
-/// live corpus walks cleanly, plan 21).
-List<_Block> _findBlocks(Uint8List plain, List<Channel> channels) {
-  final blocks = <_Block>[];
+/// Finds the EIT sections in [plain]. A section is anchored on the
+/// (transportStreamId, originalNetworkId) byte pair of a known
+/// channel in the section header, with the table_id in the EIT
+/// range, the serviceId verified at its fixed offset, the section
+/// length inside the buffer and the trailing CRC-32/MPEG-2 valid.
+/// The checksum makes false anchors inside event data a non-issue
+/// (the full live corpus validates section by section, plan 22).
+List<_Section> _findSections(Uint8List plain, List<Channel> channels) {
+  final sections = <_Section>[];
   for (final ch in channels) {
-    final nid = ch.networkId, tsid = ch.transportStreamId;
-    for (var i = 12; i + 4 <= plain.length; i++) {
-      if (plain[i] == (nid >> 8) &&
-          plain[i + 1] == (nid & 0xff) &&
-          plain[i + 2] == (tsid >> 8) &&
-          plain[i + 3] == (tsid & 0xff)) {
-        final hp = i - 12;
-        if (_u16be(plain, hp + 7) == ch.serviceId) {
-          blocks.add(_Block(hp, ch));
-        }
+    final tsid = ch.transportStreamId, onid = ch.networkId;
+    for (var i = 8; i + 4 <= plain.length; i++) {
+      if (plain[i] == (tsid >> 8) &&
+          plain[i + 1] == (tsid & 0xff) &&
+          plain[i + 2] == (onid >> 8) &&
+          plain[i + 3] == (onid & 0xff)) {
+        final s = i - 8;
+        final tableId = plain[s];
+        final isEit = tableId == 0x4e ||
+            tableId == 0x4f ||
+            (tableId >= 0x50 && tableId <= 0x5f);
+        if (!isEit) continue;
+        if (_u16be(plain, s + 3) != ch.serviceId) continue;
+        final total = (((plain[s + 1] & 0x0f) << 8) | plain[s + 2]) + 3;
+        if (total < 18 || s + total > plain.length) continue;
+        if (crc32Mpeg(plain, s, s + total) != 0) continue;
+        sections.add(_Section(s, total, ch));
       }
     }
   }
-  blocks.sort((a, b) => a.offset.compareTo(b.offset));
+  sections.sort((a, b) => a.offset.compareTo(b.offset));
   // Dedupe identical offsets (a channel listed twice).
-  final out = <_Block>[];
-  for (final b in blocks) {
-    if (out.isEmpty || out.last.offset != b.offset) out.add(b);
+  final out = <_Section>[];
+  for (final s in sections) {
+    if (out.isEmpty || out.last.offset != s.offset) out.add(s);
   }
   return out;
 }
 
 /// Parses the EPG plaintext into a guide. Services appear in
-/// channel-list order; events in broadcast order.
+/// channel-list order; events in broadcast order. The copies of
+/// one event carried by several sections (the basic / extended
+/// split) are merged into a single event (plan 22).
 EpgGuide parseEpgGuide(
   Uint8List plain,
   List<Channel> channels, {
   required int broadcastingType,
 }) {
-  final blocks = _findBlocks(plain, channels);
-  final byService = <int, List<EpgEvent>>{};
-  for (var i = 0; i < blocks.length; i++) {
-    final start = blocks[i].offset + 18;
-    final end = i + 1 < blocks.length ? blocks[i + 1].offset : plain.length;
-    final events = _parseEvents(plain, start, end);
+  final sections = _findSections(plain, channels);
+  final byService = <int, Map<(int, DateTime), EpgEvent>>{};
+  for (final section in sections) {
+    final events = _parseSectionEvents(plain, section.offset + 14,
+        section.offset + section.totalLength - 4);
     if (events.isEmpty) continue;
-    byService
-        .putIfAbsent(blocks[i].channel.serviceId, () => [])
-        .addAll(events);
+    final merged = byService.putIfAbsent(
+        section.channel.serviceId, () => <(int, DateTime), EpgEvent>{});
+    for (final event in events) {
+      final key = (event.eventId, event.start);
+      final existing = merged[key];
+      merged[key] = existing == null ? event : _mergeCopies(existing, event);
+    }
   }
   final services = <EpgServiceGuide>[];
   for (final ch in channels) {
-    final events = byService[ch.serviceId];
-    if (events == null || events.isEmpty) continue;
-    events.sort((a, b) => a.start.compareTo(b.start));
+    final merged = byService[ch.serviceId];
+    if (merged == null || merged.isEmpty) continue;
+    final events = merged.values.toList()
+      ..sort((a, b) {
+        final byStart = a.start.compareTo(b.start);
+        return byStart != 0 ? byStart : a.eventId.compareTo(b.eventId);
+      });
     services.add(EpgServiceGuide(channel: ch, events: events));
   }
   return EpgGuide(broadcastingType: broadcastingType, services: services);
 }
 
-List<EpgEvent> _parseEvents(Uint8List plain, int start, int end) {
+/// Combines two section copies of one broadcast event. The field
+/// sets are disjoint by construction (titles live in the basic
+/// sections, extended items in the extended sections), so each
+/// field is taken from whichever copy carries it.
+EpgEvent _mergeCopies(EpgEvent a, EpgEvent b) => EpgEvent(
+      eventId: a.eventId,
+      start: a.start,
+      duration: a.duration,
+      title: a.title ?? b.title,
+      shortText: a.shortText ?? b.shortText,
+      description: a.description ?? b.description,
+      cast: a.cast ?? b.cast,
+      extendedItems:
+          a.extendedItems.isNotEmpty ? a.extendedItems : b.extendedItems,
+      extendedText: a.extendedText ?? b.extendedText,
+      genreLevel1: a.genreLevel1 ?? b.genreLevel1,
+      genreLevel2: a.genreLevel2 ?? b.genreLevel2,
+    );
+
+List<EpgEvent> _parseSectionEvents(Uint8List plain, int start, int end) {
   final events = <EpgEvent>[];
   var p = start;
   while (p + 12 <= end) {
@@ -138,8 +203,10 @@ List<EpgEvent> _parseEvents(Uint8List plain, int start, int end) {
     final dh = _bcd(plain[p + 7]);
     final dm = _bcd(plain[p + 8]);
     final ds = _bcd(plain[p + 9]);
-    final dlen = _u16be(plain, p + 10);
-    if (p + 12 + dlen > end) break; // truncated tail: stop this block
+    // The descriptors length is the low 12 bits; the high nibble
+    // is running_status / free_CA_mode (zero in the measured data).
+    final dlen = _u16be(plain, p + 10) & 0x0fff;
+    if (p + 12 + dlen > end) break; // truncated tail: stop this section
     final fields = _parseDescriptors(plain, p + 12, p + 12 + dlen);
     events.add(EpgEvent(
       eventId: eventId,

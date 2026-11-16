@@ -24,7 +24,7 @@ class WebApiEpgService {
 
   /// Fetches and parses the full programme guide for
   /// [broadcastingType]. [channels] is the type's channel list
-  /// (DeviceInfoService.listChannels); blocks are anchored on it.
+  /// (DeviceInfoService.listChannels); sections are anchored on it.
   Future<EpgGuide> getProgrammeGuide(
     int broadcastingType,
     List<Channel> channels,

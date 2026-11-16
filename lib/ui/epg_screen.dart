@@ -24,6 +24,53 @@ const double _channelWidth = 172;
 const double _rulerWidth = 40;
 const double _headerHeight = 54;
 
+/// Scroll physics that always settles with the grid aligned to a
+/// channel-column boundary. Without it the horizontal scroll can
+/// rest a few pixels into a column, leaving the leftmost visible
+/// column clipped by the viewport edge (its start-time labels lose
+/// their first glyph, plan 22).
+class _ChannelSnapPhysics extends ScrollPhysics {
+  const _ChannelSnapPhysics({super.parent});
+
+  @override
+  _ChannelSnapPhysics applyTo(ScrollPhysics? ancestor) =>
+      _ChannelSnapPhysics(parent: buildParent(ancestor));
+
+  @override
+  Simulation? createBallisticSimulation(
+      ScrollMetrics position, double velocity) {
+    if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
+        (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final tolerance = toleranceFor(position);
+    if (velocity.abs() < tolerance.velocity) {
+      // Slow or finished drag: settle to the nearest boundary.
+      return ScrollSpringSimulation(
+        spring,
+        position.pixels,
+        (position.pixels / _channelWidth).round() * _channelWidth,
+        velocity,
+        tolerance: tolerance,
+      );
+    }
+    // Fling: continue to the next boundary in the fling direction.
+    final double target = velocity > 0
+        ? (position.pixels / _channelWidth).ceil() * _channelWidth
+        : (position.pixels / _channelWidth).floor() * _channelWidth;
+    if (target == position.pixels) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    return ScrollSpringSimulation(
+      spring,
+      position.pixels,
+      target.clamp(position.minScrollExtent, position.maxScrollExtent),
+      velocity,
+      tolerance: tolerance,
+    );
+  }
+}
+
 class EpgScreen extends ConsumerStatefulWidget {
   const EpgScreen({super.key});
 
@@ -197,6 +244,7 @@ class _GuideView extends StatelessWidget {
               Expanded(
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
+                  physics: const _ChannelSnapPhysics(),
                   child: SizedBox(
                     width: _channelWidth * guide.services.length,
                     child: Column(
@@ -435,7 +483,16 @@ class _EventTile extends StatelessWidget {
         24 * 60, event.end.difference(dayStart).inMinutes);
     final top = startMin * _pxPerMinute;
     final height = math.max(10, (endMin - startMin) * _pxPerMinute - 1);
-    final title = event.title ?? '';
+    final title = event.title;
+    final timeText = formatTimeJst(event.start);
+    final timeStyle = theme.textTheme.labelSmall?.copyWith(
+      color: theme.colorScheme.primary,
+      fontWeight: FontWeight.bold,
+    );
+    // Title lines that fit under the time line: the time line is
+    // about 16px at the labelSmall size and a title line about
+    // 17px, with 2px of vertical padding at each edge.
+    final maxTitleLines = ((height - 4 - 16) / 17).floor();
     return Positioned(
       top: top,
       left: 1,
@@ -444,6 +501,10 @@ class _EventTile extends StatelessWidget {
       child: Material(
         color: theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(3),
+        // Tiles too short for their text must not paint outside
+        // their box: spilled glyphs used to bleed into the tile
+        // below and get half-covered there (plan 22).
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           borderRadius: BorderRadius.circular(3),
           onTap: () => showDialog<void>(
@@ -451,30 +512,52 @@ class _EventTile extends StatelessWidget {
             builder: (_) =>
                 _EventDetailDialog(event: event, channelName: channelName),
           ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  formatTimeJst(event.start),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.bold,
+          child: maxTitleLines >= 1
+              ? Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(timeText, style: timeStyle),
+                      if (title != null)
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: theme.textTheme.bodySmall,
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: maxTitleLines.clamp(1, 4),
+                          ),
+                        ),
+                    ],
+                  ),
+                )
+              : Padding(
+                  // Compact form for tiles too short for two lines:
+                  // time and title share one small line.
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Text(
+                        timeText,
+                        style: timeStyle?.copyWith(fontSize: 10, height: 1.1),
+                      ),
+                      if (title != null) ...[
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: theme.textTheme.bodySmall
+                                ?.copyWith(fontSize: 10, height: 1.1),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                if (height >= 26)
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: theme.textTheme.bodySmall,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 4,
-                    ),
-                  ),
-              ],
-            ),
-          ),
         ),
       ),
     );
