@@ -94,21 +94,26 @@ void main() {
           contains('<RecordScheduleID>10000000000000000004</RecordScheduleID>'));
     });
 
-    test('an empty update is rejected client-side', () async {
+    test('an update without a change field is rejected client-side',
+        () async {
       final service = SoapScheduleService(
         soap: SoapTransport(client: router({})),
         controlUrl: xsrsUrl,
       );
       await expectLater(
-        service.updateSchedule(const ScheduleUpdate(id: '1')),
+        service.updateSchedule(
+            const ScheduleUpdate(id: '1', priorityFlag: 0)),
         throwsA(isA<NasneError>()
             .having((e) => e.category, 'category',
                 NasneErrorCategory.validation)),
       );
     });
 
-    test('conflict fault + empty schedule list means "no conflicts"',
+    test('conflict fault propagates (no reservation-count fallback)',
         () async {
+      // Phase 1 conclusion: the phase 0 Fault tracked the candidate's
+      // compact +0900 datetime, not the reservation count, so the
+      // service must not mask Faults from X_GetConflictList.
       final service = SoapScheduleService(
         soap: SoapTransport(
             client: router({
@@ -118,14 +123,19 @@ void main() {
         })),
         controlUrl: xsrsUrl,
       );
-      final conflicts = await service.checkConflicts(NewRecordSchedule(
-        start: DateTime.parse('2026-11-18T04:00:00+09:00'),
-        durationSeconds: 300,
-        channel: const ScheduleChannel(
-            broadcastingType: 2, channelType: 2, serviceId: 56832),
-        networkId: 30848,
-      ));
-      expect(conflicts, isEmpty);
+      await expectLater(
+        service.checkConflicts(NewRecordSchedule(
+          start: DateTime.parse('2026-11-18T04:00:00+09:00'),
+          durationSeconds: 300,
+          channel: const ScheduleChannel(
+              broadcastingType: 2, channelType: 2, serviceId: 56832),
+          networkId: 30848,
+        )),
+        throwsA(isA<NasneError>()
+            .having((e) => e.category, 'category',
+                NasneErrorCategory.soapFault)
+            .having((e) => e.code, 'code', '402')),
+      );
     });
 
     test('conflict fault with existing schedules propagates', () async {

@@ -96,12 +96,14 @@ void main() {
       expect(xml, isNot(contains('<title>')));
     });
 
-    test('update item is sparse', () {
+    test('update item is sparse with mandatory priorityFlag', () {
       final xml = buildUpdateItemXml(const ScheduleUpdate(
         id: '42',
+        conditionId: '1',
         priorityFlag: 1,
       ));
       expect(xml, contains('<item id="42">'));
+      expect(xml, contains('<scheduledConditionID>1</scheduledConditionID>'));
       expect(xml, contains('<priorityFlag>1</priorityFlag>'));
       expect(xml, isNot(contains('scheduledStartDateTime')));
       expect(xml, isNot(contains('desiredQualityMode')));

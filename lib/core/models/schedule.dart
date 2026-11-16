@@ -124,27 +124,41 @@ class NewRecordSchedule {
       '0x${eventId.toRadixString(16).padLeft(4, '0')}';
 }
 
-/// A sparse update (plan 12.5). Null fields are left out of the item.
+/// A sparse schedule update (plan 12.5).
+///
+/// Measured update contract (phase 1 update matrix, FW 2.60):
+/// X_UpdateRecordSchedule succeeds only when `priorityFlag` is
+/// present AND at least one other field is present. priorityFlag
+/// alone faults 853; any field set without priorityFlag faults 402.
+/// [priorityFlag] is therefore required here — pass the currently
+/// stored value when the change is about another field. Note the
+/// device accepts the call without necessarily reflecting the sent
+/// values (priorityFlag 0->1 and desiredQualityMode 100->101 were
+/// both accepted but not reflected); callers must re-read and trust
+/// the re-read (plan 12.5).
 class ScheduleUpdate {
   const ScheduleUpdate({
     required this.id,
+    required this.priorityFlag,
     this.conditionId,
     this.desiredQualityMode,
-    this.priorityFlag,
     this.recordDestinationId,
   });
 
   final String id;
   final String? conditionId;
   final int? desiredQualityMode;
-  final int? priorityFlag;
+  final int priorityFlag;
   final String? recordDestinationId;
 
-  bool get isEmpty =>
-      conditionId == null &&
-      desiredQualityMode == null &&
-      priorityFlag == null &&
-      recordDestinationId == null;
+  /// True when at least one changeable field besides the mandatory
+  /// priorityFlag is present.
+  bool get hasChangeField =>
+      conditionId != null ||
+      desiredQualityMode != null ||
+      recordDestinationId != null;
+
+  bool get isEmpty => !hasChangeField;
 }
 
 /// Normalises an id coming from a create response: the device returns

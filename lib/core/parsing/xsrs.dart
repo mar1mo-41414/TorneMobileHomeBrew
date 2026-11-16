@@ -142,8 +142,9 @@ String buildCreateItemXml(NewRecordSchedule s) {
       '</item>';
 }
 
-/// Builds the sparse update item (plan 12.5): only the fields being
-/// changed are present.
+/// Builds the sparse update item (plan 12.5, rule fixed by the phase 1
+/// update matrix): [ScheduleUpdate.priorityFlag] is always present —
+/// the device requires it — alongside the fields being changed.
 String buildUpdateItemXml(ScheduleUpdate u) {
   final b = StringBuffer('<item id="${escapeXmlAttribute(u.id)}">');
   if (u.conditionId != null) {
@@ -152,9 +153,7 @@ String buildUpdateItemXml(ScheduleUpdate u) {
   if (u.desiredQualityMode != null) {
     b.write('<desiredQualityMode>${u.desiredQualityMode}</desiredQualityMode>');
   }
-  if (u.priorityFlag != null) {
-    b.write('<priorityFlag>${u.priorityFlag}</priorityFlag>');
-  }
+  b.write('<priorityFlag>${u.priorityFlag}</priorityFlag>');
   if (u.recordDestinationId != null) {
     b.write('<recordDestinationID>${escapeXmlText(u.recordDestinationId!)}</recordDestinationID>');
   }
