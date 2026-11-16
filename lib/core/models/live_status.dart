@@ -7,6 +7,7 @@
 /// both the generation and, when present, the typed entries.
 library;
 
+import '../broadcast_text.dart';
 import '../json_util.dart';
 import '../time_util.dart';
 
@@ -47,7 +48,8 @@ class ProgramInfo {
 
   factory ProgramInfo.fromJson(Map<String, dynamic> json) {
     return ProgramInfo(
-      title: optString(json, 'title') ?? optString(json, 'eventName'),
+      title: normalizeBroadcastTextOrNull(
+          optString(json, 'title') ?? optString(json, 'eventName')),
       startTime: parseNasneDateTime(
           optString(json, 'startTime') ?? optString(json, 'startDateTime')),
       durationSeconds:
@@ -124,7 +126,7 @@ class RecNgItem {
     const src = 'webapi:/status/recNgListGet';
     return RecNgItem(
       id: reqString(json, 'id', src),
-      title: optString(json, 'title'),
+      title: normalizeBroadcastTextOrNull(optString(json, 'title')),
       startTime: parseNasneDateTime(optString(json, 'scheduledStartDateTime')),
       durationSeconds: optInt(json, 'scheduledDuration'),
       serviceId: optInt(json, 'scheduledChannelID'),

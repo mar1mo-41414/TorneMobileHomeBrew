@@ -3,6 +3,7 @@ library;
 
 import 'package:xml/xml.dart';
 
+import '../broadcast_text.dart';
 import '../errors.dart';
 import '../models/didl.dart';
 import '../models/title.dart';
@@ -26,7 +27,7 @@ DidlDocument parseDidl(String xmlText, String source) {
     containers.add(DidlContainer(
       id: el.getAttribute('id') ?? '',
       parentId: el.getAttribute('parentID') ?? '',
-      title: childText(el, 'title') ?? '',
+      title: normalizeBroadcastText(childText(el, 'title') ?? ''),
       childCount: int.tryParse(el.getAttribute('childCount') ?? ''),
     ));
   }
@@ -54,15 +55,16 @@ DidlItem _parseItem(XmlElement el) {
       case 'res':
         resList.add(_parseRes(child));
       case 'description':
-        description = text;
+        description = normalizeBroadcastText(text);
         properties[qualified] = text;
       case 'longDescription':
         // Two entries exist (synopsis / credits); keep both, joined.
-        longDescription =
-            longDescription == null ? text : '$longDescription\n$text';
+        longDescription = longDescription == null
+            ? normalizeBroadcastText(text)
+            : '$longDescription\n${normalizeBroadcastText(text)}';
         properties.putIfAbsent(qualified, () => text);
       case 'channelName':
-        channelName = text;
+        channelName = normalizeBroadcastText(text);
         properties[qualified] = text;
       case 'channelNr':
         channelNr = int.tryParse(text.trim());
@@ -78,7 +80,7 @@ DidlItem _parseItem(XmlElement el) {
   return DidlItem(
     id: el.getAttribute('id') ?? '',
     parentId: el.getAttribute('parentID') ?? '',
-    title: childText(el, 'title') ?? '',
+    title: normalizeBroadcastText(childText(el, 'title') ?? ''),
     date: properties['dc:date'],
     description: description,
     longDescription: longDescription,

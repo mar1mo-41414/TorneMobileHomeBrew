@@ -1,0 +1,92 @@
+/// Normalisation of broadcast metadata text (plan 16.1).
+///
+/// The nasne firmware delivers the ARIB STD-B24 additional symbols
+/// used as programme marks (字幕・手話・再放送 …) as Unicode Private
+/// Use Area code points, following the PUA assignment of the ARIB
+/// gaiji font mapping (AFS ARIB font map, based on ARIB STD-B24).
+/// Neither iOS nor Android system fonts carry glyphs for those code
+/// points, so titles render with missing-glyph boxes. The characters
+/// are present in the payload — this is a display-stage problem, not
+/// a decode/parse loss (measured, plan 16.1).
+///
+/// [normalizeBroadcastText] rewrites each known PUA mark to the
+/// bracketed text form used by Japanese EPG software ([手], [字], …)
+/// at the point where device-supplied text enters a model. PUA code
+/// points outside the table are passed through unchanged: their
+/// equivalents are not established, and inventing labels is against
+/// the project rule (plan 5.0 principle 5).
+library;
+
+/// ARIB STD-B24 additional symbols, programme-mark group
+/// (row 90, points 48–84), PUA code point -> replacement text.
+///
+/// Evidence: glyph images of the AFS ARIB font map (ARIB STD-B24
+/// based), cross-checked against an independent recorder-firmware
+/// conversion table (plan 16.1). Points 64/65/71/83 of the same group
+/// map to regular Unicode (U+2B1B / U+2B24 / U+26BF / U+3299), so the
+/// firmware sends those directly and they need no entry here.
+const Map<int, String> aribProgrammeMarkReplacements = {
+  0xE0F8: '[HV]', // 90/48 HV
+  0xE0F9: '[SD]', // 90/49 SD
+  0xE0FA: '[P]', // 90/50 P
+  0xE0FB: '[W]', // 90/51 W
+  0xE0FC: '[MV]', // 90/52 MV
+  0xE0FD: '[手]', // 90/53 手 (sign language)
+  0xE0FE: '[字]', // 90/54 字 (subtitles)
+  0xE0FF: '[双]', // 90/55 双 (dual audio)
+  0xE180: '[デ]', // 90/56 デ (digital)
+  0xE181: '[S]', // 90/57 S
+  0xE182: '[二]', // 90/58 二 (bilingual)
+  0xE183: '[多]', // 90/59 多 (multiplex audio)
+  0xE184: '[解]', // 90/60 解 (commentary)
+  0xE185: '[SS]', // 90/61 SS (surround)
+  0xE186: '[B]', // 90/62 B
+  0xE187: '[N]', // 90/63 N
+  0xE18A: '[天]', // 90/66 天 (weather)
+  0xE18B: '[交]', // 90/67 交 (traffic)
+  0xE18C: '[映]', // 90/68 映
+  0xE18D: '[無]', // 90/69 無 (free of charge)
+  0xE18E: '[料]', // 90/70 料 (paid)
+  0xE190: '[前]', // 90/72 前 (first part)
+  0xE191: '[後]', // 90/73 後 (second part)
+  0xE192: '[再]', // 90/74 再 (rebroadcast)
+  0xE193: '[新]', // 90/75 新 (new programme)
+  0xE194: '[初]', // 90/76 初 (first run)
+  0xE195: '[終]', // 90/77 終 (final episode)
+  0xE196: '[生]', // 90/78 生 (live)
+  0xE197: '[販]', // 90/79 販 (sold as package media)
+  0xE198: '[声]', // 90/80 声
+  0xE199: '[吹]', // 90/81 吹 (dubbed)
+  0xE19A: '[PPV]', // 90/82 PPV
+  0xE19C: '[ほか]', // 90/84 ほか
+};
+
+bool _isPua(int rune) => rune >= 0xE000 && rune <= 0xF8FF;
+
+/// Returns [input] with known ARIB programme-mark PUA code points
+/// replaced by their bracketed text forms. Strings without any PUA
+/// code point are returned as-is.
+String normalizeBroadcastText(String input) {
+  var hasPua = false;
+  for (final rune in input.runes) {
+    if (_isPua(rune)) {
+      hasPua = true;
+      break;
+    }
+  }
+  if (!hasPua) return input;
+  final buffer = StringBuffer();
+  for (final rune in input.runes) {
+    final replacement = aribProgrammeMarkReplacements[rune];
+    if (replacement != null) {
+      buffer.write(replacement);
+    } else {
+      buffer.writeCharCode(rune);
+    }
+  }
+  return buffer.toString();
+}
+
+/// Nullable variant for optional text fields.
+String? normalizeBroadcastTextOrNull(String? input) =>
+    input == null ? null : normalizeBroadcastText(input);

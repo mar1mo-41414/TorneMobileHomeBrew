@@ -1,6 +1,7 @@
 /// Channel model (plan 12.5), from `status/channelListGet`.
 library;
 
+import '../broadcast_text.dart';
 import '../json_util.dart';
 
 /// One channel of a broadcasting type's channel list.
@@ -58,8 +59,9 @@ class Channel {
       serviceType: reqInt(json, 'serviceType', src),
       channelNumber: reqInt(json, 'channelNumber', src),
       branchNumber: optInt(json, 'branchNumber') ?? 0,
-      serviceName: optString(json, 'serviceName') ?? '',
-      serviceProviderName: optString(json, 'serviceProviderName'),
+      serviceName: normalizeBroadcastText(optString(json, 'serviceName') ?? ''),
+      serviceProviderName:
+          normalizeBroadcastTextOrNull(optString(json, 'serviceProviderName')),
       freqChannelNo: optString(json, 'freqChannelNo'),
       remoteControlKeyId: optInt(json, 'remoteControlKeyId'),
       contract: flag(json, 'contract'),

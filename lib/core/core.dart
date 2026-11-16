@@ -7,6 +7,7 @@ library;
 
 export 'endpoints.dart';
 export 'errors.dart';
+export 'broadcast_text.dart';
 export 'json_util.dart';
 export 'time_util.dart';
 export 'token.dart';

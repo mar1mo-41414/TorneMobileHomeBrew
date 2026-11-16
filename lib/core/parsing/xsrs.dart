@@ -8,6 +8,7 @@ library;
 
 import 'package:xml/xml.dart';
 
+import '../broadcast_text.dart';
 import '../errors.dart';
 import '../models/schedule.dart';
 import '../models/title.dart';
@@ -119,7 +120,7 @@ RecordSchedule recordScheduleFromXsrs(XsrsItem item, {required String source}) {
     reservationCreatorId: item['reservationCreatorID'] ?? '',
     priorityFlag: _intField(item, 'priorityFlag', source),
     recordDestinationId: item['recordDestinationID'] ?? '',
-    title: item['title'],
+    title: normalizeBroadcastTextOrNull(item['title']),
     conflictId: item['conflictID'],
   );
 }
@@ -170,7 +171,7 @@ RecordedTitle recordedTitleFromXsrs(XsrsItem item, {required String source}) {
       : _intField(item, 'scheduledDuration', source);
   return RecordedTitle(
     id: item.id,
-    title: item['title'] ?? '',
+    title: normalizeBroadcastText(item['title'] ?? ''),
     scheduledStart: parseNasneDateTime(item['scheduledStartDateTime']),
     scheduledDurationSeconds: duration,
     channel: item['scheduledChannelID'] == null
