@@ -1155,6 +1155,7 @@ Vita 版 torne の `PvrResource.cxml` の文字列プールにある 53 地域�
 ### 20.1 公開リポジトリ
 
 - GitHub に public リポジトリを作成し、main を同期した: https://github.com/mar1mo-41414/TorneMobileHomeBrew
+- 作成直後の可視性が private になっていたため、API で public へ変更し、未認証の HTTP アクセスで 200 が返ることまで確認した。
 - 公開に先立ち、README を公開向けに整備した (「現状」を v1.0.0 リリース済みに更新し、動作条件・インストール手順・使い方・既知の制限を追記)。あわせて、従来の記録にあった開発環境固有の記述 1 件を、公開文書向けに一般化した。
 
 ### 20.2 Android 配布用署名
