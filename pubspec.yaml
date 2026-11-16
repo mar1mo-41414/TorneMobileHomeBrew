@@ -15,11 +15,25 @@ dependencies:
   xml: ^7.1.0
   crypto: ^3.0.8
   flutter_riverpod: ^3.5.0
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+
+# App icon generation (dart run flutter_launcher_icons).
+# Source art: assets/icon/app_icon_source.webp; the 1024 PNG is the
+# same art with its white corners filled in the background indigo
+# (#211753) so the icon is full-bleed with no alpha.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon_1024.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#211753"
+  adaptive_icon_foreground: "assets/icon/app_icon_1024.png"

@@ -21,8 +21,7 @@ final registrationServiceProvider = Provider<RegistrationService>(
 );
 
 /// Defaults to in-memory; the app entry point overrides this with a
-/// file-backed store once the documents directory is known
-/// (phase 2 wiring).
+/// file-backed store in the documents directory (app/bootstrap.dart).
 final registrationStoreProvider = Provider<RegistrationStore>(
   (ref) => InMemoryRegistrationStore(),
 );
