@@ -823,3 +823,40 @@ X_UpdateRecordSchedule の疎な更新について、8 変種の実機行列で�
 - ファイル版ストアの実配線 (ドキュメントディレクトリの確定) はフェーズ 2 のアプリ組み立てで行う (現状プロバイダのデフォルトはメモリ版)。
 - アイコン等の素材作成 (§9 の項目 11) はフェーズ 2 で実施。
 - §12.3 本文の「空時 Fault」記述は本節 §13.6 が正であり、フェーズ 2 で §12.3 本文を確定内容に書き換えた (§14)。
+
+## 14. フェーズ 2 の実施記録 (2026-11-16)
+
+### 14.1 Mac 側ビルド環境
+
+- 作業機: MarkBookM4 (macOS 27.3)、Xcode 27.1 (xcode-select は Xcode を指す)。CocoaPods 1.17.0 は Homebrew で導入済みだった (非対話シェルでは /opt/homebrew/bin が PATH に無いため、ビルド時は明示的に通す)。
+- Flutter 3.50.0 (安定版、arm64 tarball) を Mac の ~/GitTmp/flutter に導入し、marnux と同バージョンに揃えた。
+- リポは Mac の ~/GitTmp/TorneMobileHomeBrew に Gitea から clone し、pull 専用のビルド用クローンとした (コードの正本作業コピーは marnux)。
+- Mac 上で flutter test 56 件全合格。flutter doctor は Xcode 項目 ✓ (Android toolchain はフェーズ 3 の対象のため未整備、Flutter の PATH 警告のみ)。
+
+### 14.2 ファイル版ストアの実配線 (§13.10 の残件)
+
+- path_provider (^2.1.6) を追加し、アプリのドキュメントディレクトリ内の registrations.json / key_values.json に JsonFileRegistrationStore / JsonFileKeyValueStore を接続した (lib/app/bootstrap.dart の fileStoreContainer を、main が UncontrolledProviderScope で設置する)。
+- テストを追加した (test/bootstrap_test.dart): ストアがファイル版であることの型確認と、コンテナを作り直しても登録とチャンネルキャッシュが読み戻せること。全体で 56 件全合格、flutter analyze もクリーン。
+- commit: 060f1fe。
+
+### 14.3 アイコン (§9 の項目 11)
+
+- 原画 (レトロ TV + アンテナ、画面に録画ドットと再生三角、背景インディゴ) を assets/icon/app_icon_source.webp としてリポに収録した。
+- 角丸の外側の白を、原画の背景色インディゴ (#211753) で埋めたフルブリードの 1024×1024 PNG (assets/icon/app_icon_1024.png) を作成し、flutter_launcher_icons (^0.14.4) で iOS / Android のアイコンセットを生成した。
+- commit: 5d33f69。
+
+### 14.4 §12.3 の訂正
+
+- §12.3 本文に残っていた「空時 Fault」の旧記述を、§13.6 の確定内容 (原因は候補 item の日時表記の圧縮形 `+0900` であり、コロン形 `+09:00` なら予約 0 件でも正常応答する) に書き換えた。
+- commit: b6381fb。
+
+### 14.5 署名なし IPA の生成
+
+- 方法: `flutter build ios --no-codesign --release` で Runner.app を生成し、Payload 形式に zip して IPA 化した (LiveContainer / AltServer でのサイドロードを想定)。
+- 成果物: Mac の ~/Downloads/TorneMobileHomeBrew-1.0.0.ipa、7,099,647 バイト、SHA-256 `2171b8b074fac51e0ff9ba3127b8dedf37d34b9c648f1e8835f9000ef3406eb2`。バンドル ID は com.markun.tmhb、バージョン 1.0.0。
+- 実機 (iPhone / iPad) へのインストールと起動確認は本人が行う (本記録の範囲外)。
+
+### 14.6 残件
+
+- §5.6 の v1 画面の実装 (フェーズ 2 の残り)。実機で LAN 通信を行う際は Info.plist への NSLocalNetworkUsageDescription の追加が必要になる (§6 フェーズ 2 の完了条件にあるローカルネットワーク許可の挙動確認とあわせて実施する)。
+- EIT_PF 実エントリ形式の確定、更新の反映セマンティクス (§13.10 から継続)。
