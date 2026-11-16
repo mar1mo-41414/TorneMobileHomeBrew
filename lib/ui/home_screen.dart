@@ -1,0 +1,354 @@
+/// Home / status screen (plan 5.6 item 1): a summary of the selected
+/// nasne — device information, HDD usage, live status (now/next
+/// programmes and CA/EMM messages), recording failures, network and
+/// B-CAS information. Each section fetches independently and offers
+/// its own retry; the app bar refresh reloads everything.
+library;
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
+
+import '../app/state.dart';
+import '../core/core.dart';
+import 'format.dart';
+import 'widgets.dart';
+
+class HomeScreen extends ConsumerWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final registrations = ref.watch(registrationsProvider);
+    final selected = ref.watch(selectedRegistrationProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('torne mobile HB'),
+        actions: [
+          if (selected != null)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: '更新',
+              onPressed: () => invalidateDeviceData(ref, selected),
+            ),
+        ],
+      ),
+      body: registrations.when(
+        loading: () => const LoadingView(),
+        error: (e, _) => ErrorView(
+          message: '登録情報の読み込みに失敗しました。',
+          onRetry: () => ref.read(registrationsProvider.notifier).reload(),
+        ),
+        data: (_) {
+          if (selected == null) {
+            return _NoDeviceView(
+              onRegister: () =>
+                  ref.read(tabIndexProvider.notifier).select(AppTabs.settings),
+            );
+          }
+          return _StatusList(reg: selected);
+        },
+      ),
+    );
+  }
+}
+
+class _NoDeviceView extends StatelessWidget {
+  const _NoDeviceView({required this.onRegister});
+
+  final VoidCallback onRegister;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.tv_off_outlined, size: 48),
+            const SizedBox(height: 16),
+            const Text('nasne が登録されていません'),
+            const SizedBox(height: 8),
+            const Text(
+              '設定画面で nasne を探して登録するか、アドレスを手動で登録してください。',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onRegister,
+              icon: const Icon(Icons.settings),
+              label: const Text('設定で登録する'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusList extends ConsumerWidget {
+  const _StatusList({required this.reg});
+
+  final RegisteredNasne reg;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return RefreshIndicator(
+      onRefresh: () async => invalidateDeviceData(ref, reg),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          _DeviceSection(reg: reg),
+          _HddSection(reg: reg),
+          _LiveSection(reg: reg),
+          _RecNgSection(reg: reg),
+          _NetworkSection(reg: reg),
+          _BcasSection(reg: reg),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeviceSection extends ConsumerWidget {
+  const _DeviceSection({required this.reg});
+
+  final RegisteredNasne reg;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final info = ref.watch(deviceInfoProvider(reg));
+    return SectionCard(
+      title: '本体情報',
+      icon: Icons.router_outlined,
+      child: asyncSection(
+        info,
+        (d) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            FieldRow(label: '名称', value: d.name),
+            FieldRow(label: 'ソフトウェア', value: d.softwareVersion),
+            if (d.currDate != null) FieldRow(label: '本体時刻', value: d.currDate!),
+            if (d.pref != null) FieldRow(label: '地域', value: d.pref!),
+            FieldRow(label: 'アドレス', value: reg.host),
+            if (d.updateExists == true)
+              const FieldRow(label: '更新', value: 'ソフトウェア更新があります'),
+          ],
+        ),
+        onRetry: () => ref.invalidate(deviceInfoProvider(reg)),
+      ),
+    );
+  }
+}
+
+class _HddSection extends ConsumerWidget {
+  const _HddSection({required this.reg});
+
+  final RegisteredNasne reg;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hdds = ref.watch(hddDetailsProvider(reg));
+    return SectionCard(
+      title: 'HDD',
+      icon: Icons.storage_outlined,
+      child: asyncSection(
+        hdds,
+        (list) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final detail in list) _HddTile(detail: detail),
+            if (list.isEmpty) const Text('HDD が見つかりません'),
+          ],
+        ),
+        onRetry: () => ref.invalidate(hddDetailsProvider(reg)),
+      ),
+    );
+  }
+}
+
+class _HddTile extends StatelessWidget {
+  const _HddTile({required this.detail});
+
+  final HddDetail detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = detail.entry;
+    final info = detail.info;
+    final label = entry.internal ? '内蔵 HDD' : '外付け HDD';
+    if (info == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Text('$label (詳細を取得できませんでした)'),
+      );
+    }
+    final ratio = info.totalBytes > 0 ? info.usedBytes / info.totalBytes : 0.0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            info.name.isEmpty ? label : '$label: ${info.name}',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(value: ratio.clamp(0.0, 1.0)),
+          const SizedBox(height: 6),
+          Text(
+            '空き ${formatBytes(info.freeBytes)} / 全体 ${formatBytes(info.totalBytes)}'
+            ' (使用 ${formatBytes(info.usedBytes)})',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LiveSection extends ConsumerWidget {
+  const _LiveSection({required this.reg});
+
+  final RegisteredNasne reg;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final live = ref.watch(liveStatusProvider(reg));
+    return SectionCard(
+      title: 'ライブ状態',
+      icon: Icons.live_tv_outlined,
+      child: asyncSection(live, (status) {
+        final eit = status.eitPf;
+        final messages = [...status.caMessages, ...status.emmMessages];
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (eit.populated) ...[
+              if (eit.present != null)
+                FieldRow(label: '現在の番組', value: _programText(eit.present!)),
+              if (eit.following != null)
+                FieldRow(label: '次の番組', value: _programText(eit.following!)),
+            ] else
+              const Text('現在・次の番組情報は取得できませんでした'),
+            const SizedBox(height: 4),
+            if (messages.isEmpty)
+              const Text('メッセージはありません')
+            else
+              for (final m in messages)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.warning_amber_outlined, size: 18),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text(m)),
+                    ],
+                  ),
+                ),
+          ],
+        );
+      }, onRetry: () => ref.invalidate(liveStatusProvider(reg))),
+    );
+  }
+
+  String _programText(ProgramInfo p) {
+    final title = p.title ?? '(番組名なし)';
+    if (p.startTime == null) return title;
+    return '$title (${formatTimeJst(p.startTime!)})';
+  }
+}
+
+class _RecNgSection extends ConsumerWidget {
+  const _RecNgSection({required this.reg});
+
+  final RegisteredNasne reg;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final recNg = ref.watch(recNgProvider(reg));
+    return SectionCard(
+      title: '録画失敗',
+      icon: Icons.videocam_off_outlined,
+      child: asyncSection(
+        recNg,
+        (items) => items.isEmpty
+            ? const Text('録画失敗はありません')
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final item in items)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        '${item.startTime != null ? formatDateTimeJst(item.startTime!) : ''}'
+                        ' ${item.title ?? '(タイトルなし)'}',
+                      ),
+                    ),
+                ],
+              ),
+        onRetry: () => ref.invalidate(recNgProvider(reg)),
+      ),
+    );
+  }
+}
+
+class _NetworkSection extends ConsumerWidget {
+  const _NetworkSection({required this.reg});
+
+  final RegisteredNasne reg;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final network = ref.watch(networkInfoProvider(reg));
+    return SectionCard(
+      title: 'ネットワーク',
+      icon: Icons.lan_outlined,
+      child: asyncSection(
+        network,
+        (n) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            FieldRow(label: 'IP アドレス', value: n.ipv4Addr),
+            if (n.gateway != null) FieldRow(label: 'ゲートウェイ', value: n.gateway!),
+            FieldRow(label: 'DHCP', value: n.dhcpEnabled ? '有効' : '無効'),
+            FieldRow(label: 'MAC アドレス', value: maskMac(n.macAddr)),
+          ],
+        ),
+        onRetry: () => ref.invalidate(networkInfoProvider(reg)),
+      ),
+    );
+  }
+}
+
+class _BcasSection extends ConsumerWidget {
+  const _BcasSection({required this.reg});
+
+  final RegisteredNasne reg;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bcas = ref.watch(bcasInfoProvider(reg));
+    return SectionCard(
+      title: 'B-CAS',
+      icon: Icons.badge_outlined,
+      child: asyncSection(
+        bcas,
+        (b) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (b.cardId != null)
+              FieldRow(label: 'カード ID', value: maskTail(b.cardId!)),
+            if (b.status != null) FieldRow(label: '状態', value: b.status!),
+            if (b.info != null) FieldRow(label: '情報', value: b.info!),
+            if (b.cardId == null && b.status == null && b.info == null)
+              const Text('B-CAS 情報を取得できませんでした'),
+          ],
+        ),
+        onRetry: () => ref.invalidate(bcasInfoProvider(reg)),
+      ),
+    );
+  }
+}
