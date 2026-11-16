@@ -129,9 +129,12 @@ class _DeviceSection extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             FieldRow(label: '名称', value: d.name),
-            FieldRow(label: 'ソフトウェア', value: d.softwareVersion),
+            FieldRow(
+                label: 'ソフトウェア',
+                value: softwareVersionLabel(d.softwareVersion)),
             if (d.currDate != null) FieldRow(label: '本体時刻', value: d.currDate!),
-            if (d.pref != null) FieldRow(label: '地域', value: d.pref!),
+            if (d.pref != null)
+              FieldRow(label: '地域', value: areaPrefLabel(d.pref!)),
             FieldRow(label: 'アドレス', value: reg.host),
             if (d.updateExists == true)
               const FieldRow(label: '更新', value: 'ソフトウェア更新があります'),

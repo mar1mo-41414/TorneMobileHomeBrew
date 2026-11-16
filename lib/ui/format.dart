@@ -90,6 +90,38 @@ String qualityModeLabel(int mode) => switch (mode) {
       _ => '$mode',
     };
 
+/// Official display form of the software version.
+///
+/// `softwareVersionGet` returns a 4-digit string ("0260"); the
+/// official nasne settings screen shows the version as "2.60"
+/// ("Ver:2.60"), so the raw value is re-dotted for display (plan 5.0
+/// principle 5, plan 18). Unexpected shapes fall back to the raw
+/// value; the model keeps the raw string.
+String softwareVersionLabel(String version) {
+  if (version.length == 4 && int.tryParse(version) != null) {
+    final major = int.parse(version.substring(0, 2));
+    return '$major.${version.substring(2)}';
+  }
+  return version;
+}
+
+/// Official area name for the nasne `pref` code (areaInfoGet).
+///
+/// The response carries no name field, and Sony's area numbering is
+/// not the JIS prefecture code (JIS 41 is 佐賀; the measured unit in
+/// Fukuoka returns 41), so only codes verified against a real unit
+/// are named; everything else falls back to the raw value and labels
+/// are never invented (plan 5.0 principle 5, plan 18).
+///
+/// Verified entries:
+/// - 41 = 福岡 — the owner's unit (Fukuoka, receiving Kitakyushu
+///   stations) returns pref 41; the spelling follows the official
+///   area-name list in torne's PvrResource.cxml.
+String areaPrefLabel(String pref) => switch (int.tryParse(pref)) {
+      41 => '福岡',
+      _ => pref,
+    };
+
 /// Masks an identifier for display, keeping only the last [keep]
 /// characters (B-CAS card ids and similar, plan section 7).
 String maskTail(String value, {int keep = 4}) {
