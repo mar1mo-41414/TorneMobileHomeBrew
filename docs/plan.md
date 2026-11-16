@@ -831,7 +831,7 @@ X_UpdateRecordSchedule の疎な更新について、8 変種の実機行列で�
 
 - 作業機: MarkBookM4 (macOS 27.3)、Xcode 27.1 (xcode-select は Xcode を指す)。CocoaPods 1.17.0 は Homebrew で導入済みだった (非対話シェルでは /opt/homebrew/bin が PATH に無いため、ビルド時は明示的に通す)。
 - Flutter 3.50.0 (安定版、arm64 tarball) を Mac の ~/GitTmp/flutter に導入し、marnux と同バージョンに揃えた。
-- リポは Mac の ~/GitTmp/TorneMobileHomeBrew に Gitea から clone し、pull 専用のビルド用クローンとした (コードの正本作業コピーは marnux)。
+- リポは Mac の ~/GitTmp/TorneMobileHomeBrew に clone し、pull 専用のビルド用クローンとした (コードの正本作業コピーは marnux)。
 - Mac 上で flutter test 56 件全合格。flutter doctor は Xcode 項目 ✓ (Android toolchain はフェーズ 3 の対象のため未整備、Flutter の PATH 警告のみ)。
 
 ### 14.2 ファイル版ストアの実配線 (§13.10 の残件)
