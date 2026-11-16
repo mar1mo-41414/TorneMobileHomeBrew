@@ -73,6 +73,7 @@ void main() {
     expect(services.schedules, isA<SoapScheduleService>());
     expect(services.titles, isA<SoapTitleCatalogService>());
     expect(services.metadata, isA<CompositeMetadataService>());
-    expect(services.playback.isSupported, isFalse);
+    expect(services.playback, isA<DtcpPlaybackEngine>());
+    expect(services.playback.isSupported, isTrue);
   });
 }

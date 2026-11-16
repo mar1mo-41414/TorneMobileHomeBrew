@@ -595,7 +595,7 @@ void main() {
       Channel channelN(int n) => Channel(
             broadcastingType: 2,
             networkId: 0x1111,
-            transportStreamId: 0x2222,
+            transportStreamId: 0x2222 + n,
             serviceId: 0x3300 + n,
             serviceType: 1,
             channelNumber: n + 1,
@@ -680,7 +680,7 @@ void main() {
       Channel channelN(int n) => Channel(
             broadcastingType: 2,
             networkId: 0x1111,
-            transportStreamId: 0x2222,
+            transportStreamId: 0x2222 + n,
             serviceId: 0x3300 + n,
             serviceType: 1,
             channelNumber: n + 1,

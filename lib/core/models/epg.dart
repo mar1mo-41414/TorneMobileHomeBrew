@@ -103,3 +103,32 @@ class EpgGuide {
   int get eventCount =>
       services.fold(0, (sum, s) => sum + s.events.length);
 }
+
+/// The set of subchannel serviceIds (plan 25): within a
+/// (networkId, transportStreamId) group, among video services
+/// (serviceType 1) the lowest serviceId is the main channel and the
+/// rest are subchannels. `branchNumber` is 0 for every service of
+/// the measured fixture and name suffixes are unreliable (the J:COM
+/// main and subchannels share one name), hence this structural rule.
+Set<int> subchannelServiceIds(List<Channel> channels) {
+  final groups = <(int, int), List<Channel>>{};
+  for (final channel in channels) {
+    if (channel.serviceType != 1) continue;
+    groups
+        .putIfAbsent(
+            (channel.networkId, channel.transportStreamId), () => [])
+        .add(channel);
+  }
+  final subchannels = <int>{};
+  for (final group in groups.values) {
+    if (group.length < 2) continue;
+    var mainId = group.first.serviceId;
+    for (final channel in group) {
+      if (channel.serviceId < mainId) mainId = channel.serviceId;
+    }
+    for (final channel in group) {
+      if (channel.serviceId != mainId) subchannels.add(channel.serviceId);
+    }
+  }
+  return subchannels;
+}

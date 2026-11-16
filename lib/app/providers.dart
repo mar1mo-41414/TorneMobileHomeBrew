@@ -46,8 +46,59 @@ final channelCacheProvider = Provider<ChannelCache>(
   (ref) => ChannelCache(ref.watch(keyValueStoreProvider)),
 );
 
+/// The DTCP-IP credential vault (Phase 5, plan 26.4). The pair
+/// itself is read only by the playback engine; the UI uses the
+/// summary provider below.
+final credentialStoreProvider =
+    Provider<CredentialStore>((ref) => SecureCredentialStore());
+
+/// SRM persistence: signed public data in the regular key-value
+/// store (plan 26.4).
+final srmStoreProvider = Provider<KeyValueSrmStore>(
+  (ref) => KeyValueSrmStore(ref.watch(keyValueStoreProvider)),
+);
+
+/// Non-sensitive facts about the imported pair for the settings UI
+/// (presence, device ID, certificate fingerprint). Invalidated
+/// after import / delete.
+final credentialSummaryProvider =
+    FutureProvider<CredentialSummary?>((ref) async {
+  final credentials = await ref.watch(credentialStoreProvider).load();
+  return credentials == null ? null : CredentialSummary.of(credentials);
+});
+
+/// Whether the programme guide shows subchannels (plan 25;
+/// default off), persisted in the key-value store.
+class ShowSubchannelsNotifier extends Notifier<bool> {
+  static const _key = 'epg_show_subchannels';
+
+  @override
+  bool build() {
+    final store = ref.watch(keyValueStoreProvider);
+    Future.microtask(() async {
+      final value = await store.read(_key);
+      if (value != null && value == 'true' && !state) state = true;
+    });
+    return false;
+  }
+
+  Future<void> set(bool value) async {
+    state = value;
+    await ref
+        .read(keyValueStoreProvider)
+        .write(_key, value ? 'true' : 'false');
+  }
+}
+
+final showSubchannelsProvider =
+    NotifierProvider<ShowSubchannelsNotifier, bool>(
+        ShowSubchannelsNotifier.new);
+
 final playbackEngineProvider = Provider<PlaybackEngine>(
-  (ref) => UnsupportedPlaybackEngine(),
+  (ref) => DtcpPlaybackEngine(
+    credentialStore: ref.watch(credentialStoreProvider),
+    srmStore: ref.watch(srmStoreProvider),
+  ),
 );
 
 /// The per-device service bundle, assembled from a registration.
@@ -76,6 +127,8 @@ DeviceServices assembleDeviceServices(
   NasneDevice? describedDevice,
   http.Client? client,
   KeyValueStore? keyValueStore,
+  CredentialStore? credentialStore,
+  SrmStore? srmStore,
 }) {
   final device = describedDevice ?? NasneDevice.direct(reg.host);
   final plain = WebApiTransport(reg.host, client: client);
@@ -111,7 +164,11 @@ DeviceServices assembleDeviceServices(
       metadata: metadata,
     ),
     metadata: metadata,
-    playback: UnsupportedPlaybackEngine(),
+    playback: DtcpPlaybackEngine(
+      credentialStore: credentialStore ?? SecureCredentialStore(),
+      srmStore: srmStore ??
+          KeyValueSrmStore(keyValueStore ?? InMemoryKeyValueStore()),
+    ),
   );
 }
 
@@ -120,5 +177,7 @@ final deviceServicesProvider = Provider.family<DeviceServices, RegisteredNasne>(
     reg,
     client: ref.watch(httpClientProvider),
     keyValueStore: ref.watch(keyValueStoreProvider),
+    credentialStore: ref.watch(credentialStoreProvider),
+    srmStore: ref.watch(srmStoreProvider),
   ),
 );

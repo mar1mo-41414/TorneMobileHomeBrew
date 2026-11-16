@@ -12,6 +12,7 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
 import 'error_messages.dart';
@@ -163,7 +164,8 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
                   onRetry: () => ref.invalidate(epgGuideProvider(reg)),
                 ),
                 data: (guide) => _GuideView(
-                  guide: guide,
+                  guide: _visibleGuide(
+                      guide, ref.watch(showSubchannelsProvider)),
                   logos: ref.watch(channelLogosProvider(reg)).value ?? const {},
                   selectedDay: _selectedDay,
                   onSelectDay: (day) => setState(() {
@@ -178,6 +180,22 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
               ),
     );
   }
+}
+
+/// The guide with subchannels removed unless [showSubchannels]
+/// (plan 25: hidden by default; the official app does not show
+/// subchannel titles either, plan 24).
+EpgGuide _visibleGuide(EpgGuide guide, bool showSubchannels) {
+  if (showSubchannels) return guide;
+  final subchannels = subchannelServiceIds(
+      guide.services.map((s) => s.channel).toList());
+  if (subchannels.isEmpty) return guide;
+  return EpgGuide(
+    broadcastingType: guide.broadcastingType,
+    services: guide.services
+        .where((s) => !subchannels.contains(s.channel.serviceId))
+        .toList(),
+  );
 }
 
 class _GuideView extends StatelessWidget {

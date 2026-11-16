@@ -11,6 +11,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
+import 'dtcp_credential_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
 import 'widgets.dart';
@@ -153,6 +154,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   label: const Text('登録'),
                 ),
               ],
+            ),
+          ),
+          const Divider(),
+          _sectionTitle(context, '番組表'),
+          SwitchListTile(
+            title: const Text('サブチャンネルを表示'),
+            subtitle: const Text('番組表にサブチャンネル (2 / 3 チャンネル) を含めます'),
+            value: ref.watch(showSubchannelsProvider),
+            onChanged: (value) =>
+                ref.read(showSubchannelsProvider.notifier).set(value),
+          ),
+          const Divider(),
+          _sectionTitle(context, '録画再生 (DTCP-IP)'),
+          ListTile(
+            title: const Text('DTCP-IP 資格情報'),
+            subtitle: Text(
+              ref.watch(credentialSummaryProvider).when(
+                    data: (summary) => summary == null
+                        ? '未インポート (再生には資格情報が必要です)'
+                        : 'インポート済み (デバイス ID: ${summary.deviceIdHex})',
+                    loading: () => '確認中…',
+                    error: (_, _) => '読み込みエラー',
+                  ),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const DtcpCredentialScreen(),
+              ),
             ),
           ),
           const Divider(),

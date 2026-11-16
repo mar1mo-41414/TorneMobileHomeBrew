@@ -12,7 +12,9 @@ import 'package:material_ui/material_ui.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
+import 'error_messages.dart';
 import 'format.dart';
+import 'player_screen.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
 import 'widgets.dart';
 
@@ -264,27 +266,60 @@ class TitleDetailView extends ConsumerWidget {
           label: const Text('再生'),
         ),
         const SizedBox(height: 8),
-        const Text('再生は v1 では未実装です (下のボタンを押すと案内が表示されます)。'),
+        const Text('再生には DTCP-IP の資格情報が必要です (設定画面からインポートできます)。'),
       ],
     );
   }
 
   Future<void> _play(BuildContext context, WidgetRef ref) async {
     final engine = ref.read(deviceServicesProvider(reg)).playback;
-    if (!engine.isSupported || title.res.isEmpty) {
+    if (!engine.isSupported) {
       await _showPlaybackNotice(context);
       return;
     }
+    if (title.res.isEmpty) {
+      showSnack(context, '再生可能なコンテンツがありません');
+      return;
+    }
     try {
-      await engine.startPlayback(title, title.res.first);
+      final session = await engine.startPlayback(title, title.res.first);
+      if (!context.mounted) {
+        await session.stop();
+        return;
+      }
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => PlayerScreen(title: title, session: session),
+        ),
+      );
     } on NasneError catch (e) {
       if (!context.mounted) return;
       if (e.category == NasneErrorCategory.unsupported) {
         await _showPlaybackNotice(context);
+      } else if (e.category == NasneErrorCategory.validation) {
+        await _showCredentialGuidance(context, userMessageForError(e));
       } else {
         showSnack(context, '再生を開始できませんでした');
       }
     }
+  }
+
+  Future<void> _showCredentialGuidance(
+      BuildContext context, String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('再生について'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showPlaybackNotice(BuildContext context) {

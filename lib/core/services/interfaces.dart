@@ -109,13 +109,23 @@ abstract interface class MetadataService {
   Future<Map<int, List<int>>> getChannelLogos(int broadcastingType);
 }
 
-/// Playback boundary (plan 5.7). v1 ships only the stub, which reports
-/// [NasneErrorCategory.unsupported]; a real engine (DTCP-IP) can be
-/// substituted later without UI changes.
+/// A running playback session (Phase 5): the player reads the
+/// decrypted stream from [mediaUri] (a loopback URL) until [stop]
+/// tears the session down.
+abstract interface class PlaybackSession {
+  Uri get mediaUri;
+  Future<void> stop();
+}
+
+/// Playback boundary (plan 5.7). v1 shipped only the stub, which
+/// reports [NasneErrorCategory.unsupported]; Phase 5 substitutes
+/// the DTCP-IP engine (plan 26) behind the same boundary.
 abstract interface class PlaybackEngine {
   bool get isSupported;
 
-  /// Starts playback of [title] via [res]. The v1 stub always throws
-  /// a NasneError of category `unsupported`.
-  Future<void> startPlayback(RecordedTitle title, TitleRes res);
+  /// Starts playback of [title] via [res] and returns the live
+  /// session. The v1 stub always throws a NasneError of category
+  /// `unsupported`; the DTCP-IP engine throws `validation` when no
+  /// credential pair has been imported.
+  Future<PlaybackSession> startPlayback(RecordedTitle title, TitleRes res);
 }
