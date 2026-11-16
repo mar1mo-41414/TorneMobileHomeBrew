@@ -1176,3 +1176,93 @@ Vita 版 torne の `PvrResource.cxml` の文字列プールにある 53 地域�
 ### 20.4 フェーズ 4 完了条件との対応
 
 - §6 の完了条件「両成果物 (IPA / APK) が手順どおりに再生成でき、導入手順だけで本人の端末に入れられる」について: IPA は §14 の手順 (Mac で署名なしビルド → Payload 形式に梱包)、APK は §17 の手順 + 20.2 の署名で再生成でき、導入手順は README とリリースノートに整備した。リリース添付物と本人の手元にある最新ビルドは同一ファイルであり、入れ替えはそのまま行える。
+
+---
+
+## 21. 番組表 (EPG) の実装 (2026-11-16)
+
+§12.8 で研究スレッドに分離していた `chEpg/EPGGet` の要求形式を特定し、番組表を実装した。本人の指示「番組表進んで」による。実機は日常録画中のため、実験は読み取り系のみ (EPGStoreStart/Stop は公式の EPG 取得フローそのもので、開始したセッションはすべて停止済み。録画 2 件・予約 0 件の状態は不変)。
+
+### 21.1 サーバ側解析 (公式 FW の webapi バイナリ)
+
+公式 rootfs 抽出の `opt/dtvtuner/bin/webapi` (MIPS32 LE) を Ghidra で解析した。
+
+- エンドポイント記述子テーブル (fileoff 約 0x515120、`{u32 handler, u32 name_ptr, u32 flags}`) から、対象ハンドラを特定: EPGGet → `0x41c570` (flag 4)、EITPFGet → `0x41c400` (flag 1)、EPGStoreStart → `0x41ca80` (flag 2)、EPGStoreStop → `0x41c84c` (flag 6)、channelLogoDataGet → `0x41cda4` (flag 1)。flag の内訳は 1=通常 GET 119 件、2=Start/Set 系 39 件、4=2 件 (EPGGet と additionalInfoSet)、6=6 件。
+- **flag 4 の POST は Content-Type が正確に `application/binary` でないとフレームワーク層で 400** になる (form-urlencoded / octet-stream / 空ボディはいずれも 400 を実測)。フェーズ 0 で EPGGet が「400 (空ボディ)」だったのはこのゲートである。
+- EPGGet ハンドラの流れを全行逆アセンブル + Ghidra で確定: 引数 (パラメータ文字列) が NULL なら 500 → simulchkCheck(31) → 呼び出しカウンタで `/opt/dtvtuner/tmp/00000013/<n>` に**要求ボディをファイルへ保存** (`0x4143fc`) → EPG エージェントを起こし (`0x418c08`、utilSemGive) → ジョブ投入 (`0x417acc`: 要求ファイルを `/var/opt/dtvtuner/tmp/00000005/` へコピーし `extApiJobExec(2, 200, …, 30000ms)`、出力ファイル名を返す) → 出力ファイルを `application/binary` で応答。つまり**要求ボディは「ファイルとして EPG ジョブへ渡される何か」**であり、パラメータではない。
+- EITPFGet ハンドラも確定: GET、クエリ `networkId` / `transportStreamId` / `serviceId` (各 < 0x10000) → ジョブ `extApiJobExec(1, 101, …)` が作るファイルを応答。形式は正しいが実機では後述のとおり 500 のまま (21.12)。
+- EPGStoreStart は POST 本体の form 形式 (`broadcastingType=2&withClear=1`) で受け、`broadcastingType` 2/3/4 → ネットワークペア変換を経てストアジョブを起動し `{ "errorcode": 0 }` を返す。EPGStoreStop は成功時も含め `{ "errorcode": 101 }` を観測 (101 の意味は未確定)。
+
+### 21.2 クライアント側解析 (公式 torne)
+
+- Android 版 `libPvrMain_plus.so`: EPGGet/EITPFGet/LogoGet を発行する単一の大きな関数 (`0x6c71b0`) を特定。EPGGet は **POST + X-DTVToken + `Content-type: application/binary`** で、ボディは要求オブジェクトの +0x40 にある「事前に組み立て済みのバッファ (begin/end ペア)」。トークン計算ヘルパ (`0x6c3214`) は PIN + パス + ボディ先頭 256 バイトの SHA-1 で、既知の式と一致した。ボディの組み立て箇所 (呼び出し側) は巨大関数内の特定に至らず、形式の決定打は実機実験 (21.4) から得た。
+- iOS 版 (復号済み torneplus) も同構造: 送信ヘルパ (`0x1004574c8`) が `"chEpg/EPGGet"` とボディペアとトークンを受け取る。RTTI から `EPGQuickGet` / `ParserEPGVersion` / `parseEPG` 等のクラス・関数名を確認し、「版数情報と EPG 本体が対になる」設計であることは裏付けられた。
+- 本機 Web UI (`nasne_home`) は EPG クライアントではない (EPGGet/EITPF 参照なし)。XsrsSrv の SOAP にも EPG アクションはない (SCPD 実測)。
+
+### 21.3 EPGVersionInfoGet 版数表の構造
+
+応答 (地デジ 2,900 バイト) を解読した:
+
+- ヘッダ 12 バイト: `[u32 BE = 版数世代タイムスタンプ (非 Unix エポック。実測で壁時計と同期して増加)][01][0c = ヘッダ長][02 = broadcastingType][08 = 日数][u16 BE = レコード数 21][00 00]`
+- レコードは 144 バイト × N: `[nid u16 BE][tsid u16 BE][sid u16 BE][flags u16 BE = 0xc000]` + 68 バイトの版数ブロック × 2 (各 `[u32 LE = 8][版数バイト群][60 バイトの版数列 (28 + 32)]`、セグメントごとの版数カウンタ)。
+- 地デジは 21 サービス (channelListGet の 24 から sid 56359 / 56363 / 56375 を除く)。BS (bt=3) は 8,348 バイト / 73 件でタイムスタンプ 0 (本機は衛星受信環境なし)、CS (bt=4) は 4,412 バイト / 55 件。
+
+### 21.4 実機実験: 要求形式の確定
+
+作業領域 `tmhb.work/2026-11-16-epg/` の probe1〜16 で段階的に確定した (実機は読み取りのみ):
+
+1. Content-Type ゲートを通過する形 (application/binary) でも、空・ゼロ埋め・ヘッダのみ等のボディはすべて 500。
+2. EPGStoreStart でストアを開始し 30 秒間隔で 180 秒ポーリングしても、版数表のハッシュは不変で EPGGet/EITPFGet は 500 のまま → **「ストア蓄積待ち」仮説は棄却** (500 はタイミングではなく構造の問題)。
+3. **決定打: ボディ = 本機自身の EPGVersionInfoGet 応答そのものの繰り返し**。×1 (2,900 B) と ×2 (5,800 B) は 500、**×3 〜 ×8 は HTTP 200 で 222,881 バイトの応答** (毎回バイト同一、SHA-256 先頭 `ba6e52454a37`、決定的)。最小成功ボディは二分探索で **6,440 バイト** (繰り返しの接頭辞、6,439 は 500。144 バイトのレコード境界には一致しない)。
+4. bt2+bt3+bt4 の連結 (15,660 B) は 500 → **混在連結は棄却**。受理規則は「自己整合した地デジ版数表の繰り返しで 6,440 バイト以上」と実測できたが、文法としての完全な説明 (なぜこの形か) には至っていない (21.12)。
+5. 再現レシピ (新しく取得した版数表でも成立を確認): `body = EPGVersionInfoGet(broadcastingType=2) × 3` を POST `chEpg/EPGGet`、Content-Type `application/binary`、X-DTVToken = base64(SHA1((PIN + "/chEpg/EPGGet") + body[:256]))。応答約 0.5 秒。
+
+### 21.5 応答形式の解読
+
+- 応答全体は **1 バイト XOR 0x9d** で難読化されており、XOR 後は zlib ストリーム (`78 9c`) になる (鍵はロゴファイルの PNG マジック探索から特定)。展開すると 508,524 バイトの平文。
+- 平文 = サービスブロックの列。各ブロックは 18 バイトヘッダ `[7 バイト可変][sid u16 BE (+7)][flags 1 バイト][u16 (+10)][nid u16 BE (+12)][tsid u16 BE (+14)][u16 (+16)]` + イベント列。ブロックは channelListGet の (nid, tsid) を錨に sid を検証して located する。
+- イベントは EIT 形式そのもの: `[event_id u16 BE][開始 MJD u16 BE][開始時刻 BCD 3 バイト][長さ BCD 3 バイト][descriptors_length u16 BE][記述子列]`。記述子は標準 EIT で、0x4D (short event、番組名と短文)、0x4E (extended event、項目は「番組内容」「出演者」等)、0x54 (content、ジャンル)。
+- 実測カバレッジ (2026-11-16 夕のスナップショット): **20 サービス、2,828 イベント、8 日分 (2026-11-16 09:55 〜 2026-11-23 23:50)**。サービスあたり 33〜334 イベント。タイトル (0x4D) を持つイベント 714 件、番組内容 488 件、出演者 471 件 (実装後の実機再取得時も同数)。末尾ブロックの後ろに 4 バイトの残余 (コンテナ末尾) があるのみで、イベント走行は全ブロック完走する。
+- EIT_PF (現在/次) もこのデータセットに含まれるため、番組表の範囲では EITPFGet は不要。
+
+### 21.6 文字コード: ARIB STD-B24
+
+- 記述子内テキストは ARIB STD-B24 (8 単位符号)。素朴な JIS X 0208 ペア復号では約 2 割が化ける。化けの主因は符号表の初期状態と呼び出しの取り違えで、具体的には **0x1d = SS3 (G3 への単発シフト)、0x19 = SS2、GR の初期集合はひらがな集合、ESC $ ; は追加記号 (漢字集合 + 85 区以降の外字表)** が要点だった。タイトル末尾に頻出する `1b 24 3b 7a 56` は [字] の外字 1 文字である。
+- 復号は、実績のある参照実装 `@danything/arib` (MIT、denpa プロジェクト) の `decodeAribText` を Dart へ移植した (`lib/core/arib_b24.dart` + `lib/core/arib_b24_tables.dart`、出典を明記)。基表は参照実装と同じ WHATWG 系 EUC-JP 対応で生成した (Python の euc_jp コーデックとは 89 セルが異なり、〜 (U+FF5E) / － (U+FF0D) 等の差が実測の不一致 141 件の全因だった)。
+- **検証: 実機コーパス全 6,093 テキスト (タイトル・短文・項目・本文) で参照実装と Dart 移植の出力が完全一致 (不一致 0)**。FFFD 率は素朴復号の約 21% → 0%。
+- 外字の番組マーク (🈑 等の囲み文字) は、JSON 経路の PUA 形式と同じ角括弧表記 ([字] 等) に `normalizeBroadcastText` で寄せた (補助面コードポイントの対応表を追加。フォントに無い字形を出さない §16 の方針と同一)。
+
+### 21.7 チャンネルロゴ (channelLogoDataGet)
+
+- 応答も XOR 0x9d の下にあり、本体は **zlib ストリームの列**。先頭は 8 バイトのファイルヘッダレコード、続いてサービスごとのレコードが並ぶ。
+- 各レコードは展開すると `[20 バイトヘッダ][PNG]`: ヘッダは `[+2 u16 BE = 展開後レコード長][+14 u16 BE = serviceId][+18 u16 BE = PNG 長 (0 = ロゴなし)]`。地デジ 24 サービス全件にレコードがあり、**22 件が PNG (64×36 等) を持ち**、ロゴなしは TVQ 臨時 (sid 56363) と G ガイド (sid 56479)。
+- 実装上の注意: dart:io の `ZLibDecoder.convert` は切断入力でも例外を投げず部分出力を返すため、連結ストリームの境界は試行変換では求められない。展開結果の Adler-32 がストリーム末尾 4 バイトと一致する位置を境界として特定する方式にした (`lib/core/parsing/epg.dart`)。
+
+### 21.8 実装
+
+§12.8 の取り込み条件どおり、取得は MetadataService の裏側に追加し、既存画面の変更は不要な形にした:
+
+- `lib/core/services/epg.dart` (新規): `WebApiEpgService`。版数表取得 → ×3 連結 → EPGGet → 展開・解析、とロゴ取得。`lib/core/services/metadata.dart` の `CompositeMetadataService` が Browse (DLNA) と EPG (WebAPI) を合成し、MetadataService インタフェース (`getProgrammeGuide` / `getChannelLogos` を追加) を満たす。
+- `lib/core/parsing/epg.dart` (新規): XOR/zlib、ブロック・イベント・記述子の解析、ロゴレコードの解析。`lib/core/models/epg.dart` (新規): `EpgGuide` / `EpgServiceGuide` / `EpgEvent`。
+- `lib/core/transport/webapi_transport.dart`: `postBinary` を追加 (Content-Type は正確に `application/binary`、トークンは生ボディで計算)。`lib/core/token.dart`: `tokenForBytes` / `computeTokenBytes` を追加。`lib/core/endpoints.dart`: `epgGet` を定義テーブルに追加 (「実測したものだけ載せる」方針に基づき、本節で実測が済んだため追加)。
+- 画面 (`lib/ui/epg_screen.dart`、新規): 公式 torne の番組表に倣ったチャンネル×時間グリッド。日別表示 (8 日分の日付チップ)、チャンネル列ヘッダにロゴと局名、時刻ルーラーと現在時刻ライン、タップで詳細 (放送日時・長さ・短文・番組内容・出演者・その他項目) をダイアログ表示。タブ「番組表」を録画済みと設定の間に追加 (AppTabs.epg = 3、設定は 4 へ)。
+- 版数は 1.1.0+2 に上げた。
+
+### 21.9 テストと実機検証
+
+- テストは全 104 件合格 (従来 90 + 新規 14)、`flutter analyze` クリーン。新規テスト (`test/epg_test.dart`) はすべて合成フィクスチャ (実放送の番組名等は含めない): B24 復号ベクトル (参照実装で確認済み)、トークンの既知値、合成平文でのパーサ検証、合成ロゴファイル、モック HTTP での取得レシピ検証 (要求ボディ = 版数表×3、Content-Type、トークンを assert)、番組表画面の widget テスト。
+- 実機 E2E (実装した Dart スタックそのもの、読み取りのみ): 地デジ 20 サービス / 2,853 イベント (データセットは単体側で随時更新されるため件数は変動する。取得スナップショットでのパーサ一致は 2,828 件で Python 参照とサービス別まで完全一致)、ロゴ 22 件を取得。録画 2 件・予約 0 件は不変。
+
+### 21.10 ビルド配置 (v1.1.0)
+
+- **IPA** (署名なし、§14 の Mac 経路): 8,680,149 バイト、SHA-256 `0b926e587df223f3b583ec4f468f4dabd84c1880c69104979c198910cfc17b6c`。Info.plist の版数 1.1.0 と表示名「torne mobile HB」を確認。marnux `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.1.0.ipa` に配置。
+- **APK** (配布用署名、§20.2 の方式): 55,866,895 バイト、SHA-256 `28834b7b2fe9665f02dc0e4125ae085a05794bd2f300fc381182ed1c3f7b6398`。apksigner で署名証明書が §20.2 の証明書 (SHA-256 `e60cfeda…`) と一致することを確認 (v1.0.0 の配布用署名版から上書き可能)。marnux `~/ダウンロード/TorneMobileHomeBrew-1.1.0.apk` に配置。
+- GitHub Release は今回は作らない (本人の手元配置まで)。
+
+### 21.11 未確定事項
+
+- **EITPFGet は形式確定後も実機で 500** (全サービス・全条件)。ジョブ 101 の失敗か simulchk の写像かは未判別。仮説 (ラベル付き): チューナー/EPG エンジンが受信動作中でないとジョブが成立しない (本機は待機中で tuningStatus=0)。番組表の範囲では不要なため深追いしない。
+- **EPGGet の受理規則の文法**: 「版数表×3 (6,440 バイト以上)」は実測で再現するが、ジョブ側がボディをどう解釈しているか (版数比較で差分を返す設計のはずが、常に全件が返る) は未解明。実装は実測レシピに固定し、将来ファームウェア更新で壊れたら再調査する。
+- BS/CS (broadcastingType 3/4) の EPGGet は未検証 (本機に衛星受信環境がなく、版数表のタイムスタンプも 0)。画面は地デジのみ。
+- ブロックヘッダ +10 / +16 の u16 (先頭バイトが共通する対) の意味、EPGStoreStop の errorcode 101 の意味は未確定 (解析には不要)。
+- 先頭ブロックのイベントだけ 0x4D が無いように見える観察 (ブロック種別依存か) は未解明。タイトルなしイベントはそのまま「情報なし」として扱う。
