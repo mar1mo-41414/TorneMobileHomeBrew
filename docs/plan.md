@@ -77,6 +77,8 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 エンドポイント名は [21](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/21_torne_mobile_ipa_static_analysis.md) §3.2 / [41](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/41_torne_vita_fagdec_eboot_analysis.md) §3.2 の表記 (カテゴリ/名前) に従う。「iOS のみ」「Vita のみ」の注記は両版の文字列実在の分類であり、実機での実働はフェーズ 0 で確認する。なお、v1 の必須範囲は §1.2 で確定しており、本節の表には後続バージョン候補の分も資料として含む (範囲の確定は §1.2 が正)。
 
+**フェーズ 0 の実測による経路の確定 (2026-11-16 追記)**: 本節の表は静的解析時点の対応づけであり、各機能の**実際に使う経路 (トランスポート) は §11 の実測と §12.1 の確定表が正**である。特に録画予約・録画一覧については、当初「WebAPI (JSON) を主経路、UPnP を予備」としていた前提が実測で逆転した (JSON 形は LAN から到達できず、UPnP SOAP が主経路。§11.6・§11.7)。§3.3・§3.4・§3.5 は実測に合わせて書き換え済みである。
+
 ### 3.1 発見・登録・初期設定
 
 | 機能 | 手段 / エンドポイント |
@@ -109,28 +111,33 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 | 機能 | 手段 / エンドポイント |
 |---|---|
-| チャンネル構成 | `status/channelListGet` |
-| EPG 版数確認 | `status/EPGVersionInfoGet` |
-| 番組データ本体 | **取得経路が未確定** (§10)。候補は DMS (ポート 60151) の EPG ファイル (`EPG_TRDEPG_FILE.dat`、BS/CS/USB-HDD 系とロゴファイル) — [21](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/21_torne_mobile_ipa_static_analysis.md) §3.3 で torne が取得する URL テンプレートとして確認済み。ファイル形式の解析がフェーズ 0 の課題 |
+| チャンネル構成 | `status/channelListGet` (実測: 要パラメータ `broadcastingType`、地上は `=2`。§11.4) |
+| 現在 / 次番組 (v1 の番組情報) | `status/liveStreamStatusListGet` の `EIT_PF` (実測で取得経路を確定。§11.4・§11.9)。v1 はこの「現在/次」表示で組む (§12.8) |
+| チャンネルロゴ | `chEpg/channelLogoDataGet` (実測で取得可能、バイナリ応答。§11.4) |
+| EPG 版数確認 | `status/EPGVersionInfoGet` (実測: 応答は JSON ではなくバイナリの版数テーブル。§11.4) |
+| 番組データ本体 (EPG グリッド用) | **取得形式が未確定**。フェーズ 0 で、アプリ内テンプレートの経路 (DMS ポート 60151 の `EPG_*.dat`) は本機で到達不可と確定し、候補は `chEpg/EPGGet` の要求バイナリ形式の解明に絞られた (§11.9)。v1 をブロックしない研究スレッドとして分離する (§12.8) |
 
 ### 3.4 録画予約
 
-| 機能 | エンドポイント |
+**主経路は UPnP SOAP (ポート 64230、XsrsSrv の `X_ScheduledRecording:2`)** — フェーズ 0 の実測で確定した (§11.6・§11.7)。当初主経路と想定した JSON 形 (`schedule/*`) は 64210 で 404、他ポートでも到達できず、LAN のクライアントが使う面ではない。
+
+| 機能 | 手段 (SOAP アクション) |
 |---|---|
-| 予約一覧 | `schedule/reservedListGet` (iOS のみ `schedule/reservedListGet2` も) |
-| 予約作成 | `schedule/reservedInfoCreate` |
-| 予約更新 | `schedule/reservedInfoUpdate` |
-| 予約削除 | `schedule/reservedInfoDelete` |
-| 競合確認 | `schedule/conflictListGet` |
-| ビットレート情報 | `schedule/reservedInfoBitrateGet` |
-| (代替経路) | UPnP `X_ScheduledRecording:2` の SOAP アクション ([21](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/21_torne_mobile_ipa_static_analysis.md) §3.3 にテンプレートあり)。WebAPI を主経路とし、UPnP は実機検証で WebAPI が不足する場合の予備とする |
+| 予約一覧 | `X_GetRecordScheduleList` (Result は xsrs 形式 XML) |
+| 予約作成 | `X_CreateRecordSchedule` (全項目テンプレート必須。§11.7) |
+| 予約更新 | `X_UpdateRecordSchedule` (sparse な部分更新のみ。開始時刻・長さは変更不可。§11.7) |
+| 予約削除 | `X_DeleteRecordSchedule` (ID はリスト取得時の item id を使う。作成応答の `0x` 接頭辞付き ID は 803 で失敗する。§11.7) |
+| 競合確認 | `X_GetConflictList` |
+| (到達不可) | JSON 形の `schedule/reservedListGet` / `reservedInfoCreate` / `reservedInfoUpdate` / `reservedInfoDelete` / `conflictListGet` / `reservedInfoBitrateGet` は LAN から到達できない (§11.6)。定義テーブルには「LAN では使わない経路」として記録だけ残す (§12.2) |
 
 ### 3.5 録画一覧・管理
 
+**タイトル一覧の主経路は UPnP SOAP の `X_GetTitleList` (64230、xsrs 形式)** — フェーズ 0 の実測で確定した (§11.7)。JSON 形の `recorded/titleListGet` は LAN から到達できない (§11.6)。メタデータの補完 (残コピー回数、res 情報) は DLNA Browse (§11.8)、件数は WebAPI の count 系 (実働を確認) を併用する。
+
 | 機能 | エンドポイント / 手段 |
 |---|---|
-| タイトル一覧 | `recorded/titleListGet` |
-| 件数 | `recorded/recordedContentCountGet` / `recorded/recordedContentMaxCountGet` (いずれも iOS のみ) |
+| タイトル一覧 | SOAP `X_GetTitleList` (主経路)。JSON 形 `recorded/titleListGet` は到達不可 |
+| 件数 | `recorded/recordedContentCountGet` / `recorded/recordedContentMaxCountGet` (いずれも iOS のみとされていたが実働を確認。§11.4) |
 | 詳細情報の取得・設定 | `recorded/recordedContentAdditionalInfoGet` / `recorded/recordedContentAdditionalInfoSet` |
 | タイトル情報の更新 | `recorded/titleUpdate` |
 | サムネイル | `recorded/recordedContentThumbnailGet` / `recorded/thumbnailMapGet` |
@@ -195,7 +202,18 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 ## 5. アーキテクチャ
 
-方式は案 A (Flutter) を前提に書くが、層の切り分け自体は他案でも共通する。
+方式は案 A (Flutter) を前提に書くが、層の切り分け自体は他案でも共通する。本節は方針の置き場とし、フェーズ 1 に向けた具体設計 (モジュール構成、データモデル、エラー表現) は §12 に置く。
+
+### 5.0 設計原則: 差し替え可能なモジュール式 (2026-11-16 本人指示)
+
+**今後も想定外の発見があり得る前提で、基本は差し替え可能なモジュール式にする。** フェーズ 0 では「予約・録画一覧の主経路は WebAPI (JSON)」という計画前提が実測で逆転した (§11.6)。この種の経路の逆転・仕様の相違は今後も起こり得るものとして、コア設計は次を原則とする。
+
+1. **機能領域ごとにインタフェースを切る**: 発見・登録、情報取得、予約、録画一覧、設定、メタデータの各領域に、トランスポートに依存しないインタフェース (Dart の abstract class) を定義する。画面とドメインロジックはこのインタフェースにだけ依存し、具体的なトランスポート (SOAP / WebAPI JSON / DLNA) を知らない。
+2. **トランスポート実装はインタフェースの裏側に置く**: SOAP 実装・WebAPI 実装・DLNA 実装は、それぞれ対応する領域インタフェースの差し替え可能な実装クラスとする。経路が変わった場合は、実装クラスの差し替えと組み立て (依存性注入) の変更で済み、画面・ドメイン側は書き換えない。
+3. **エンドポイント定義は可能な範囲でデータ駆動にする**: パス / ポート、メソッド、パラメータ、認証要否、応答形式といったエンドポイントの属性は、定義テーブル (コード内の定数テーブル) に集約する。経路変更がコード全体の書き換えではなく、定義の差し替え + 実装クラスの追加・差し替えで済む形にする。ただし定義テーブルに載せるのは実測で確認した範囲に限る (未検証の定義を大量に取り込まない、という従来方針は維持する)。
+4. **再生も同じ原則の一例とする**: §5.7 の `PlaybackEngine` 境界は、この原則を再生領域に適用したものと位置づける (v1 はスタブ実装、将来は実エンジンに差し替える)。
+
+具体的なモジュール一覧とインタフェースの切り方は §12.2 に定める。
 
 ### 5.1 全体構成
 
@@ -204,7 +222,10 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
    |
 [アプリケーション層]  画面状態・キャッシュ・操作の調停
    |
-[コア層]  発見 (SSDP) / WebAPI クライアント / UPnP-DLNA クライアント / ローカル状態
+[領域インタフェース]  発見・登録 / 情報取得 / 予約 / 録画一覧 / 設定 / メタデータ (§5.0)
+   |
+[トランスポート実装]  SOAP (XSRS・PvrControl・ContentDirectory) / WebAPI JSON / SSDP
+                       + エンドポイント定義テーブル + ローカル状態
    |
 [プラットフォーム層]  秘密情報ストレージ (Keychain / Keystore)、ネットワーク到達性、
                        将来: 再生エンジン (§5.7 の境界)
@@ -214,24 +235,26 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 ### 5.2 発見・登録
 
-- SSDP M-SEARCH (`urn:schemas-upnp-org:device:MediaServer:1`) で LAN 内の nasne を列挙し、description (friendlyName / modelName) で nasne であることを確認する ([37](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/37_pydtcpip_live_verification.md) で実機の description 形式は確認済み)。
+- SSDP M-SEARCH (`urn:schemas-upnp-org:device:MediaServer:1`) で LAN 内の nasne を列挙し、description (friendlyName / modelName) で nasne であることを確認する ([37](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/37_pydtcpip_live_verification.md) で実機の description 形式は確認済み)。**実機の SSDP 応答には USN ヘッダが無いため、発見の識別は USN に依存せず、LOCATION (ポート 58888 のデバイス記述) の取得と内容確認を正とする** (§11.2)。
 - 発見できない環境 (マルチキャスト制限等) に備え、アドレスの手動登録を必須機能とする。
-- 登録時に PIN 検証 (`config/PINVerify`) を行い、登録情報 (アドレス、機器識別、PIN) を保持する。PIN は秘密情報ストレージに置く (§5.5)。
+- 登録の検証は `config/PINVerify` で行う。PIN は本体 MAC アドレスから導出され (`status/networkIfInfoGet` の `macAddr`、§11.5)、PINVerify は「導出した PIN から計算したトークンが正しいこと」の確認である (PIN そのものは送らない)。登録情報 (アドレス、機器識別、MAC) を保持し、PIN の導出素材は秘密情報ストレージに置く (§5.5)。
 - 複数台対応は、データモデルは複数台を保持できる形にし、UI は単一台前提とする (後から外せるようにする)。v1 の最小範囲決定からの扱いは §9 の項目 5 に記録した。
 - OS 側の制約 (要・実装時確認): iOS のローカルネットワーク許可とマルチキャスト受信の扱い、Android のマルチキャストロック取得。発見が OS 制限で成立しない場合は手動登録へ誘導する。
 
 ### 5.3 WebAPI クライアントと認証
 
-- ベース URL は `http://<nasne>:64210/`、パスは `<カテゴリ>/<名前>` (例: `recorded/titleListGet`)。応答は JSON 前提 (フェーズ 0 で各エンドポイントの実スキーマを確定する)。
-- 認証は `X-DTVToken` ヘッダ。トークンは PIN を素材とする SHA-1 ベースの算出で、開発側に実績のある形式を用いる。**どのエンドポイントがトークンを要求するか (全てか、config 系のみか等) は文字列解析では確定していない**ため、フェーズ 0 でエンドポイントごとに要否を実測する。
-- エラー処理: HTTP ステータスと応答 JSON のエラー情報を画面に伝える共通形にする。タイムアウトと再試行は読み取り系のみ (作成・削除等の書き込み系は自動再試行しない — 二重予約や二重削除を防ぐ)。
-- クライアントは「定義テーブル駆動」にしない。v1 で使うエンドポイントだけを型付きで実装し、未使用の定義 (v1.00 テーブルの 109 件等) は取り込まない (実働未確認の面を広げないため)。
+WebAPI (JSON) が担うのは**情報取得・状態・設定系と登録検証**であり、予約・録画一覧は担わない (§12.1)。これはフェーズ 0 の実測に基づく分担である。
+
+- ベース URL は `http://<nasne>:64210/`、パスは `<カテゴリ>/<名前>` (例: `status/HDDListGet`)。応答は原則 JSON だが、バイナリを返すものもある (`status/EPGVersionInfoGet`、`chEpg/channelLogoDataGet`、各種 Map 取得。§11.4)。応答形式はエンドポイント定義側の属性として持つ (§12.2)。
+- 認証は `X-DTVToken` ヘッダ。算出式は `base64(SHA1(PIN + パス + 本文の先頭 256 文字))` で確定した (§11.5)。要否も実測で確定済み: **GET は全て認証なし、POST の Set 系は必須**。トークンの算出と保持は認証モジュールに閉じ、領域インタフェースの側には出さない (§12.4)。
+- エラー処理: HTTP ステータスと応答 JSON の `errorcode` を、§12.6 の統一エラー表現へ変換して画面に伝える。タイムアウトと再試行は読み取り系のみ (作成・削除等の書き込み系は自動再試行しない — 二重予約や二重削除を防ぐ)。
+- エンドポイントの属性 (パス、メソッド、パラメータ、認証要否、応答形式) は定義テーブルに集約する (§5.0 の原則 3)。テーブルに載せるのは v1 で使う実測済みの範囲に限り、応答のパースはエンドポイントごとの型付きモデルで行う (定義テーブルは「行き先と形式」の管理、モデルは「中身の型」の管理と分ける)。
 
 ### 5.4 UPnP / DLNA 層
 
-- ContentDirectory `Browse` で DIDL を取得し、録画メタデータの補完 (残コピー回数 `av:COGCount`、res の protocolInfo、DTCP1HOST / DTCP1PORT) に使う。資格情報なしで成立することは [37](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/37_pydtcpip_live_verification.md) で実証済み。
-- X_PvrControl / X_ScheduledRecording の SOAP は、WebAPI で代替できる範囲では使わない (経路を一本化し、検証面を小さく保つ)。番組表の取得経路の確定 (§3.3) で必要になれば、その範囲で採用する。
-- DMS のポートは 60151 (発見時のデバイス記述から得る形を基本とし、固定値への依存は検証結果で判断する)。
+- **X_ScheduledRecording の SOAP (ポート 64230) が、予約 CRUD・競合確認・録画タイトル一覧の主経路である** (フェーズ 0 で実測。当初案の「WebAPI で代替できる範囲では SOAP を使わない」は実測により取り消す)。X_PvrControl はタイトル詳細等の補助に使う。詳細は §12.3。
+- ContentDirectory `Browse` (ポート 58888) で DIDL を取得し、録画メタデータの補完 (残コピー回数 `av:COGCount`、res の protocolInfo、DTCP1HOST / DTCP1PORT) に使う。資格情報なしで成立することは [37](https://github.com/mar1mo-41414/SonyNasne-DTCP/blob/main/docs/37_pydtcpip_live_verification.md) で実証済みで、フェーズ 0 でも再確認した (§11.8)。
+- DMS のデバイス記述・ContentDirectory の control は**ポート 58888**にある。アプリ内テンプレートにあった 60151 は本機では listen していない (§11.3)。ポートや control URL は固定値に決め打ちせず、発見時に得たデバイス記述から解決することを基本とする (§12.3)。
 
 ### 5.5 ローカル状態
 
@@ -251,7 +274,7 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 ### 5.7 再生エンジンの境界 (将来の差し込み点)
 
-- インタフェースとして `PlaybackEngine` を定義する。入力: 対象タイトルの res URL と DTCP 接続先 (DTCP1HOST / DTCP1PORT)、出力: 復号済み TS ストリームをプレイヤーへ渡す口。v1 では「未対応」を返すスタブのみを置く。
+- インタフェースとして `PlaybackEngine` を定義する。入力: 対象タイトルの res URL と DTCP 接続先 (DTCP1HOST / DTCP1PORT)、出力: 復号済み TS ストリームをプレイヤーへ渡す口。v1 では「未対応」を返すスタブのみを置く。**この境界は §5.0 の設計原則 (差し替え可能なモジュール式) を再生領域に適用した一例であり、他の機能領域のインタフェースと同じ考え方で切る。**
 - UI 側はこの境界越しにだけ再生を要求し、境界の内側 (AKE、PCP 復号、資格情報の保持) は v1 の関心事にしない。
 - 資格情報ペアが得られた場合の保持場所は秘密情報ストレージとし、アプリの通常の状態保存とは分離する (詳細は §8)。
 
@@ -267,8 +290,9 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 ### フェーズ 1: コア実装
 
-- 目的: 発見・WebAPI クライアント・認証・UPnP Browse・ローカル状態を、UI から独立したコアとして実装する。
-- **完了条件**: フェーズ 0 のフィクスチャに対する単体テストが通り、実機に対して読み取り系の一連の操作 (発見 → 状態取得 → 一覧取得) が CLI 相当のハーネスで再現できる。
+- 目的: §5.0 の設計原則 (差し替え可能なモジュール式) に沿って、領域インタフェースとトランスポート実装 (SSDP / WebAPI JSON / SOAP / DLNA)、エンドポイント定義テーブル、認証、ローカル状態を、UI から独立したコアとして実装する。具体設計は §12。
+- 内容の順序 (§12.9): (1) プロジェクト土台とコアの骨格 (インタフェース、定義テーブル、統一エラー) → (2) 発見・登録と情報取得 (読み取り系の縦切り) → (3) SOAP 層と予約・録画一覧 → (4) DLNA メタデータの統合。
+- **完了条件**: フェーズ 0 のフィクスチャに対する単体テストが全モジュールで通り、実機に対して「発見 → 登録検証 → 状態取得 → 予約の一覧・作成・削除 → 録画一覧の取得」が CLI 相当のハーネスで再現できる。トランスポート実装の差し替えが、画面・ドメイン側の変更なしに行える構成であること (インタフェースに対するモック実装でテストが書けることをもって確認する)。
 
 ### フェーズ 2: iOS アプリ (先行)
 
@@ -378,10 +402,10 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 | # | 事項 | 影響 | 解消するフェーズ |
 |---|---|---|---|
-| 1 | 番組表データの取得経路と形式 (DMS の EPG ファイル形式が未解析) | 番組表 (後続バージョン候補) の実装方式が決まらない。v1 の必須範囲には影響しない | フェーズ 0 (調査として) |
-| 2 | X-DTVToken の要否の範囲 (エンドポイントごとの要否) と、算出式の実機での最終確認 | WebAPI クライアントの認証設計 | フェーズ 0 |
-| 3 | 各エンドポイントの要求/応答 JSON スキーマ (静的解析ではパス名までで、項目定義は未確定) | コアの型定義全般 | フェーズ 0 |
-| 4 | iOS のみ存在する 6 件 (recordedContentCountGet 等) と Vita のみの定義の実働可否 | 機能の実装可否 (代替手段の要否) | フェーズ 0 |
+| 1 | 番組表データ本体の取得形式 (`chEpg/EPGGet` の要求バイナリ形式)。DMS の EPG ファイル経路は本機で到達不可と確定済み | 番組表グリッド (後続バージョン候補) の実装方式のみ。v1 は EIT_PF の現在/次番組で組むため影響しない (§12.8) | **研究スレッドとして分離** (フェーズ 0 で部分解消、§11.9・§11.10)。v1 の進行はブロックしない |
+| 2 | X-DTVToken の要否の範囲 (エンドポイントごとの要否) と、算出式の実機での最終確認 | WebAPI クライアントの認証設計 | **解消済み** (フェーズ 0、§11.5) |
+| 3 | 各エンドポイントの要求/応答スキーマ | コアの型定義全般 | **解消済み** (フェーズ 0、§11.4・§11.7・§11.8。検証済み範囲) |
+| 4 | iOS のみ存在する 6 件 (recordedContentCountGet 等) と Vita のみの定義の実働可否 | 機能の実装可否 (代替手段の要否) | **解消済み** (フェーズ 0、§11.10) |
 | 5 | iOS のローカルネットワーク許可・マルチキャスト受信の制約下で SSDP 発見が成立するか | 発見機能の成立 (不成立なら手動登録が主経路になる) | フェーズ 2 (設計自体は §5.2 で吸収) |
 | 6 | 資格情報ペアの調達可否 | フェーズ 5 (再生) の成否そのもの。v1 には影響しない | 範囲外 (調達の線は別途) |
 | 7 | nasne 側の DTCP クライアント登録・AKE 受け入れ条件 | フェーズ 5 の開始条件 | フェーズ 5 冒頭 |
@@ -390,7 +414,7 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 
 ## 付記: 本書の範囲
 
-本書は計画であり、実装・実機操作は一切行っていない。§9 の決定事項は 2026-11-16 に全て決定済みであり、次に進む場合はフェーズ 0 から着手する。本書は新規リポジトリの作成時にそちらへ移管する (§9 の項目 2)。
+本書は計画書であり、アプリ本体の実装はまだ行っていない (フェーズ 0 の実機検証は §11 に記録したとおり実施済み)。§9 の決定事項は 2026-11-16 に全て決定済み。本書は新規リポジトリ (TorneMobileHomeBrew) へ移管済みであり、本書が計画の正本である。フェーズ 0 は完了し (§11.12)、フェーズ 1 は §12 の再設計に基づいて着手する。
 
 ---
 
@@ -555,3 +579,168 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 - 計画との差分として、予約・録画一覧の主経路は JSON WebAPI ではなく UPnP SOAP であることが確定した (§11.1)。フェーズ 1 のコア設計 (WebAPI クライアントと UPnP クライアントの分担) はこの実測を前提に組み直すこと。
 - 残件 (フェーズ 1 以降): EPGGet の要求バイナリ形式 (§11.9)、desiredQualityMode の変更可否 (§11.7)、CAMsgInfoGet / EMMMsgInfoGet / recordedContentAdditionalInfoGet / recordedContentThumbnailGet のパラメータ形式 (§11.4)、X_GetMediaInfo の recordDestinationID の値形式 (§11.7)。
 - 2026-11-16: フェーズ 0 (API 実機検証) を実施し、結果を §11 に記録した。計画書の正本は本書であり、実機検証の記録も本書に集約する。
+
+---
+
+## 12. フェーズ 1 に向けた再設計 (2026-11-16)
+
+フェーズ 0 の実測 (§11) と設計原則 (§5.0) を受けて、フェーズ 1 のコア設計をここに確定させる。§5 は方針、本節は具体設計であり、両者が食い違う場合は本節を正とする (§3・§5・§6 の該当箇所は本節に合わせて同日書き換え済み)。
+
+### 12.1 トランスポート構成の確定
+
+機能領域ごとに、実測で確定した主経路は次のとおりである。いずれも同一 LAN 内、公式 FW 2.60 での実測に基づく。
+
+| 機能領域 | 主経路 | 所在 | 認証 | 根拠 |
+|---|---|---|---|---|
+| 発見 | SSDP M-SEARCH → デバイス記述の取得 | UDP 1900 / HTTP 58888 (DMS) | なし | §11.2。応答に USN が無いため識別は記述の内容で行う |
+| 登録検証 | WebAPI `config/PINVerify` (POST) | 64210 | X-DTVToken 必須 (本文なし) | §11.5 |
+| 情報取得 | WebAPI GET (`status/*`) | 64210 | なし | §11.4。集約ステータス `liveStreamStatusListGet` を含む |
+| チャンネル | WebAPI GET `status/channelListGet` | 64210 | なし (要 `broadcastingType`) | §11.4 |
+| 予約 (一覧・作成・更新・削除・競合) | UPnP SOAP `X_ScheduledRecording:2` | 64230 (XsrsSrv) | なし | §11.7 |
+| 録画一覧 | UPnP SOAP `X_GetTitleList` を主経路とし、件数は WebAPI の count 系、メタデータ補完は DLNA Browse | 64230 / 64210 / 58888 | なし | §11.7・§11.8・§11.4 |
+| タイトル詳細の補助 | UPnP SOAP `X_PvrControl` (`X_GetTitleInfo` / `X_GetTitleDetail` / `X_GetLiveChList`) | 64230 | なし | §11.7 |
+| 設定 (読み書き) | WebAPI GET / POST (`status/*Get`、`config/*Set`) | 64210 | GET はなし、POST は X-DTVToken 必須 | §11.4・§11.5。v1 の必須範囲は読み取り中心 (§1.2) |
+| メタデータ | DLNA ContentDirectory `Browse` | 58888 | なし | §11.8 |
+
+使わない経路 (実測で確定): WANProxySrv (64220、LAN からの直接利用はできない)、`schedule/*`・`recorded/titleListGet` の JSON 形 (LAN から到達不可)、ポート 60151 (listen していない)、Telepathy (33413、v1 の範囲外)。
+
+### 12.2 モジュール設計
+
+§5.0 の原則を Flutter コアのモジュール構成に落とす。v1 では単一アプリ内のレイヤード構成とし、コア (`lib/core/` 相当) は UI に依存しない形を保つ (将来のパッケージ分離を妨げないため)。
+
+**領域インタフェース** (画面とドメインロジックが依存するのはここまで):
+
+| インタフェース | 責務 | v1 の主実装 |
+|---|---|---|
+| `DiscoveryService` | SSDP スキャン、デバイス記述の取得と nasne の同定、手動アドレスの検証 | SSDP + 記述 XML (58888) |
+| `RegistrationService` | 登録フロー (記述取得 → MAC 取得 → PIN 導出 → PINVerify)、登録情報の保持 | WebAPI (64210) |
+| `DeviceInfoService` | 本体情報、HDD、ライブ状態集約、メッセージ、RecNG、チャンネル一覧 | WebAPI GET (64210) |
+| `ScheduleService` | 予約の一覧・作成・更新・削除、競合確認 | SOAP XSRS (64230) |
+| `TitleCatalogService` | 録画タイトル一覧・件数・詳細。DIDL との結合を含む統合モデルの提供 | SOAP XSRS (64230) + WebAPI count + DLNA Browse (58888) |
+| `SettingsService` | 設定値の読み取り (名称、bitrate 等) と、将来の書き込み口 | WebAPI (64210) |
+| `MetadataService` | DIDL の取得とパース (コンテナ走査、item のメタデータ) | DLNA Browse (58888) |
+| `PlaybackEngine` | 再生 (§5.7)。v1 は「未対応」を返すスタブ | スタブ |
+
+**トランスポート層** (インタフェース実装の裏側に置く、差し替え単位):
+
+- `WebApiTransport`: GET / POST、トークン付与、JSON / バイナリ応答の振り分け、`errorcode` の解釈。
+- `SoapTransport`: SOAP エンベロープの組み立て、Result の二重 XML パース (§12.3)、Fault の解釈。ContentDirectory の Browse もこの上に載せる。
+- `SsdpTransport`: M-SEARCH の送受信と応答の収集。
+- 認証は `TokenProvider` に分離する (PIN 導出と X-DTVToken 算出。純粋関数として単体テスト可能にする)。
+
+**エンドポイント定義テーブル**: エンドポイントの属性はコード内の定数テーブルに集約する。WebAPI は (パス、メソッド、必須パラメータ、認証要否、応答形式 JSON/バイナリ)、SOAP は (サービス URN、control URL の解決規則、アクション名、引数名、Result の形式 xsrs/DIDL/スカラー) を持つ。載せる範囲は実測済みのものに限る。応答の中身のパースはエンドポイントごとの型付きモデルが担い、定義テーブルは「行き先・形式・認証」の管理に徹する (モデルまでデータ駆動にはしない — xsrs のような複合形式は型付きパーサの方が安全なため)。
+
+**組み立て**: 実装クラスの生成と注入はアプリ内の 1 箇所 (composition root) に集約する。v1 の規模では手書きの DI で十分であり、コード生成系の DI フレームワークは導入しない (差し替え可能性はインタフェースと composition root で担保する)。
+
+### 12.3 SOAP クライアント層の設計
+
+- エンベロープは文字列テンプレートで組み立て、引数値は必ず XML エスケープする。`Elements` 引数 (xsrs 文書全体) もエスケープして埋め込む (フェーズ 0 の検証スクリプトと同方式で実証済み)。
+- 応答のパースは二段で行う: (1) SOAP エンベロープを XML としてパースし、`Result` の文字列を取り出す。(2) その文字列を xsrs / DIDL 文書として再パースする。XML パースには `package:xml` を使う。
+- xsrs の `item` (id 属性 + 子要素群) の読み取り基盤は予約一覧とタイトル一覧で共通化し、領域モデルへの変換は各 Service 実装が行う。
+- control URL は、発見時に得たデバイス記述の serviceList から serviceType で解決することを正とする。フェーズ 0 では X_ScheduledRecording の control URL に `/XSRS` と `/xsrs/control/X_ScheduledRecording` の両形が使えたため、記述から解決できない場合のフォールバック候補として両形を定義テーブルに持つ。
+- **SCPD は実行時に解釈しない**。アクションと引数は定義テーブルに型付きで持つ。理由: SCPD の引数情報だけでは xsrs のような複合引数の実形式は分からず、実測で確定した形式 (§11.7) が正であるため。SCPD の取得自体は診断・能力確認用に残す。
+- 既知の癖: 予約が 1 件も無い状態で `X_GetConflictList` を呼ぶと HTTP 500 の UPnPError Fault が返る挙動をフェーズ 0 で観測した (書き込みログ)。「競合なし」と「取得失敗」の切り分けが曖昧なため、フェーズ 1 の実装初期に実機で再確認し、§12.6 のエラー変換ルールに個別事項として明記する。それまでは Fault を成功扱いにしない。
+
+### 12.4 WebAPI クライアント層の設計
+
+- GET 群は認証なし。応答は型付きモデルへパースする。`liveStreamStatusListGet` は generation 付き部分オブジェクト (CAMsg / EMMMsg / EIT_PF / recNgList / チャンネルリスト等) の集約スナップショットとしてモデル化し、部分ごとに generation を保持する。v1 ではポーリングや generation 差分の最適化はせず、画面表示時の取得 + 手動更新を基本とする (§12.7)。
+- メッセージ表示 (CA / EMM) と RecNG は集約スナップショットから取る。個別の `CAMsgInfoGet` / `EMMMsgInfoGet` はパラメータ形式が未確定のため使わない (§11.4)。
+- POST の Set 系は `TokenProvider` がパスと本文からトークンを算出して付与する。PIN は登録情報に保持した MAC アドレスから導出する (§11.5)。
+- バイナリ応答 (`EPGVersionInfoGet`、`channelLogoDataGet`、各種 Map 取得) は定義テーブルの応答形式属性で振り分け、モデル層へはバイト列として渡す。ロゴは画像表示にそのまま使える。EPG 版数テーブルの解釈は研究スレッド側 (§12.8) の関心事とする。
+- 再試行は冪等な GET のみ (回数・間隔は控えめに)。POST は再試行しない (§5.3)。
+
+### 12.5 データモデル
+
+#### 予約 (RecordSchedule) — xsrs item 由来
+
+| 項目 | 内容と注意 |
+|---|---|
+| id | **正規形はリスト取得時の item id (数字文字列)**。作成応答の `RecordScheduleID` は `0x` 接頭辞付きで返るが、そのまま削除に使うと 803 で失敗するため、モデルでは接頭辞を取り除いた形に正規化し、応答形は保持しない |
+| scheduledStartDateTime | 送信は `+09:00` のコロン形、受信は `+0900` 形 (§11.7)。内部表現はオフセット付き日時とし、表記差はトランスポート層で吸収する |
+| scheduledDuration | 秒 |
+| scheduledConditionID | 作成時は空を送り、サーバ側で `"1"` に正規化される。モデルでは「未指定 = サーバ既定」と扱う |
+| channel | `scheduledChannelID` (broadcastingType / channelType 属性付き、値は serviceId の `0x%04x` 形)。Channel モデルへの参照キーとする |
+| desiredQualityMode | 画質モード (実測の作成値は 100) |
+| desiredMatchingID | type=`SI_PROGRAMID`、値は `,,0x<networkId>,0x<eventId>` の形で送り、サーバ側で 4 要素形に正規化される。**作成に必須** (欠くと 402)。手動予約では eventId なしの形が受理されることをフェーズ 0 で確認した |
+| reservationCreatorID / priorityFlag / recordDestinationID | 作成テンプレートの必須項目。destination は実測で `"HDD"` |
+| title | **作成には含めない** (番組名は desiredMatchingID 経由で EPG イベント側から決まる)。一覧の item に番組名相当が現れる場合は表示用に保持してよい |
+
+操作の意味論 (モデルの契約として固定する):
+
+- **作成は全項目テンプレートが必須**。モデルからテンプレートを生成する箇所で必須項目を全て埋め、欠けた状態では送信しない (欠けると 402 になることを実測済み)。
+- **更新は sparse な部分更新のみ**。変更できるのは scheduledConditionID / desiredQualityMode / priorityFlag / recordDestinationID。**開始時刻と duration はこのアクションでは変更できない**ため、「予約の時刻・長さの変更」はアプリケーション層で削除 + 再作成として提供する。
+- desiredQualityMode の変更は、受理されても保存値に反映されない場合がある (未確定、§11.7)。モデル層は「更新後は必ず再取得し、再取得値を正とする」契約にし、画面もそれに従う。
+
+#### 録画タイトル (RecordedTitle) — XSRS item を主、DIDL で補完
+
+| 項目 | 出所と注意 |
+|---|---|
+| id / title | XSRS item の id 属性 / title |
+| scheduledStartDateTime / scheduledDuration | XSRS (録画の開始と長さ) |
+| scheduledChannelID / desiredQualityMode / genreID | XSRS。genreID は type 属性付き |
+| titleProtectFlag / titleNewFlag / recordingFlag | XSRS (保護、新着、録画中) |
+| recordDestinationID / reservationCreatorID | XSRS |
+| recordSize | XSRS。**単位が未確定**のため表示には使わず生値を保持する (容量表示は DIDL の cleartextSize と duration を優先する) |
+| lastPlaybackTime (resumePoint 属性) | XSRS。再開位置は属性側にある |
+| description / longDescription | DIDL (dc:description、arib:longDescription) |
+| copyCountRemaining | DIDL の `av:COGCount` (実測 10) |
+| res 群 | DIDL。各 res の URL (quality = dr / mobile / sep のバリアント)、protocolInfo (DTCP1HOST / DTCP1PORT を含む)、duration、cleartextSize。**将来の再生用に保持する** (§1.4) |
+
+XSRS と DIDL の結合キーはタイトル ID である。DIDL の item id は `0/video/all/pvr?id=<タイトルID>` の形をしているため、末尾のタイトル ID を取り出して結合する。結合は `TitleCatalogService` の実装内で行い、画面には統合済みモデルだけを渡す (画面は出所を知らない)。
+
+#### チャンネル (Channel)
+
+- 出所は `status/channelListGet` (要 `broadcastingType`、地上は 2)。項目: networkId / transportStreamId / serviceId / serviceType / channelNumber / serviceName / freqChannelNo / remoteControlKeyId。
+- 表記体系の違いを定義テーブルで吸収する: WebAPI は数値の broadcastingType、SOAP の `X_GetLiveChList` は文字列の BroadcastType (`"DTT"` 等)、xsrs の scheduledChannelID は属性 + serviceId の 0x 形。放送種別 (地上/BS/CS) の対応表は定義テーブルに置く。
+- 予約作成時のチャンネル指定は serviceId を正とし、表示名は Channel から引く。
+
+#### nasne 情報・状態
+
+- `DeviceInfo`: 名称 (boxNameGet)、softwareVersion、currDate、areaInfo、isFinishSetup の状態。
+- `HddInfo`: HDDListGet (id / internalFlag / mountStatus / registerFlag) と HDDInfoGet (total / used / free のバイト値、format、name) の組。serialNumber 等の機器特定値はモデルに保持しても表示・記録ではマスクする (§7 の作法)。
+- `NetworkInfo`: macAddr (PIN 導出の源)、ipv4Addr、gateway 等。
+- `LiveStatus`: `liveStreamStatusListGet` の集約スナップショット (§12.4)。CAMsg / EMMMsg / EIT_PF / recNgList / チャンネルリスト / チューナー状態等を部分オブジェクトとして保持する。
+- `ProgramInfo` (EIT_PF): 現在 / 次番組 (§12.8)。フェーズ 0 のフィクスチャ採取時点では EIT_PF は generation のみの未投入状態だったため、**実エントリの項目形式はフェーズ 1 の冒頭で実機から採取して確定する** (小さな確認事項であり、設計全体はブロックしない)。
+
+### 12.6 エラー表現
+
+全トランスポートのエラーを、領域インタフェースの境界で統一エラー表現に変換する。画面はトランスポート固有のエラー形式を知らない。
+
+統一エラーの形: { 分類、コード (元の数値/文字列を保持)、発生元 (領域・トランスポート・エンドポイント/アクション)、再試行可否、利用者向け説明のキー }。
+
+分類: `unreachable` (到達不可・タイムアウト)、`http` (ステータス異常)、`webapi` (JSON の errorcode ≠ 0、または 400 拒否)、`soapFault` (UPnP errorCode + errorDescription)、`parse` (応答形式の不一致)、`validation` (クライアント側の入力検証)、`unsupported` (未対応・スタブ。PlaybackEngine の「未対応」を含む)。
+
+実測したコードの解釈 (変換表に固定する):
+
+| コード | 出所 | 解釈と扱い |
+|---|---|---|
+| 400 | WebAPI (HTTP) | パラメータ不正、または POST でトークン無し/不正 (対照実験で証明、§11.5)。POST で発生したらまずトークンと形式を疑う |
+| 402 | SOAP Fault (Invalid Args) | 要求の形の誤り。利用者の操作ミスではなく実装側の問題として扱い、利用者向けには一般的な失敗として表示する |
+| 404 | WebAPI (HTTP) | その FW では未実装のエンドポイント (例: dtvtunerDeviceInfoGet)。「機能の不在」として扱い、画面設計では項目自体を出さない判断に使う |
+| 803 | SOAP Fault | ID の形式不正 (作成応答の `0x` 接頭辞付き ID を削除に使った場合、§11.7)。モデル層の正規化で防止するのが本筋で、発生したら実装上の問題として扱う |
+| 500 | SOAP Fault 全般 | errorCode と errorDescription を併せて解釈する。`X_GetConflictList` の空時 Fault のような個別の癖は、変換表に個別ルールとして追記していく (§12.3) |
+
+書き込み系のエラーは握りつぶさず、操作の結果として画面に返す。再試行ポリシーは §12.4 (冪等な GET のみ)。
+
+### 12.7 状態管理と画面構成
+
+- 状態管理は **Riverpod** を採用する。理由: provider 経由で領域インタフェースを注入でき、テスト時に実装をモックへ差し替えることが §5.0 の原則と一致するため。代替 (素の ChangeNotifier + 手書き DI) でも原則は満たせるが、差し替えの手続きが一様になる分だけ Riverpod を採る。
+- キャッシュ: 登録情報とチャンネル一覧は永続化する (保持先の分担は §5.5)。予約・録画一覧は表示用キャッシュを持ち、真実は常に nasne 側とする。LiveStatus は画面表示時の取得 + 手動更新を基本とし、常時ポーリングはしない。
+- 画面は §5.6 の 4 画面 (ホーム/状態、予約、録画済み、設定) を v1 とする。予約フォームは §12.5 の意味論を反映する: 時刻・長さは「編集」ではなく削除 + 再作成になる導線とし、競合の警告は `X_GetConflictList` の結果で出す。録画詳細の再生操作は `PlaybackEngine` スタブの `unsupported` を受けて未実装通知を出す (§1.2 の 5)。
+- iPad 対応: 画面幅のブレークポイントでナビゲーション形式 (下部タブ / サイドレール) と一覧・詳細の 2 ペイン表示を切り替える。状態管理とモデルは画面幅に依存させない。
+
+### 12.8 番組表の v1 方針と研究スレッドの分離
+
+- **v1 の番組情報は `channelListGet` (チャンネル構成) と `liveStreamStatusListGet` の EIT_PF (現在 / 次番組) で組む**。「いま・このあと何を放送しているか」の表示と、手動予約 (チャンネル・日時指定) の補助が v1 の範囲である。EPG グリッド表示と番組選択からの予約作成は後続バージョン候補のまま (§1.2)。
+- チャンネルロゴ (`chEpg/channelLogoDataGet`、取得可能) はチャンネル表示の補助に使える。
+- **`chEpg/EPGGet` の要求バイナリ形式の解明は、v1 をブロックしない研究スレッドとして分離する**。再開点は (a) アプリ側コードの解析 (torne が EPGGet の要求バイナリを組み立てる箇所の特定)、(b) `EPGVersionInfoGet` のバイナリ版数テーブルとの対応付け。成果が出た場合の取り込み条件は、§5.0 の原則どおり「`MetadataService` (または新設の EPG 領域インタフェース) の裏側への実装追加で済み、画面側の変更を要しない形」であることとする。
+
+### 12.9 フェーズ 1 の実装順序 (最初に作るもの)
+
+§6 フェーズ 1 の完了条件に対応する実装の順序は次のとおりとする。
+
+1. **土台**: Flutter プロジェクトの生成 (識別子 `com.markun.tmhb`、OS 下限 iOS 15.0 / Android API 29)、コアの骨格 (領域インタフェース、エンドポイント定義テーブル、統一エラー、`TokenProvider` とその既知値テスト — フェーズ 0 の算出実績と突き合わせる)。
+2. **読み取りの縦切り**: SSDP 発見 → デバイス記述の取得 → 登録 (PINVerify) → 情報取得 (DeviceInfo / HDD / チャンネル / LiveStatus) が、CLI 相当のハーネスで実機に対して通ること。EIT_PF の実エントリ形式の採取 (§12.5) もここで行う。
+3. **SOAP 層と予約・録画一覧**: `SoapTransport` と xsrs パーサ基盤 → `ScheduleService` (一覧・作成・更新・削除・競合) と `TitleCatalogService` の XSRS 側を、フィクスチャに対する単体テスト + 実機での往復で実装する。`X_GetConflictList` の空時 Fault の再確認 (§12.3) もここで行う。
+4. **メタデータ統合**: DLNA Browse → DIDL パース → RecordedTitle への結合 (COGCount、res 群の保持)。
+5. **ローカル状態と差し替え可能性の確認**: 登録情報・チャンネルの永続化、表示用キャッシュ、各インタフェースに対するモック実装での単体テスト (画面・ドメイン側がトランスポートに依存していないことの確認)。
