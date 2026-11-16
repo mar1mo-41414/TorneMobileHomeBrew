@@ -61,23 +61,71 @@ const Map<int, String> aribProgrammeMarkReplacements = {
   0xE19C: '[ほか]', // 90/84 ほか
 };
 
+/// The same programme-mark group as delivered by the ARIB STD-B24
+/// decoder (plan 21): the EPG path decodes the marks to their
+/// regular Unicode code points (enclosed ideographs), which the
+/// system fonts likewise lack. They are rewritten to the same
+/// bracketed forms as the PUA group above, so both paths render
+/// identically. Points 64/65/71/83 map to ordinary symbols
+/// (U+2B1B / U+2B24 / U+26BF / U+3299) that fonts do carry, and are
+/// not listed here.
+const Map<int, String> aribProgrammeMarkUnicodeReplacements = {
+  0x1F14A: '[HV]', // 90/48 HV
+  0x1F14C: '[SD]', // 90/49 SD
+  0x1F13F: '[P]', // 90/50 P
+  0x1F146: '[W]', // 90/51 W
+  0x1F14B: '[MV]', // 90/52 MV
+  0x1F210: '[手]', // 90/53 手 (sign language)
+  0x1F211: '[字]', // 90/54 字 (subtitles)
+  0x1F212: '[双]', // 90/55 双 (dual audio)
+  0x1F213: '[デ]', // 90/56 デ (digital)
+  0x1F142: '[S]', // 90/57 S
+  0x1F214: '[二]', // 90/58 二 (bilingual)
+  0x1F215: '[多]', // 90/59 多 (multiplex audio)
+  0x1F216: '[解]', // 90/60 解 (commentary)
+  0x1F14D: '[SS]', // 90/61 SS (surround)
+  0x1F131: '[B]', // 90/62 B
+  0x1F13D: '[N]', // 90/63 N
+  0x1F217: '[天]', // 90/66 天 (weather)
+  0x1F218: '[交]', // 90/67 交 (traffic)
+  0x1F219: '[映]', // 90/68 映
+  0x1F21A: '[無]', // 90/69 無 (free of charge)
+  0x1F21B: '[料]', // 90/70 料 (paid)
+  0x1F21C: '[前]', // 90/72 前 (first part)
+  0x1F21D: '[後]', // 90/73 後 (second part)
+  0x1F21E: '[再]', // 90/74 再 (rebroadcast)
+  0x1F21F: '[新]', // 90/75 新 (new programme)
+  0x1F220: '[初]', // 90/76 初 (first run)
+  0x1F221: '[終]', // 90/77 終 (final episode)
+  0x1F222: '[生]', // 90/78 生 (live)
+  0x1F223: '[販]', // 90/79 販 (sold as package media)
+  0x1F224: '[声]', // 90/80 声
+  0x1F225: '[吹]', // 90/81 吹 (dubbed)
+  0x1F14E: '[PPV]', // 90/82 PPV
+  0x1F200: '[ほか]', // 90/84 ほか
+};
+
 bool _isPua(int rune) => rune >= 0xE000 && rune <= 0xF8FF;
 
-/// Returns [input] with known ARIB programme-mark PUA code points
-/// replaced by their bracketed text forms. Strings without any PUA
-/// code point are returned as-is.
+/// Returns [input] with known ARIB programme-mark code points
+/// replaced by their bracketed text forms. Both delivery forms are
+/// handled: the firmware's PUA code points (JSON paths) and the
+/// regular Unicode code points produced by the B24 decoder (EPG
+/// path). Strings without any known mark are returned as-is.
 String normalizeBroadcastText(String input) {
-  var hasPua = false;
+  var hasMark = false;
   for (final rune in input.runes) {
-    if (_isPua(rune)) {
-      hasPua = true;
+    if (_isPua(rune) ||
+        aribProgrammeMarkUnicodeReplacements.containsKey(rune)) {
+      hasMark = true;
       break;
     }
   }
-  if (!hasPua) return input;
+  if (!hasMark) return input;
   final buffer = StringBuffer();
   for (final rune in input.runes) {
-    final replacement = aribProgrammeMarkReplacements[rune];
+    final replacement = aribProgrammeMarkReplacements[rune] ??
+        aribProgrammeMarkUnicodeReplacements[rune];
     if (replacement != null) {
       buffer.write(replacement);
     } else {

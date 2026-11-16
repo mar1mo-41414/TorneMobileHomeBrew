@@ -134,6 +134,44 @@ class WebApiTransport {
     }
   }
 
+  /// POST with a raw binary body (plan 21: `chEpg/EPGGet`). The
+  /// Content-Type is exactly `application/binary` — the measured
+  /// framework gate rejects anything else with 400 — and the
+  /// X-DTVToken is computed over the raw body bytes.
+  Future<List<int>> postBinary(
+    WebApiEndpoint endpoint, {
+    required List<int> body,
+    Map<String, String> params = const {},
+  }) async {
+    _checkParams(endpoint, params);
+    final headers = <String, String>{
+      'Content-Type': 'application/binary',
+    };
+    if (endpoint.authRequired) {
+      final tokens = tokenProvider;
+      if (tokens == null) {
+        throw NasneError.validation(
+          'webapi:${endpoint.path}',
+          'endpoint requires a token but no TokenProvider was injected',
+        );
+      }
+      headers['X-DTVToken'] = tokens.tokenForBytes(endpoint.path, body);
+    }
+    try {
+      final resp = await _client
+          .post(_uri(endpoint, params), headers: headers, body: body)
+          .timeout(timeout);
+      if (resp.statusCode != 200) {
+        throw _statusError(endpoint, resp);
+      }
+      return resp.bodyBytes;
+    } on NasneError {
+      rethrow;
+    } catch (e) {
+      throw NasneError.unreachable('webapi:${endpoint.path}', cause: e);
+    }
+  }
+
   Map<String, dynamic> _decodeJson(WebApiEndpoint endpoint, http.Response resp) {
     if (resp.statusCode != 200) {
       throw _statusError(endpoint, resp);

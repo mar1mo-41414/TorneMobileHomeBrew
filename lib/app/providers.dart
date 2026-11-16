@@ -87,7 +87,10 @@ DeviceServices assembleDeviceServices(
     throw NasneError.validation(
         'providers', 'device exposes no XSRS/ContentDirectory control URL');
   }
-  final metadata = DlnaMetadataService(soap: soap, controlUrl: cds);
+  final metadata = CompositeMetadataService(
+    dlna: DlnaMetadataService(soap: soap, controlUrl: cds),
+    epg: WebApiEpgService(plain: plain, authed: authed),
+  );
   return DeviceServices(
     deviceInfo: WebApiDeviceInfoService(plain),
     settings: WebApiSettingsService(authed),

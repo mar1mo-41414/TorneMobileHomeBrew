@@ -72,7 +72,7 @@ void main() {
     expect(services.deviceInfo, isA<WebApiDeviceInfoService>());
     expect(services.schedules, isA<SoapScheduleService>());
     expect(services.titles, isA<SoapTitleCatalogService>());
-    expect(services.metadata, isA<DlnaMetadataService>());
+    expect(services.metadata, isA<CompositeMetadataService>());
     expect(services.playback.isSupported, isFalse);
   });
 }

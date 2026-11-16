@@ -17,7 +17,8 @@ abstract final class AppTabs {
   static const int home = 0;
   static const int schedules = 1;
   static const int titles = 2;
-  static const int settings = 3;
+  static const int epg = 3;
+  static const int settings = 4;
 }
 
 /// The WebAPI broadcasting type of terrestrial digital (measured,
@@ -164,6 +165,38 @@ final channelsProvider = FutureProvider.family<List<Channel>, RegisteredNasne>((
   }
 });
 
+/// The full programme guide (terrestrial), anchored on the channel
+/// list (plan 21). Fetched as one dataset (8 days on the measured
+/// unit); the screen slices it by day.
+final epgGuideProvider = FutureProvider.family<EpgGuide, RegisteredNasne>((
+  ref,
+  reg,
+) async {
+  final channels = await ref.watch(channelsProvider(reg).future);
+  return ref
+      .watch(deviceServicesProvider(reg))
+      .metadata
+      .getProgrammeGuide(terrestrialBroadcastingType, channels);
+});
+
+/// Channel logos (terrestrial): serviceId -> PNG bytes (plan 21).
+/// A logo failure must not sink the guide, so errors degrade to an
+/// empty map.
+final channelLogosProvider =
+    FutureProvider.family<Map<int, List<int>>, RegisteredNasne>((
+      ref,
+      reg,
+    ) async {
+      try {
+        return await ref
+            .watch(deviceServicesProvider(reg))
+            .metadata
+            .getChannelLogos(terrestrialBroadcastingType);
+      } on NasneError {
+        return const {};
+      }
+    });
+
 /// Reservations in chronological order (the device returns them in
 /// its own order; the UI contract is time order, plan 5.6).
 final schedulesProvider =
@@ -208,6 +241,8 @@ void invalidateDeviceData(WidgetRef ref, RegisteredNasne reg) {
   ref.invalidate(networkInfoProvider(reg));
   ref.invalidate(bcasInfoProvider(reg));
   ref.invalidate(channelsProvider(reg));
+  ref.invalidate(epgGuideProvider(reg));
+  ref.invalidate(channelLogosProvider(reg));
   ref.invalidate(schedulesProvider(reg));
   ref.invalidate(titlesProvider(reg));
   ref.invalidate(titleCountsProvider(reg));

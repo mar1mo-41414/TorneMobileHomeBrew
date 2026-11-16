@@ -217,4 +217,15 @@ class _FixtureMetadata implements MetadataService {
         File('test/fixtures/dlna/browse_0_video_all.xml').readAsStringSync(),
         'test');
   }
+
+  @override
+  Future<EpgGuide> getProgrammeGuide(
+    int broadcastingType,
+    List<Channel> channels,
+  ) async =>
+      EpgGuide(broadcastingType: broadcastingType, services: const []);
+
+  @override
+  Future<Map<int, List<int>>> getChannelLogos(int broadcastingType) async =>
+      const {};
 }

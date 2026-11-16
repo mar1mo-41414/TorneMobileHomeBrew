@@ -1,13 +1,14 @@
-/// The v1 app shell (plan 5.6 / 12.7): four destinations — home /
-/// status, schedules, recorded titles, settings — with the
-/// navigation form switching by width: a bottom navigation bar on
-/// phones, a side rail on tablets and wider layouts.
+/// The v1 app shell (plan 5.6 / 12.7): five destinations — home /
+/// status, schedules, recorded titles, programme guide, settings —
+/// with the navigation form switching by width: a bottom navigation
+/// bar on phones, a side rail on tablets and wider layouts.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app/state.dart';
+import 'epg_screen.dart';
 import 'home_screen.dart';
 import 'schedules_screen.dart';
 import 'settings_screen.dart';
@@ -31,6 +32,11 @@ class AppShell extends ConsumerWidget {
       selectedIcon: Icons.video_library,
       label: '録画済み',
     ),
+    (
+      icon: Icons.view_week_outlined,
+      selectedIcon: Icons.view_week,
+      label: '番組表',
+    ),
     (icon: Icons.settings_outlined, selectedIcon: Icons.settings, label: '設定'),
   ];
 
@@ -41,6 +47,7 @@ class AppShell extends ConsumerWidget {
       HomeScreen(),
       SchedulesScreen(),
       TitlesScreen(),
+      EpgScreen(),
       SettingsScreen(),
     ];
     void select(int index) => ref.read(tabIndexProvider.notifier).select(index);

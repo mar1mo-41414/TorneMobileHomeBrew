@@ -99,10 +99,19 @@ abstract final class WebApiEndpoints {
     responseKind: ApiResponseKind.binary,
   );
 
-  // -- chEpg (GET, no auth, binary) --
+  // -- chEpg (binary) --
   static const channelLogoDataGet = WebApiEndpoint(
     '/chEpg/channelLogoDataGet',
     requiredParams: ['broadcastingType'],
+    responseKind: ApiResponseKind.binary,
+  );
+
+  /// Full programme guide (plan 21): POST with the EPG version
+  /// table repeated as an application/binary body; token required.
+  static const epgGet = WebApiEndpoint(
+    '/chEpg/EPGGet',
+    method: 'POST',
+    authRequired: true,
     responseKind: ApiResponseKind.binary,
   );
 
@@ -163,6 +172,7 @@ abstract final class WebApiEndpoints {
     pmtMapGet,
     seMapDataGet,
     channelLogoDataGet,
+    epgGet,
     internalHddInitializeProgressGet,
     hddRegisterProgressGet,
     channelScanProgressGet,

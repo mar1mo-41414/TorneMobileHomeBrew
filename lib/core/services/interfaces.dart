@@ -7,6 +7,7 @@ library;
 
 import '../models/device.dart';
 import '../models/didl.dart';
+import '../models/epg.dart';
 import '../models/live_status.dart';
 import '../models/channel.dart';
 import '../models/schedule.dart';
@@ -88,12 +89,24 @@ abstract interface class SettingsService {
   Future<void> setMobileBitrate(int bitrateInfo);
 }
 
-/// DLNA ContentDirectory Browse (plan 12.1).
+/// DLNA ContentDirectory Browse (plan 12.1) and the programme
+/// guide behind the same boundary (plan 12.8 / 21).
 abstract interface class MetadataService {
   /// The container holding all recordings (plan 11.8).
   static const String allRecordingsContainer = '0/video/all';
 
   Future<DidlDocument> browse(String objectId);
+
+  /// The full EPG programme guide for a broadcasting type
+  /// (terrestrial = 2), anchored on the type's channel list.
+  Future<EpgGuide> getProgrammeGuide(
+    int broadcastingType,
+    List<Channel> channels,
+  );
+
+  /// Channel logos of a broadcasting type: serviceId -> PNG bytes.
+  /// Services without a logo are absent from the map.
+  Future<Map<int, List<int>>> getChannelLogos(int broadcastingType);
 }
 
 /// Playback boundary (plan 5.7). v1 ships only the stub, which reports

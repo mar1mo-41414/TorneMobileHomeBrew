@@ -36,10 +36,23 @@ class TokenProvider {
   String tokenFor(String path, [String body = '']) =>
       computeToken(pin, path, body);
 
+  /// Computes the X-DTVToken header value for [path] and a binary
+  /// [body] (plan 21: `chEpg/EPGGet`). The hashed body prefix is
+  /// the raw bytes, exactly as sent.
+  String tokenForBytes(String path, List<int> body) =>
+      computeTokenBytes(pin, path, body);
+
   /// Stateless form of [tokenFor], exposed for known-value tests.
   static String computeToken(String pin, String path, String body) {
     final head = body.length > 256 ? body.substring(0, 256) : body;
     final digest = sha1.convert(utf8.encode('$pin$path$head'));
+    return base64.encode(digest.bytes);
+  }
+
+  /// Stateless form of [tokenForBytes].
+  static String computeTokenBytes(String pin, String path, List<int> body) {
+    final head = body.length > 256 ? body.sublist(0, 256) : body;
+    final digest = sha1.convert([...utf8.encode('$pin$path'), ...head]);
     return base64.encode(digest.bytes);
   }
 }

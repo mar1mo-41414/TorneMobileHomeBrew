@@ -235,6 +235,17 @@ class FakeMetadata implements MetadataService {
   @override
   Future<DidlDocument> browse(String objectId) async =>
       const DidlDocument(containers: [], items: []);
+
+  @override
+  Future<EpgGuide> getProgrammeGuide(
+    int broadcastingType,
+    List<Channel> channels,
+  ) async =>
+      EpgGuide(broadcastingType: broadcastingType, services: const []);
+
+  @override
+  Future<Map<int, List<int>>> getChannelLogos(int broadcastingType) async =>
+      const {};
 }
 
 class FakeDiscovery implements DiscoveryService {

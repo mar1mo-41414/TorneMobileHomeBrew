@@ -543,7 +543,13 @@ Future<void> cmdTitles(String host) async {
     soap: SoapTransport(),
     xsrsControlUrl: xsrs,
     webApi: WebApiTransport(host),
-    metadata: DlnaMetadataService(soap: SoapTransport(), controlUrl: cds),
+    metadata: CompositeMetadataService(
+      dlna: DlnaMetadataService(soap: SoapTransport(), controlUrl: cds),
+      epg: WebApiEpgService(
+        plain: WebApiTransport(host),
+        authed: WebApiTransport(host, tokenProvider: reg.tokenProvider),
+      ),
+    ),
   );
   final count = await catalog.countTitles();
   final titles = await catalog.listTitles();
