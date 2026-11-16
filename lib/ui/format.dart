@@ -78,6 +78,18 @@ String formatBytes(int bytes) {
   return '$text ${units[i]}';
 }
 
+/// Official label of a recording quality mode (`desiredQualityMode`).
+///
+/// The nasne recording modes are named, not numbered, in the official
+/// apps (plan 5.0 principle 5): 100 = DR, 101 = 3倍. Values whose
+/// official label has not been confirmed fall back to the raw number;
+/// labels are never invented (plan 16.4).
+String qualityModeLabel(int mode) => switch (mode) {
+      100 => 'DR',
+      101 => '3倍',
+      _ => '$mode',
+    };
+
 /// Masks an identifier for display, keeping only the last [keep]
 /// characters (B-CAS card ids and similar, plan section 7).
 String maskTail(String value, {int keep = 4}) {

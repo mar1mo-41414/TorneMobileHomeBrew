@@ -226,7 +226,8 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
       initialValue: _quality,
       decoration: const InputDecoration(labelText: '画質モード'),
       items: [
-        for (final q in options) DropdownMenuItem(value: q, child: Text('$q')),
+        for (final q in options)
+          DropdownMenuItem(value: q, child: Text(qualityModeLabel(q))),
       ],
       onChanged: (v) => setState(() => _quality = v ?? _quality),
     );

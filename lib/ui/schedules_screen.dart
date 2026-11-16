@@ -116,7 +116,7 @@ class _ScheduleList extends ConsumerWidget {
             subtitle: Text(
               '${formatTimeJst(s.start)}〜${formatTimeJst(s.end)}'
               ' (${formatDurationSeconds(s.durationSeconds)})'
-              ' 画質 ${s.desiredQualityMode}'
+              ' 画質 ${qualityModeLabel(s.desiredQualityMode)}'
               '${s.title != null ? ' ${s.title}' : ''}',
             ),
             trailing: s.priorityFlag != 0
@@ -221,7 +221,7 @@ class ScheduleDetailView extends ConsumerWidget {
         FieldRow(label: '開始', value: formatDateTimeWithWeekdayJst(s.start)),
         FieldRow(label: '終了', value: formatDateTimeWithWeekdayJst(s.end)),
         FieldRow(label: '長さ', value: formatDurationSeconds(s.durationSeconds)),
-        FieldRow(label: '画質モード', value: '${s.desiredQualityMode}'),
+        FieldRow(label: '画質モード', value: qualityModeLabel(s.desiredQualityMode)),
         FieldRow(label: '優先フラグ', value: '${s.priorityFlag}'),
         FieldRow(label: '条件 ID', value: s.conditionId),
         FieldRow(label: '録画先', value: s.recordDestinationId),

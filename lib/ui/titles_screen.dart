@@ -231,7 +231,7 @@ class TitleDetailView extends ConsumerWidget {
           value: t.channelName ?? channelDisplayName(channels, t.channel),
         ),
         if (t.desiredQualityMode != null)
-          FieldRow(label: '画質モード', value: '${t.desiredQualityMode}'),
+          FieldRow(label: '画質モード', value: qualityModeLabel(t.desiredQualityMode!)),
         if (t.copyCountRemaining != null)
           FieldRow(label: '残コピー回数', value: '${t.copyCountRemaining} 回'),
         FieldRow(label: '保護', value: t.protectFlag ? '保護あり' : 'なし'),
