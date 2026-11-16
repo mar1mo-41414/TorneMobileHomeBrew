@@ -1149,3 +1149,29 @@ Vita 版 torne の `PvrResource.cxml` の文字列プールにある 53 地域�
 
 - 本人が Xperia Ace で APK の実機確認を行い、「特に問題なし、文字化けも含めおかしなところなし」と報告した。これにより §6 のフェーズ 3 完了条件 (実機インストールと機能一巡) を満たした。
 - 発見については、最初の一覧には nasne が出ておらず、本人が「探す」ボタンを押して発見できた。UI 上は SSDP で見つかったのかサブネット走査で見つかったのか区別できないため、記録は「Android では探すボタンで発見が成立した。経路 (SSDP / 走査) の区別は UI からは付かず、SSDP 単体の成否は未確定のまま」とする (§17 の MulticastLock 実装についても、成否の確定はしない)。
+
+## 20. フェーズ 4: GitHub 配布 (2026-11-16)
+
+### 20.1 公開リポジトリ
+
+- GitHub に public リポジトリを作成し、main を同期した: https://github.com/mar1mo-41414/TorneMobileHomeBrew
+- 公開に先立ち、README を公開向けに整備した (「現状」を v1.0.0 リリース済みに更新し、動作条件・インストール手順・使い方・既知の制限を追記)。あわせて、従来の記録にあった開発環境固有の記述 1 件を、公開文書向けに一般化した。
+
+### 20.2 Android 配布用署名
+
+- 配布用 keystore を新規に作成した (RSA 2048、alias `tmhb-release`、有効期間 10,000 日)。保管場所はリポジトリ外の marnux `~/.local/share/tmhb-signing/` (ディレクトリ 700、ファイル 600) で、keystore 本体 (`release.keystore`) と、パスワードを含む `key.properties` を置く。パスワードの値そのものは本書を含むリポジトリには書かない。
+- 署名証明書の SHA-256: `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5`
+- ビルド側の仕組み (`android/app/build.gradle.kts`): 環境変数 `TMHB_KEY_PROPERTIES` が指すプロパティファイル (storeFile / storePassword / keyAlias / keyPassword) があれば配布用署名を使い、無ければ debug 鍵へフォールバックする (公開クローンでもそのままビルドできる)。`key.properties` と `*.jks` / `*.keystore` は .gitignore に追加した。
+- 署名が変わるため、debug 署名の開発版からは上書きインストールできない (初回のみアンインストールして入れ直しが必要)。この注意はリリースノートに明記した。
+
+### 20.3 リリース v1.0.0
+
+- GitHub Release v1.0.0 を作成した: https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/tag/v1.0.0
+- 添付物 (いずれも本節時点の最新 main `2d69f38` から生成):
+  - **IPA** (署名なし、§19 までの全修正を含む再ビルド): 8,564,491 バイト、SHA-256 `9dd81a1890e647879b8db9c91e65336ed5742cbbe8d1ede55f6c9cf8bb935352`。同梱 Info.plist の CFBundleDisplayName が「torne mobile HB」であることを確認した。手元の最新ビルド置き場 (`~/tmp/Decrypted-ipa/`) にも同一ファイルを配置した。
+  - **APK** (配布用署名): 54,850,923 バイト、SHA-256 `147addc4562943232c8fe0eb1879bc570c5f36e0d796aefc2644e05213ee762b`。apksigner で署名証明書が 20.2 の証明書と一致することを確認した。`~/ダウンロード/` の APK も同一ファイル (配布用署名版) に置き換えた。
+- リリースノートには、機能の一覧、再生が未実装であること、動作条件、インストール方法 (iOS は LiveContainer / AltServer、Android は APK 直接インストール)、iOS サイドロード環境では SSDP が効かず走査 / 手動登録になること、署名変更に伴う再インストール注意、配布物の SHA-256 と署名証明書フィンガプリントを記載した。
+
+### 20.4 フェーズ 4 完了条件との対応
+
+- §6 の完了条件「両成果物 (IPA / APK) が手順どおりに再生成でき、導入手順だけで本人の端末に入れられる」について: IPA は §14 の手順 (Mac で署名なしビルド → Payload 形式に梱包)、APK は §17 の手順 + 20.2 の署名で再生成でき、導入手順は README とリリースノートに整備した。リリース添付物と本人の手元にある最新ビルドは同一ファイルであり、入れ替えはそのまま行える。
