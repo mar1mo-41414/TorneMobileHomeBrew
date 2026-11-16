@@ -391,3 +391,167 @@ Sony のサポート終了後も、公式 FW の nasne を手元のスマート�
 ## 付記: 本書の範囲
 
 本書は計画であり、実装・実機操作は一切行っていない。§9 の決定事項は 2026-11-16 に全て決定済みであり、次に進む場合はフェーズ 0 から着手する。本書は新規リポジトリの作成時にそちらへ移管する (§9 の項目 2)。
+
+---
+
+## 11. フェーズ 0 の実施結果 (2026-11-16)
+
+計画 (§6 フェーズ 0) に基づき、公式 FW 実機で API 実機検証を行った記録。生の応答 (フィクスチャ) と検証スクリプト、書き込み操作の全ログは marnux の作業領域 `~/GitTmp/myClaude/tmhb.work/2026-11-16-phase0/` に保存した (リポジトリには入れない。§7 のマスク方針に従い、本節には構造と要点のみを書く。MAC アドレス・PIN・トークン値・HDD シリアル・番組名・コンテンツ ID の実値は記載しない)。
+
+### 11.1 実施条件と範囲
+
+- 日時: 2026-11-16 13:24–13:44 (JST)。実施場所は marnux (同一 LAN)。
+- 対象実機: 公式 FW (ソフトウェア版数 `0260` = 2.60、`status/softwareVersionGet` で確認)、HDD-B 構成。日常録画に使われている実機であり、検証中も録画セッションへの干渉は行っていない (停止系・コピー消費操作は従来どおり対象外)。
+- 範囲: 読み取り系の全数確認に加え、本人の承認 (2026-11-16、録画と SPI は保存済みで消えて困るデータはないとの判断) を受けて書き込み系も検証した。書き込みは「予約はテスト用の将来番組で作成→確認→更新→削除の往復」「設定変更は変更前の値を控えて元へ戻す」「既存の本番予約・既存録画は変更しない」の方法で実施し、全操作を作業領域の `write_ops.log` に記録した。
+- **計画前提との重要な相違**: §3 では録画予約・録画一覧の主経路を WebAPI (JSON) とし UPnP を予備としていたが、実測では **LAN における実働経路は UPnP SOAP (XSRS) であり、schedule / recorded の JSON 形は LAN から到達できなかった** (§11.6・§11.7)。フェーズ 1 の設計はこの実測に合わせる必要がある。
+
+### 11.2 発見 (SSDP) の実挙動
+
+- M-SEARCH (ST: `urn:schemas-upnp-org:device:MediaServer:1`) に実機が応答する。LOCATION は `http://<実機>:58888/` (DMS のデバイス記述)。
+- **癖: 実機の SSDP 応答には USN ヘッダが無い** (DMS デバイス分。uuid は別バリアント応答の ST に現れる)。クライアントは USN の存在に依存しないこと。
+- デバイス記述: friendlyName / modelName とも `nasne`、manufacturer は Sony Computer Entertainment Inc.、s-bras:productName は CECH-ZNR2J、`av:standardCDS` 5.0、`av:videoRoot` は `0/video`。サービスは ConnectionManager / ContentDirectory (いずれも 58888) と X_PvrControl / X_ScheduledRecording (いずれも 64230)。SCPD 4 件とも取得できた。
+- 別個のルートデバイスとして Telepathy デバイス (ポート 33413、devdesc.xml) も SSDP で広告される。
+
+### 11.3 ポートとサーバの実測マップ
+
+| ポート | 実体 | 実測結果 |
+|---|---|---|
+| 64210 | `webapi` バイナリ (公式 FW rootfs の静的調査でも同定) | JSON API のサブセットを実装 (§11.4・§11.5)。GET は認証なし、POST (Set 系) は X-DTVToken 必須 |
+| 64220 | WANProxySrv (WebUI app.js の `REMOTE_API_PORT`) | 素の HTTP 要求は全て 400。リモートアクセス用のプロトコル/登録が前提で、LAN からの直接利用はできない |
+| 64230 | XsrsSrv | UPnP SOAP (X_PvrControl / X_ScheduledRecording) が LAN で実働 (§11.7)。JSON 形のパスもサーバ側には存在するが素の JSON 要求は 400 (§11.6) |
+| 58888 | DMS (UPnP) | デバイス記述・ContentDirectory / ConnectionManager の control・SCPD |
+| 58890 | ウェブビデオ HTTP | DIDL の res URL の指す先 (`/web/video/pvr?id=...&quality=...`、§11.8) |
+| 60151 | (アプリ内テンプレート上の DMS コンテンツポート) | **本機では listen していない** (接続拒否)。§11.9 |
+| 33413 | Telepathy デバイス | SSDP 広告のみ確認 |
+| 80 | WebUI 系 HTTP | API パスには 400 を返す。本検証では深追いしていない |
+
+### 11.4 WebAPI (JSON、64210) — 検証済み読み取りエンドポイント
+
+全て GET・認証なしで HTTP 200 + `errorcode: 0` の JSON を返すことを確認した (応答キーは実測)。
+
+| エンドポイント | 応答の要点 |
+|---|---|
+| `status/softwareVersionGet` | `softwareVersion` (="0260")、`backdatedVersion` |
+| `status/updateCheck` | `existFlag` |
+| `status/isFinishSetup` | `finishSetUpFlag` |
+| `status/boxNameGet` | `name` |
+| `status/currDateGet` | `currDate` (ISO 形式)、`type` |
+| `status/areaInfoGet` | `areaIdentifierCode`、`pref`、`zipCode` |
+| `status/channelListGet` | **要パラメータ `broadcastingType`**。`=2` で 200 (地上 24 チャンネル)、`=0` / `=1` は 400。`channel[]` の項目は networkId / transportStreamId / serviceId / serviceType / channelNumber / serviceName / freqChannelNo / remoteControlKeyId 等 |
+| `status/HDDListGet` | `HDD[]` (id / internalFlag / mountStatus / registerFlag)、`number` |
+| `status/HDDInfoGet` | **要パラメータ `id`**。`HDD` に format / name / vendorID / productID / serialNumber / usedVolumeSize / freeVolumeSize / totalVolumeSize (バイト単位) |
+| `status/BCASInfoGet` | `cardId` / `info` / `returnCode` / `status` / `sw` |
+| `status/networkIfInfoGet` | `macAddr` / `ipv4Addr` / `gateway` / `subnetMask` / `primaryDNS` / `secondaryDNS` / `enableDHCPFlag`。PIN はこの `macAddr` から導出される (§11.5) |
+| `status/recNgListGet` | `item` / `number` (実施時 3 件) |
+| `status/liveStreamStatusListGet` | **集約ステータス**。トップレベル 31 キーに CAMsg / EMMMsg / EIT_PF / dtvChannelList / bsChannelList / csChannelList / tvTimerList / recContentsList / recNgList / dmsStreamStopReasonList 等を含む。メッセージ表示とライブ状態の実用上の取得元はこれ |
+| `status/dtcpipClientListGet` | `number` (実施時 0) |
+| `status/parentalRatingInfoGet` | `parentalRatingInfo` |
+| `status/mobileBitrateInfoGet` | `bitrateInfo` (整数) |
+| `status/dmsStreamStopReasonListGet` | `number` (実施時 0) |
+| `status/requestClientInfoGet` | iOS のみ存在とされていたが**実働する**。`client` に**要求元クライアント自身**の情報 (ipv4Addr / macAddr / registerFlag / name / userAgent / cn / lastAccessDate) が返る |
+| `recorded/recordedContentCountGet` | iOS のみ存在とされていたが実働。`count` (実施時 2) |
+| `recorded/recordedContentMaxCountGet` | 同上、実働。`count` (=3000) |
+| `config/internalHDDInitializeProgressGet` | `completePercent` / `status` |
+| `config/HDDRegisterProgressGet` | **要パラメータ `id`**。同上の進捗形 |
+| `config/channelScanProgressGet` | **要パラメータ `broadcastingType`**。同上の進捗形 |
+| `recorded/thumbnailMapGet` / `recorded/PMTMapGet` / `recorded/SEMapDataGet` | **要パラメータ `id`** (タイトル ID)。`application/binary` のバイナリ応答 |
+| `chEpg/channelLogoDataGet` | **要パラメータ `broadcastingType`**。バイナリ応答 (実施時 8,452 バイト、チャンネルロゴデータ) |
+| `status/EPGVersionInfoGet` | **要パラメータ `broadcastingType`**。応答は **JSON ではなくバイナリ** (実施時 2,900 バイト。チャンネル毎の EPG 版数テーブルとみられる) |
+
+未確定のまま残したもの (パラメータ形式が特定できなかった):
+
+- `status/CAMsgInfoGet` / `status/EMMMsgInfoGet`: 素の GET・POST・`broadcastingType` 付きのいずれも 400。内容自体は `liveStreamStatusListGet` で取得できるため v1 への影響はない。
+- `recorded/recordedContentAdditionalInfoGet`: `id` パラメータで 200 だが応答が空。パラメータ名の確定が残る。
+- `recorded/recordedContentThumbnailGet`: `id` では 400。Vita 定義テーブルのキーから `thumbnailEntryId` が必要な見込みだが、その値の出所 (JSON 形 titleListGet) が LAN で到達できないため未確定。
+
+実在しないもの (404、本 FW では未実装と確定):
+
+- `status/dtvtunerDeviceInfoGet`、`status/multiTunerLiveStreamStatusListGet` (いずれも iOS のみ存在の 2 件)。
+
+### 11.5 WebAPI (JSON、64210) — 認証と書き込み検証
+
+認証 (X-DTVToken) の確定事項 (§10 の項目 2 への回答):
+
+- 形式は開発側の既存知見どおり: `X-DTVToken = base64(SHA1(PIN + パス + 本文の先頭 256 文字))`、Content-Type は `application/x-www-form-urlencoded`。PIN は本体 MAC アドレスの下位 3 バイト (`status/networkIfInfoGet` の `macAddr` からコロンを除いた文字列の 7 文字目以降、その表記のまま小文字)。
+- **GET は全て認証なし** (§11.4)。**POST の Set 系はトークン必須**で、対照実験で証明した: `config/boxNameSet` はトークン無しで 400 (拒否)、トークン付きで 200。
+- `config/PINVerify` は **POST + トークン、本文なし** で `errorcode: 0` となる。PIN そのものをパラメータで送る必要はなく、トークンの正しさ自体が検証になる。
+
+検証した書き込み (全て往復で確認し、元へ戻した):
+
+| 操作 | 結果 |
+|---|---|
+| `config/PINVerify` | 成功 (上記) |
+| `config/boxNameSet` | テスト名へ変更 → `boxNameGet` で確認 → 元の名称へ復元 → 確認。一連成功 |
+| `config/mobileBitrateInfoSet` | `bitrateInfo` 0 → 1 → 確認 → 0 へ復元 → 確認。一連成功 |
+
+### 11.6 schedule / recorded の JSON 形が LAN で到達できないこと
+
+- `schedule/reservedListGet` / `reservedListGet2` / `conflictListGet` / `reservedInfoBitrateGet`、`recorded/titleListGet` は、64210 では GET・POST とも **404**、64220 / 64230 では **一律 400** で、LAN から JSON 形では到達できなかった (トークン有無・パラメータ・Origin ヘッダのバリエーションでも変わらず)。
+- 公式 FW rootfs の静的調査による所在: 64210 のサーバ (`webapi` バイナリ) のテーブルにこれらの名前は**無く**、`titleListGet` 等のパス文字列は XsrsSrv と WANProxySrv にのみ存在する。すなわち JSON 形はリモート経路 (WANProxy 配下) のための面であり、LAN のクライアントが使う面ではない、というのが実測と整合する解釈である。
+- 代わりに LAN で実働する経路は UPnP SOAP (§11.7) と ContentDirectory Browse (§11.8) であり、torne 側の定義テーブルのキー名 (searchCriteria / filter / startingIndex / requestedCount / sortCriteria) が XSRS の SOAP 引数名と一致することとも整合する。
+
+### 11.7 UPnP SOAP (XSRS / X_PvrControl、64230) — 検証結果と予約の往復
+
+認証なしで実働を確認したアクション:
+
+- `X_ScheduledRecording:2` (control URL は `/XSRS` と `/xsrs/control/X_ScheduledRecording` の両形とも可): `X_GetRecordScheduleList`、`X_GetTitleList`、`X_GetConflictList`、`X_CreateRecordSchedule`、`X_UpdateRecordSchedule`、`X_DeleteRecordSchedule`。
+- `X_PvrControl:1`: `X_GetFirmwareVersion`、`X_GetLiveChList` (引数 BroadcastType は `"DTT"` のような文字列。WebAPI の数値 `broadcastingType` とは別体系)、`X_GetTitleInfo`、`X_GetTitleDetail`。`X_GetMediaInfo` は recordDestinationID の値の形式が合わず 500 Fault (値形式は未確定)。
+
+スキーマ (実測):
+
+- `X_GetRecordScheduleList` の Result は xsrs 形式 XML。予約が無ければ空の xsrs 文書が返る (検証開始時点で予約は 0 件だった)。
+- `X_GetTitleList` の Result も xsrs 形式で、item の項目は title / scheduledStartDateTime / scheduledDuration / scheduledChannelID / desiredQualityMode / genreID / reservationCreatorID / titleProtectFlag / titleNewFlag / recordingFlag / recordDestinationID / recordSize / lastPlaybackTime (resumePoint 属性付き) / portableRecordFile。件数は `recordedContentCountGet` と一致した (2 件)。
+
+予約の往復検証 (テスト予約: 2 日後の未明 04:00、300 秒、地上の実在チャンネル。作成 → 読み取り確認 → 更新 → 削除 → 不在確認) で確定した事項:
+
+- **作成は torne 本体の埋め込みテンプレートの全項目形でのみ成功する**。必須形: `item id=""`、scheduledStartDateTime (ISO 形式、タイムゾーンは `+09:00` のコロン形)、scheduledDuration (秒)、scheduledConditionID (空で受理され、サーバ側で "1" に正規化される)、scheduledChannelID (broadcastingType / channelType 属性付き、値は serviceId の `0x%04x` 形)、desiredQualityMode、**desiredMatchingID (type="SI_PROGRAMID"、値は `,,0x<networkId>,0x<eventId>` の形。サーバ側で 4 要素形に正規化される)**、reservationCreatorID、priorityFlag、recordDestinationID。desiredMatchingID を欠く最小形は 402 (Invalid Args) で失敗した。**作成に title 要素は含まれない** (番組名は EPG イベント側から決まる)。
+- **削除の ID の罠**: 作成応答の `RecordScheduleID` は `0x` 接頭辞付きで返るが、その値をそのまま削除に使うと **803 で失敗する**。削除には**リスト取得で得た item の id (接頭辞なし)** を使う。
+- **更新は sparse な部分更新のみ**: torne の更新テンプレートは item の id と scheduledConditionID / desiredQualityMode / priorityFlag (/ recordDestinationID) だけを含む形で、この形では受理される (HTTP 200、Result に item id が返る)。開始時刻と duration は更新テンプレートに含まれず、**このアクションでは変更できない** (一括形で送っても duration の変更は反映されなかった。保存済み item の verbatim 送信は 402)。時刻・長さの変更は削除+再作成が前提という設計とみられる。
+- **desiredQualityMode の変更は未反映**: sparse 形で 100 → 101 を送り受理されたが、保存値は 100 のままだった。101 が無効な値なのか、画質が作成後変更不可なのかは未確定 (フェーズ 1 以降の残件)。
+- 検証後の最終状態: テスト予約は全て削除し、リストが空であることを確認した。既存予約・既存録画への変更は行っていない。
+
+### 11.8 DLNA ContentDirectory Browse (58888)
+
+- デバイス記述の control URL への Browse が認証なしで成立する (docs/37 の再確認 + 構造の確定)。
+- コンテナ構成: ルート → `0/video` に genre / date / all / folder / LiveTuner の 5 コンテナ。`0/video/all` が全録画 (2 件、件数は WebAPI・XSRS と一致)。
+- DIDL の item 項目: dc:title / dc:date / dc:description、upnp:class / genre / channelName / channelNr / scheduledStartTime / scheduledEndTime、arib:longDescription / captionInfo / audioComponentType / videoComponentType 等、**`av:COGCount` (残コピー回数、実施時 10)**、res。
+- res の protocolInfo は `application/x-dtcp1` で DTCP1HOST / DTCP1PORT を含む (AKE 用ポートは動的。実施時は 57343)。**res URL は 58890 のウェブビデオ経路** (`/web/video/pvr?id=<タイトルID>&quality=dr`、`&quality=mobile`、`&sep` バリアント) を指す。60151 は使われていない。
+
+### 11.9 番組表 (EPG) 取得経路の結論 (§10 の項目 1 への回答)
+
+確定した事実:
+
+1. アプリ内テンプレートの経路 (DMS ポート 60151 の `EPG_TRDEPG_FILE.dat` ほか 8 ファイル名 — TRD/BS/CS/HA の EPG とロゴ) は、**本機では到達できない**。60151 は listen しておらず接続拒否、同じパスは 58890 / 64210 / 58888 のいずれでも 404。
+2. `chEpg/` カテゴリは 64210 に実在する。`chEpg/channelLogoDataGet` は取得可能 (バイナリ)。しかし **`chEpg/EPGGet` (Vita の文字列では POST + `application/binary` + X-DTVToken) は空ボディでは 400**、`chEpg/EITPFGet` も単純な GET 形では 400 で、**要求バイナリの形式が未確定**。
+3. `status/EPGVersionInfoGet` は JSON ではなくバイナリの版数テーブルを返す。
+
+結論: **番組表データ本体の取得形式はフェーズ 0 では確定できなかった** (経路の候補は chEpg/EPGGet に絞られたが、要求形式の解明が残る)。現時点で実用可能な番組情報は、チャンネル構成 (`status/channelListGet`) と現在/次番組 (`status/liveStreamStatusListGet` の EIT_PF) まで。EPG グリッドは v1 の必須範囲外 (§1.2) であり、本件は後続フェーズの残件として、アプリ側コードの解析 (EPGGet 要求バイナリの組み立て) から再開するのが筋である。
+
+### 11.10 §10 の未確定事項への対応
+
+| # | 事項 | フェーズ 0 の結果 |
+|---|---|---|
+| 1 | 番組表の取得経路と形式 | **部分的に解消**。DMS の .dat 経路は本機で到達不可と確定し、候補は chEpg/EPGGet に絞られたが、要求バイナリ形式は未確定 (§11.9)。残件として継続 |
+| 2 | X-DTVToken の要否と算出式 | **解消**。GET は認証なし、POST Set 系は必須 (対照実験で証明)。算出式と PINVerify の形も確定 (§11.5) |
+| 3 | 各エンドポイントの要求/応答スキーマ | **解消** (検証済みの範囲)。§11.4・§11.7・§11.8 に構造を記録し、フィクスチャは作業領域に保存 |
+| 4 | iOS のみ / Vita のみの定義の実働可否 | **解消**。iOS のみ 6 件のうち recordedContentCountGet / recordedContentMaxCountGet / requestClientInfoGet は実働、reservedListGet2 は JSON 形では到達不可 (SOAP 側にも Get2 は無い)、dtvtunerDeviceInfoGet / multiTunerLiveStreamStatusListGet は 404 (未実装)。Vita のみ 4 件のうち mobileBitrateInfoGet / Set は実働を確認。recordedContentChpDataGet は XsrsSrv 側の機能で JSON 形は未検証、liveStreamPCRGet / liveStreamPCRGet2 はライブ系パラメータが必要で未検証 |
+
+### 11.11 実施した書き込み操作の総括
+
+作業領域 `write_ops.log` に全記録がある。要約:
+
+- `config/PINVerify` ×1 (成功)。
+- `config/boxNameSet`: トークン無しの対照 (400 で拒否) → テスト名へ変更 → 確認 → 元へ復元 → 確認。
+- `config/mobileBitrateInfoSet`: 0 → 1 → 確認 → 0 へ復元 → 確認。
+- 予約 (SOAP): テンプレートと更新・削除の形式を確定するために作成を 3 ラウンド実施し、各回とも削除して不在を確認した。初回の削除は ID の `0x` 接頭辞の罠 (803) で一度失敗したが、即座に正しい ID で削除し、リストが空であることを確認してから次へ進んだ。
+- **実施しなかった書き込み**: タイトル削除 (削除対象のテスト録画が存在せず、実在する 2 件は本人の通常録画のため。エンドポイント自体は SOAP の X_DeleteTitle が存在)、`config/recNgListDelete` (録画失敗履歴の削除は不可逆のため見送り)、チャンネルスキャン / HDD 登録・解放 / 地域・時刻・ペアレンタル変更 / finishSetup (§7 のとおり本体状態を変える操作は本人の立会い・合意が別途必要)、`config/dtcpipClientStop` (計画どおり対象外)、内蔵 HDD 初期化 (対象外)。
+- 最終状態の確認: 本体名称は元の値、bitrateInfo は 0、予約リストは空、録画件数は 2 件で不変。
+
+### 11.12 フェーズ 0 の完了判定
+
+§6 の完了条件 (v1 機能に対応するエンドポイントの要求/応答の実例が記録され、フェーズ 0 担当分の未確定事項が解消または実測で確定している) に対して:
+
+- 発見・登録 (SSDP / PINVerify)、情報取得 (status 系)、録画予約 (SOAP の作成・一覧・競合・更新・削除)、録画一覧 (XSRS / Browse / 件数) について、実働する経路と実スキーマを確定した。**フェーズ 0 は完了**とする。
+- 計画との差分として、予約・録画一覧の主経路は JSON WebAPI ではなく UPnP SOAP であることが確定した (§11.1)。フェーズ 1 のコア設計 (WebAPI クライアントと UPnP クライアントの分担) はこの実測を前提に組み直すこと。
+- 残件 (フェーズ 1 以降): EPGGet の要求バイナリ形式 (§11.9)、desiredQualityMode の変更可否 (§11.7)、CAMsgInfoGet / EMMMsgInfoGet / recordedContentAdditionalInfoGet / recordedContentThumbnailGet のパラメータ形式 (§11.4)、X_GetMediaInfo の recordDestinationID の値形式 (§11.7)。
+- 2026-11-16: フェーズ 0 (API 実機検証) を実施し、結果を §11 に記録した。計画書の正本は本書であり、実機検証の記録も本書に集約する。
