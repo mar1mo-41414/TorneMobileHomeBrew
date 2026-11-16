@@ -85,10 +85,10 @@ String formatBytes(int bytes) {
 /// official label has not been confirmed fall back to the raw number;
 /// labels are never invented (plan 16.4).
 String qualityModeLabel(int mode) => switch (mode) {
-      100 => 'DR',
-      101 => '3倍',
-      _ => '$mode',
-    };
+  100 => 'DR',
+  101 => '3倍',
+  _ => '$mode',
+};
 
 /// Official display form of the software version.
 ///
@@ -105,22 +105,118 @@ String softwareVersionLabel(String version) {
   return version;
 }
 
-/// Official area name for the nasne `pref` code (areaInfoGet).
+/// Official area name for the region reported by `areaInfoGet`.
 ///
-/// The response carries no name field, and Sony's area numbering is
-/// not the JIS prefecture code (JIS 41 is 佐賀; the measured unit in
-/// Fukuoka returns 41), so only codes verified against a real unit
-/// are named; everything else falls back to the raw value and labels
-/// are never invented (plan 5.0 principle 5, plan 18).
+/// The response carries no name field; it carries two numbers,
+/// `areaIdentifierCode` and `pref`, and the official nasne settings
+/// UI (the unit's own Web UI, `nasne_home/lib/app.js`) resolves the
+/// pair against a built-in table of 56 entries — that table is
+/// reproduced in [_areaNamesByPair] (plan 19). The anchor entry was
+/// verified live: the owner's unit returns (55, 41), which the table
+/// names 福岡, matching its Fukuoka setting.
 ///
-/// Verified entries:
-/// - 41 = 福岡 — the owner's unit (Fukuoka, receiving Kitakyushu
-///   stations) returns pref 41; the spelling follows the official
-///   area-name list in torne's PvrResource.cxml.
-String areaPrefLabel(String pref) => switch (int.tryParse(pref)) {
-      41 => '福岡',
-      _ => pref,
-    };
+/// `pref` on its own is the JIS prefecture code + 1 (Hokkaido is
+/// split across pref 1 and 2; 49 = Tokyo islands and 50 = Kagoshima
+/// islands are extras), so it identifies every region except the
+/// eight Hokkaido sub-areas; the pair is the exact key. Name
+/// spellings follow torne's official area list (PvrResource.cxml,
+/// 53 names); the three Web-UI-only splits torne does not name
+/// (Asahikawa-Sorachi, the Tokyo islands, the Kagoshima islands)
+/// are rendered in the same style from the Web UI names. Unmatched
+/// values fall back to the raw number; labels are never invented
+/// (plan 5.0 principle 5).
+String areaLabel(String? areaIdentifierCode, String? pref) {
+  final code = int.tryParse(areaIdentifierCode ?? '');
+  final prefCode = int.tryParse(pref ?? '');
+  if (code != null && prefCode != null) {
+    final name = _areaNamesByPair[(code, prefCode)];
+    if (name != null) return name;
+  }
+  if (prefCode != null) {
+    final name = _areaNameByUniquePref[prefCode];
+    if (name != null) return name;
+  }
+  return pref ?? areaIdentifierCode ?? '';
+}
+
+/// (areaIdentifierCode, pref) -> official area name. Source: the
+/// area table built into the unit's own Web UI (plan 19).
+const _areaNamesByPair = <(int, int), String>{
+  (13, 1): '北海道（帯広）',
+  (14, 1): '北海道（釧路）',
+  (15, 1): '北海道（北見）',
+  (12, 1): '北海道（旭川）',
+  (12, 2): '北海道（旭川・空知）',
+  (10, 2): '北海道（札幌）',
+  (11, 2): '北海道（函館）',
+  (16, 2): '北海道（室蘭）',
+  (22, 3): '青森',
+  (20, 4): '岩手',
+  (17, 5): '宮城',
+  (18, 6): '秋田',
+  (19, 7): '山形',
+  (21, 8): '福島',
+  (26, 9): '茨城',
+  (28, 10): '栃木',
+  (25, 11): '群馬',
+  (29, 12): '埼玉',
+  (27, 13): '千葉',
+  (23, 14): '東京',
+  (23, 49): '東京（島部）',
+  (24, 15): '神奈川',
+  (31, 16): '新潟',
+  (37, 17): '富山',
+  (34, 18): '石川',
+  (36, 19): '福井',
+  (32, 20): '山梨',
+  (30, 21): '長野',
+  (39, 22): '岐阜',
+  (35, 23): '静岡',
+  (33, 24): '愛知',
+  (38, 25): '三重',
+  (45, 26): '滋賀',
+  (41, 27): '京都',
+  (40, 28): '大阪',
+  (42, 29): '兵庫',
+  (44, 30): '奈良',
+  (43, 31): '和歌山',
+  (49, 32): '鳥取',
+  (48, 33): '島根',
+  (47, 34): '岡山',
+  (46, 35): '広島',
+  (50, 36): '山口',
+  (53, 37): '徳島',
+  (52, 38): '香川',
+  (51, 39): '愛媛',
+  (54, 40): '高知',
+  (55, 41): '福岡',
+  (61, 42): '佐賀',
+  (57, 43): '長崎',
+  (56, 44): '熊本',
+  (60, 45): '大分',
+  (59, 46): '宮崎',
+  (58, 47): '鹿児島',
+  (58, 50): '鹿児島（南西諸島）',
+  (62, 48): '沖縄',
+};
+
+/// pref -> name for the prefs that identify exactly one area (all
+/// except Hokkaido's 1 and 2). Derived from [_areaNamesByPair].
+final _areaNameByUniquePref = _buildUniquePrefIndex();
+
+Map<int, String> _buildUniquePrefIndex() {
+  final byPref = <int, String?>{};
+  for (final entry in _areaNamesByPair.entries) {
+    final pref = entry.key.$2;
+    byPref[pref] = byPref.containsKey(pref) && byPref[pref] != entry.value
+        ? null
+        : entry.value;
+  }
+  return {
+    for (final e in byPref.entries)
+      if (e.value != null) e.key: e.value!,
+  };
+}
 
 /// Masks an identifier for display, keeping only the last [keep]
 /// characters (B-CAS card ids and similar, plan section 7).
