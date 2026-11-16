@@ -1564,3 +1564,59 @@ widget ハーネスで本人の操作列 (番組表を開く → 横にスクロ
 | 交換鍵ローテーションの頻度・継続手順 | ラベル不一致はエラーとし、観測後に継続手順を実装する |
 | DiXiM 列挙とワイヤ形式の対応 (docs/47 §9-2) | pydtcpip 体系を採用 (26.5)。DiXiM 側の裏付けは本フェーズの範囲外 |
 | Kx 導出の DiXiM 側詳細 (docs/47 §9-3) | ソース側内部の話であり、シンク実装には pydtcpip の検証済み形式を使う |
+
+## 27. フェーズ5 実装記録 (2026-11-17)
+
+実装コミット `2b73185`。設計 (§26) に沿って実装し、検証は単体検証まで到達した。**実機での AKE 完走と再生は未実施** (27.4)。
+
+### 27.1 実装範囲と構成
+
+| ファイル | 役割 |
+|---|---|
+| `lib/core/dtcp/dtcp_crypto.dart` | DTCP 曲線の EC 演算、ECDSA-SHA1 (検証と RFC 6979 決定的署名)、ECDH、証明書検証 (DTLA 権威鍵)、DeviceCredentials (資格情報ゲート)、コンテンツ鍵導出、AES-128 (ECB/CBC) |
+| `lib/core/dtcp/srm.dart` | SRM の解析・署名検証・失効チェック (世代累積モデル) |
+| `lib/core/dtcp/ake.dart` | 制御フレーム、AKE クライアント (Full Auth、RTT、SRM_UPDATE 受理/転送)、セッション (鍵はメモリ上のみ) |
+| `lib/core/dtcp/pcp.dart` | PCP ヘッダ解析とストリーム復号 |
+| `lib/core/dtcp/credential_store.dart` | CredentialStore (Secure = flutter_secure_storage / InMemory = テスト用)、SRM の KeyValueStore 永続化 |
+| `lib/core/dtcp/dtcp_proxy.dart` | HEAD/GET フェッチャとループバック HTTP プロキシ (復号 TS を 127.0.0.1 で配信、平文はディスクに書かない) |
+| `lib/core/services/dtcp_playback.dart` | DtcpPlaybackEngine (HEAD → AKE → プロキシ) |
+| `lib/core/services/playback.dart` | v1 スタブ (UnsupportedPlaybackEngine、据え置き) |
+| `lib/ui/dtcp_credential_screen.dart` | 資格情報のインポート (ファイル / hex / base64)・検証・削除、デバイス ID と証明書指紋の表示 |
+| `lib/ui/player_screen.dart` | media_kit プレイヤー画面 (セッションを受け取り、破棄時に停止) |
+| 設定画面 | 番組表のサブチャンネルトグル (§25) と「DTCP-IP 資格情報」導線を追加 |
+| タイトル詳細 | 「再生は未実装です」を実再生に置き換え。未インポート時はインポート案内ダイアログ、スタブ構成時は従来の未実装案内 |
+
+PlaybackEngine の契約は `interfaces.dart` で発展させた: `startPlayback(title, res)` が `PlaybackSession` (mediaUri + stop) を返す。v1 スタブと UI の未実装案内の経路はそのまま残っている。
+
+### 27.2 §26 設計からの差分 (実コードへの適合)
+
+- **エラー分類**: §26 は protocol / network 分類を想定したが、新設せず既存の統一エラーモデル (§12.6) に合わせた。ワイヤ形式・プロトコル違反は `parse`、接続断は `unreachable`、資格情報の不備は `validation`。
+- **SRM の失効モデル**: §26 の「世代別チェック」の記述は不正確だった。参照実装どおり、全世代の失効エントリを累積した範囲リストで判定する (世代をまたいで失効は残る)。SRM_UPDATE の受理は (版数, データ長) の `is_newer_than` 比較で決め、採用後に自他の証明書を新しい SRM で検査する。EXCHANGE_KEY の受理後、自側 SRM が相手より新しければ相手へ転送する (フレームの key type は 0、相手の世代上限を超える場合は第1世代部分のみを送る)。
+- **AKE ループの寿命**: 参照実装は交換鍵の受領と SRM 解決でループを抜けるが、本実装は再生セッション中ループを常駐させ、後続の EXCHANGE_KEY (鍵ローテーション) と SRM_UPDATE を処理し続ける。
+- **file_picker の版数**: 当初指定した 11.x は built-in Kotlin 統合が本プロジェクトの Gradle 構成で `GeneratedPluginRegistrant` のコンパイルに失敗するため、10.3.10 に固定した (API は `FilePicker.platform.pickFiles` 形式)。
+- **資格情報ストア**: §26 の想定どおり OS 金庫のみ。iOS は `first_unlock_this_device` (iCloud Keychain 同期対象外)。SRM は署名済み公開データとして通常の KeyValueStore に保存する (§26.4 の判断どおり)。
+
+### 27.3 検証結果
+
+- **既知答テスト (KAT)**: 参照実装 pydtcpip 自身で生成したベクタ (`test/dtcp_kat.dart`、テスト専用の権威鍵で発行した証明書・署名・SRM・PCP) に対して、曲線演算・証明書検証・決定的署名 (バイト一致)・ECDH・認証鍵・RTT MAC・SRM 失効・PCP 復号を検証した。コンテンツ鍵導出は pydtcpip の公開既知答 (実機で検証済みの計算、全 E-EMI) と一致。
+- **AKE 状態機械**: フェイクソース (pydtcpip `tests/fakes.py` の移植、署名検証と RTT 検証をソース側でも実施) に対して Full Auth → RTT → EXCHANGE_KEY → SRM_UPDATE の完走を検証した。保存済み SRM で失効しているソースを CHALLENGE 時点で拒否することも検証した。なお、失効対象を含む SRM を SRM_UPDATE で受け取ると参照実装どおりセッションが終了する (テストベクタの設計時に判明し、更新用には失効対象外の SRM を別途生成して検証した)。
+- **資格情報ゲート**: 長さ・証明書種別・DTLA 署名・秘密鍵の範囲・ペア一致の各失敗系と、金庫モックの読み書き・削除を検証した。
+- **サブチャンネル**: 実測フィクスチャ (地デジ 24 サービス) で分類がサブ 11 件になることと、番組表でデフォルト非表示・設定オンで表示されることをウィジェットテストで検証した。
+- **テスト総数 148 件、全合格** (新規 25 件)。`flutter analyze` は検出なし (着手前のベースラインと同等)。
+- 既存テストの変更 2 件: `providers_test` の再生エンジン期待値を Phase 5 の契約 (DtcpPlaybackEngine、isSupported = true) に更新。`epg_test` のスクロールテスト用チャンネルは元々メイン局×6 の意図だったため、各局に個別の transportStreamId を与えた (§25 の分類でサブチャンネル扱いにならない形がテストの前提だった)。
+
+### 27.4 未実施・未確定事項
+
+- **実機での AKE 完走・実再生は未実施**。ユーザーが自分の資格情報ペアを設定画面からインポートした後に初めて確認できる。本節の到達点は「インポート可能な状態 + プロトコル/暗号の単体検証」までであり、版数は成立確認まで上げないルール (§22) により 1.1.0 のままとした。
+- **IP TTL 3 は未対応** (dart:io の Socket では設定できない)。`AkeConnection` の差し替え口は用意した。nasne が TTL で切断するかはインポート後の完走確認時の確認項目 (§26.6)。
+- 交換鍵のラベル不一致 (ローテーション) は現版ではエラーとして扱う。再認証による継続は将来課題 (§26.6)。
+- Move (移動) は対象外 (§26.2)。クライアント登録 (nasne HOME の許可) の要否も完走確認時に判明する (§26.6)。
+
+### 27.5 ビルド (1.1.0+6)
+
+| 成果物 | サイズ | SHA-256 | 配置 |
+|---|---|---|---|
+| IPA (署名なし) | 16,893,419 バイト | `2ff427e6aa6a304555a9b8dcb8262ef57e0173b6c778f1cfcb70baed7a690efd` | marnux `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.1.0.ipa` |
+| APK (配布用署名) | 101,243,377 バイト | `469f8d44d7bd332bceceacc2bb58fe8fce780612cc30fd96ab192f2df9e97f1a` | marnux `~/ダウンロード/TorneMobileHomeBrew-1.1.0.apk` |
+
+APK の署名証明書 SHA-256 は `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5` (配布鍵、§20 と同一)。サイズ増は media_kit (mpv) のネイティブライブラリ同梱による。GitHub Release は作成していない。
