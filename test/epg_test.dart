@@ -1,6 +1,6 @@
-/// EPG (programme guide) tests (plan 21): the ARIB STD-B24
+/// EPG (programme guide) tests (plan 21 / 24): the ARIB STD-B24
 /// decoder, the EPG / logo payload parsers, the acquisition
-/// recipe at the service boundary, and the guide screen.
+/// request format at the service boundary, and the guide screen.
 ///
 /// All fixtures are synthetic, built in this file: no broadcast
 /// programme data is stored in the repository.
@@ -167,6 +167,25 @@ Uint8List syntheticPlaintext() {
 List<int> wrapEpgResponse(List<int> plain) {
   final zipped = ZLibEncoder().convert(plain);
   return zipped.map((b) => b ^ epgXorKey).toList();
+}
+
+/// Builds a synthetic EPG version table (plan 24): a 12-byte
+/// header, one 144-byte record per service (triple + 0xc000 flags
+/// + zeroed version blocks) and the 8-byte footer.
+List<int> versionTableOf(List<EpgServiceRef> services) {
+  final out = BytesBuilder();
+  out.add(List.filled(12, 0));
+  for (final s in services) {
+    out.add([
+      s.networkId >> 8, s.networkId & 0xff,
+      s.transportStreamId >> 8, s.transportStreamId & 0xff,
+      s.serviceId >> 8, s.serviceId & 0xff,
+      0xc0, 0x00,
+    ]);
+    out.add(List.filled(136, 0));
+  }
+  out.add(List.filled(8, 0));
+  return out.toBytes();
 }
 
 // ---------------------------------------------------------------------------
@@ -339,9 +358,73 @@ void main() {
     });
   });
 
-  group('EPG acquisition recipe (service boundary)', () {
-    test('verinfo x3 -> EPGGet -> parsed guide; logos parsed', () async {
-      final versionTable = List<int>.generate(64, (i) => i * 3 & 0xff);
+  group('EPGGet request format (plan 24)', () {
+    test('version table services are enumerated in table order', () {
+      final table = versionTableOf(const [
+        EpgServiceRef(0x1111, 0x2222, 0x3333),
+        EpgServiceRef(0x4444, 0x5555, 0x6666),
+      ]);
+      expect(parseEpgVersionServices(table), const [
+        EpgServiceRef(0x1111, 0x2222, 0x3333),
+        EpgServiceRef(0x4444, 0x5555, 0x6666),
+      ]);
+    });
+
+    test('enumeration stops at a record without the flags value', () {
+      final table = versionTableOf(const [
+        EpgServiceRef(0x1111, 0x2222, 0x3333),
+        EpgServiceRef(0x4444, 0x5555, 0x6666),
+      ]);
+      table[12 + 144 + 6] = 0x00; // second record's flags high byte
+      expect(parseEpgVersionServices(table),
+          const [EpgServiceRef(0x1111, 0x2222, 0x3333)]);
+      expect(parseEpgVersionServices(const []), isEmpty);
+      expect(parseEpgVersionServices(List.filled(12, 0)), isEmpty);
+    });
+
+    test('request body layout: header count, records, bitmaps', () {
+      final body = buildEpgGetBody(const [
+        EpgServiceRef(0x1111, 0x2222, 0x3333),
+        EpgServiceRef(0x4444, 0x5555, 0x6666),
+      ]);
+      expect(body.length, 8 + 24 * 2);
+      expect(body.sublist(0, 8), [0, 0, 0, 0, 0, 2, 0, 0]);
+      expect(body.sublist(8, 16),
+          [0x11, 0x11, 0x22, 0x22, 0x33, 0x33, 0, 0]);
+      expect(body.sublist(16, 32), List.filled(16, 0xff));
+      expect(body.sublist(32, 40),
+          [0x44, 0x44, 0x55, 0x55, 0x66, 0x66, 0, 0]);
+    });
+
+    test('bitmap sides and the linked-description flag are separate',
+        () {
+      const services = [EpgServiceRef(0x1111, 0x2222, 0x3333)];
+      final basicOnly = buildEpgGetBody(services, extended: false);
+      expect(basicOnly.sublist(16, 24), List.filled(8, 0xff));
+      expect(basicOnly.sublist(24, 32), List.filled(8, 0));
+      final extOnly = buildEpgGetBody(services, basic: false);
+      expect(extOnly.sublist(16, 24), List.filled(8, 0));
+      expect(extOnly.sublist(24, 32), List.filled(8, 0xff));
+      final withLdt =
+          buildEpgGetBody(services, includeLinkedDescriptions: true);
+      expect(withLdt[8 + 6], 1);
+      expect(buildEpgGetBody(services)[8 + 6], 0);
+    });
+
+    test('record count is a u16 BE in the header', () {
+      final many = List.generate(300, (i) => EpgServiceRef(1, 2, i));
+      final body = buildEpgGetBody(many);
+      expect(body.sublist(4, 6), [0x01, 0x2c]);
+      expect(body.length, 8 + 24 * 300);
+    });
+  });
+
+  group('EPG acquisition (service boundary)', () {
+    test('verinfo -> EPGGet request -> parsed guide; logos parsed',
+        () async {
+      final versionTable = versionTableOf(const [
+        EpgServiceRef(0x1111, 0x2222, 0x3333),
+      ]);
       late http.Request epgRequest;
       final client = MockClient((request) async {
         if (request.url.path == '/status/EPGVersionInfoGet') {
@@ -368,14 +451,16 @@ void main() {
       final guide = await service.getProgrammeGuide(2, const [_channel]);
       expect(guide.eventCount, 2);
 
-      // The measured recipe: the version table repeated 3 times,
+      // The plan-24 request format: an 8-byte header (record
+      // count u16 BE) and one 24-byte record for the version
+      // table's service, both segment bitmaps all set;
       // application/binary, token over the raw body.
       expect(epgRequest.method, 'POST');
       expect(epgRequest.headers['content-type'], 'application/binary');
       expect(epgRequest.bodyBytes, [
-        ...versionTable,
-        ...versionTable,
-        ...versionTable,
+        0, 0, 0, 0, 0, 1, 0, 0,
+        0x11, 0x11, 0x22, 0x22, 0x33, 0x33, 0, 0,
+        ...List.filled(16, 0xff),
       ]);
       expect(
         epgRequest.headers['x-dtvtoken'],

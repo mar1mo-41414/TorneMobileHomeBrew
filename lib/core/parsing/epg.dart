@@ -423,3 +423,119 @@ Map<int, Uint8List> parseChannelLogos(List<int> rawResponse) {
   }
   return logos;
 }
+
+// ---------------------------------------------------------------------------
+// EPG version table / EPGGet request format (plan 24)
+// ---------------------------------------------------------------------------
+
+/// One service of the binary EPG version table: the
+/// (networkId, transportStreamId, serviceId) triple that keys the
+/// unit-side EPG database.
+class EpgServiceRef {
+  const EpgServiceRef(
+      this.networkId, this.transportStreamId, this.serviceId);
+
+  final int networkId;
+  final int transportStreamId;
+  final int serviceId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is EpgServiceRef &&
+      other.networkId == networkId &&
+      other.transportStreamId == transportStreamId &&
+      other.serviceId == serviceId;
+
+  @override
+  int get hashCode => Object.hash(networkId, transportStreamId, serviceId);
+
+  @override
+  String toString() =>
+      'EpgServiceRef($networkId, $transportStreamId, $serviceId)';
+}
+
+/// Header size of the `EPGVersionInfoGet` binary version table.
+const int epgVersionTableHeaderSize = 12;
+
+/// Record size of the version table. Each record is the service
+/// triple (three u16 BE), a flags u16 (0xc000 on every measured
+/// record) and two 68-byte version blocks; the table is trailed by
+/// an 8-byte footer that does not form a record.
+const int epgVersionTableRecordSize = 144;
+
+/// Enumerates the services of a version table, in table order.
+///
+/// Records are read from the end of the header while a whole record
+/// fits and carries the measured flags value; anything else (the
+/// footer, a truncated tail) ends the enumeration. The header's own
+/// count field is NOT the record count (it reads 21 for the 20
+/// measured terrestrial records), so it is deliberately not used.
+List<EpgServiceRef> parseEpgVersionServices(List<int> versionTable) {
+  final services = <EpgServiceRef>[];
+  var offset = epgVersionTableHeaderSize;
+  while (offset + epgVersionTableRecordSize <= versionTable.length) {
+    if (_u16be(versionTable, offset + 6) != 0xc000) break;
+    services.add(EpgServiceRef(
+      _u16be(versionTable, offset),
+      _u16be(versionTable, offset + 2),
+      _u16be(versionTable, offset + 4),
+    ));
+    offset += epgVersionTableRecordSize;
+  }
+  return services;
+}
+
+/// Header size of an `EPGGet` request body.
+const int epgGetHeaderSize = 8;
+
+/// Record size of an `EPGGet` request body.
+const int epgGetRecordSize = 24;
+
+/// Builds the binary body of an `chEpg/EPGGet` request (plan 24;
+/// the format was recovered from the unit-side EPG job and verified
+/// against the real unit):
+///
+/// - Header (8 bytes): bytes 0-3 unused by the job (byte 2 is
+///   echoed into the response header), the record count as u16 BE
+///   at +4, bytes 6-7 unused. The job accepts the file only when
+///   its size is at least (count * 3 + 1) * 8 — exactly the size of
+///   a well-formed body, 8 + 24 * count.
+/// - One 24-byte record per service: the service triple (u16 BE
+///   each), a linked-description flag byte at +6 (nonzero also
+///   appends the service's LDT sections; none were stored on the
+///   measured unit, so the flag changed nothing there), a pad byte
+///   at +7, then two 8-byte segment bitmaps: basic (table_id
+///   0x50/0x51 side) at +8 and extended (0x58/0x59 side) at +16.
+///   Bit i of a bitmap (MSB first) requests segment i + 1 of the
+///   64 segments (8 per day, 3 hours each, 8 days).
+///
+/// With both bitmaps all-ones the job returns every section the
+/// unit's EPG database holds for the service — the complete
+/// dataset. The job answers with an error (HTTP 500 at the WebAPI
+/// surface) when a request selects no section at all.
+Uint8List buildEpgGetBody(
+  List<EpgServiceRef> services, {
+  bool basic = true,
+  bool extended = true,
+  bool includeLinkedDescriptions = false,
+}) {
+  final out = Uint8List(epgGetHeaderSize + epgGetRecordSize * services.length);
+  out[4] = (services.length >> 8) & 0xff;
+  out[5] = services.length & 0xff;
+  var offset = epgGetHeaderSize;
+  for (final service in services) {
+    _putU16be(out, offset, service.networkId);
+    _putU16be(out, offset + 2, service.transportStreamId);
+    _putU16be(out, offset + 4, service.serviceId);
+    out[offset + 6] = includeLinkedDescriptions ? 1 : 0;
+    if (basic) out.fillRange(offset + 8, offset + 16, 0xff);
+    if (extended) out.fillRange(offset + 16, offset + 24, 0xff);
+    offset += epgGetRecordSize;
+  }
+  return out;
+}
+
+void _putU16be(Uint8List out, int offset, int value) {
+  out[offset] = (value >> 8) & 0xff;
+  out[offset + 1] = value & 0xff;
+}

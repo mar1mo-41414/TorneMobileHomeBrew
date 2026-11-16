@@ -1,12 +1,27 @@
-/// EPG (programme guide) service (plan 12.8 / 21).
+/// EPG (programme guide) service (plan 12.8 / 21 / 24).
 ///
-/// The acquisition recipe, determined by measurement (plan 21):
-/// fetch the binary version table from `status/EPGVersionInfoGet`,
-/// send it back three times concatenated as the binary body of
-/// `chEpg/EPGGet` (POST, Content-Type: application/binary,
-/// X-DTVToken over the body), then deobfuscate (XOR 0x9d) and
-/// inflate the response. One call returns the full guide for the
-/// broadcasting type (8 days, all services, on the measured unit).
+/// The acquisition path, determined by measurement and by the
+/// unit-side EPG job's code (plan 24): fetch the binary version
+/// table from `status/EPGVersionInfoGet` (it enumerates the
+/// services the unit's EPG database holds), build an `EPGGet`
+/// request body in the job's native format — an 8-byte header
+/// (record count u16 BE at +4) plus one 24-byte record per service
+/// carrying two 64-segment bitmaps, basic and extended, all set —
+/// and POST it to `chEpg/EPGGet` (Content-Type: application/binary,
+/// X-DTVToken over the body). The response deobfuscates (XOR 0x9d)
+/// and inflates to the concatenation of every EIT section the
+/// database holds for the requested segments: the complete guide
+/// (8 days, all services, titles on every day) in one call.
+///
+/// History: plan 21 shipped a recipe that sent the version table
+/// itself, repeated three times, as the body. That only appeared
+/// to work: the job parsed the table's bytes as its own header and
+/// records (the table's [01 0c] bytes read as a record count of
+/// 268, whose size check is the "6,440-byte minimum" measured back
+/// then), and the version bytes landed in bitmap positions, so a
+/// partial, day-skewed subset came back — most visibly, no basic
+/// (title-carrying) sections for the days +1..+3. Plan 24 replaced
+/// the recipe with the real format; see `buildEpgGetBody`.
 library;
 
 import '../endpoints.dart';
@@ -28,14 +43,13 @@ class WebApiEpgService {
   final WebApiTransport _plain;
   final WebApiTransport _authed;
 
-  /// Persistent accumulation cache (plan 23). The unit-side EPG
-  /// store does not hold basic (title-carrying) sections for every
-  /// day of the returned window — measured: the days +1..+3 ahead
-  /// arrive with extended sections only, while today (sparse) and
-  /// +4..+7 carry the titles. Merging each fetch into a persistent
-  /// cache captures a day's titles while that day is in the titled
-  /// window, so the guide keeps them when the day rotates into the
-  /// title-less window. Null disables accumulation (tests, harness).
+  /// Persistent accumulation cache (plan 23). A single fetch now
+  /// returns the unit's complete stored dataset (plan 24), but that
+  /// dataset itself is only as complete as the unit-side EPG store:
+  /// after the unit (re)builds its store — a reboot, a channel
+  /// rescan — early fetches can still be partial. Merging each fetch
+  /// into a persistent cache keeps the fuller picture across such
+  /// windows. Null disables accumulation (tests, harness).
   final EpgGuideCache? _guideCache;
   final String? _cacheHost;
 
@@ -54,14 +68,15 @@ class WebApiEpgService {
       throw NasneError.parse('webapi:EPGVersionInfoGet',
           cause: 'empty version table');
     }
-    // The measured acceptance rule needs the table repeated; three
-    // copies put the body past the observed threshold with margin
-    // (plan 21). The response is the full dataset, not a delta.
-    final body = <int>[
-      ...versionTable,
-      ...versionTable,
-      ...versionTable,
-    ];
+    // The version table enumerates the services of the unit-side
+    // EPG database; the request asks for every segment of each, on
+    // both the basic and the extended side (plan 24).
+    final services = parseEpgVersionServices(versionTable);
+    if (services.isEmpty) {
+      throw NasneError.parse('webapi:EPGVersionInfoGet',
+          cause: 'no service records in version table');
+    }
+    final body = buildEpgGetBody(services);
     final raw = await _authed.postBinary(
       WebApiEndpoints.epgGet,
       body: body,
