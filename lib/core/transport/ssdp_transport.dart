@@ -21,11 +21,27 @@ class SsdpResponse {
   String? get server => headers['SERVER'];
 }
 
+/// Platform hook for OS-level multicast receive restrictions.
+///
+/// On Android, Wi-Fi multicast reception is filtered unless the app
+/// holds a WifiManager.MulticastLock; the app layer supplies an
+/// implementation backed by a platform channel (plan 17). Pure-Dart
+/// interface so the core stays platform-free; implementations must
+/// be best-effort and never throw.
+abstract interface class MulticastLockGuard {
+  Future<void> acquire();
+  Future<void> release();
+}
+
 /// Sends M-SEARCH and collects responses. Pure dart:io, no platform
-/// channels; OS-level multicast restrictions are the app layer's
-/// concern (manual registration is the fallback, plan 5.2).
+/// channels; OS-level multicast restrictions are handled through the
+/// optional [MulticastLockGuard] hook (manual registration and the
+/// subnet scan are the fallbacks, plan 5.2 / 16.3).
 class SsdpTransport {
-  const SsdpTransport();
+  const SsdpTransport({this.lockGuard});
+
+  /// Held for the duration of [search] when provided.
+  final MulticastLockGuard? lockGuard;
 
   static final InternetAddress multicastAddress =
       InternetAddress('239.255.255.250');
@@ -34,6 +50,18 @@ class SsdpTransport {
   Future<List<SsdpResponse>> search(
     String searchTarget, {
     Duration timeout = const Duration(seconds: 3),
+  }) async {
+    await lockGuard?.acquire();
+    try {
+      return await _search(searchTarget, timeout: timeout);
+    } finally {
+      await lockGuard?.release();
+    }
+  }
+
+  Future<List<SsdpResponse>> _search(
+    String searchTarget, {
+    required Duration timeout,
   }) async {
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     final responses = <SsdpResponse>[];

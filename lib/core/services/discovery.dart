@@ -18,8 +18,9 @@ class SsdpDiscoveryService implements DiscoveryService {
   SsdpDiscoveryService({
     SsdpTransport? ssdp,
     http.Client? client,
+    MulticastLockGuard? lockGuard,
     this.httpTimeout = const Duration(seconds: 10),
-  })  : _ssdp = ssdp ?? const SsdpTransport(),
+  })  : _ssdp = ssdp ?? SsdpTransport(lockGuard: lockGuard),
         _client = client ?? http.Client();
 
   final SsdpTransport _ssdp;

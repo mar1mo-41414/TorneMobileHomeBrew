@@ -9,16 +9,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/core.dart';
+import 'multicast_lock.dart';
 
 final httpClientProvider = Provider<http.Client>((ref) => http.Client());
 
 /// Discovery chain (plan 16.3): SSDP first; when it finds nothing
 /// (multicast-restricted environments such as iOS sideloading), the
 /// unicast subnet scan runs. Manual registration stays available in
-/// the settings screen regardless.
+/// the settings screen regardless. On Android the SSDP step holds a
+/// WifiManager.MulticastLock while searching (plan 17).
 final discoveryServiceProvider = Provider<DiscoveryService>(
   (ref) => CompositeDiscoveryService([
-    SsdpDiscoveryService(client: ref.watch(httpClientProvider)),
+    SsdpDiscoveryService(
+      client: ref.watch(httpClientProvider),
+      lockGuard: MethodChannelMulticastLockGuard(),
+    ),
     SubnetScanDiscoveryService(client: ref.watch(httpClientProvider)),
   ]),
 );
