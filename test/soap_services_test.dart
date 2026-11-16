@@ -1,0 +1,210 @@
+/// SOAP services against MockClient + masked phase 0 fixtures.
+library;
+
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:tmhb/core/core.dart';
+
+String soapFixture(String name) =>
+    File('test/fixtures/soap/$name').readAsStringSync();
+
+final xsrsUrl = Uri.parse('http://192.0.2.1:64230/XSRS');
+final cdsUrl =
+    Uri.parse('http://192.0.2.1:58888/MediaServer_ContentDirectory/control');
+
+/// Routes by the SOAP action name found in the request body.
+MockClient router(Map<String, (int, String)> routes,
+    {void Function(http.Request)? onRequest}) {
+  return MockClient((request) async {
+    onRequest?.call(request);
+    for (final entry in routes.entries) {
+      if (request.body.contains('<u:${entry.key} ') ||
+          request.body.contains('<u:${entry.key}>')) {
+        return http.Response(entry.value.$2, entry.value.$1,
+            headers: {'content-type': 'text/xml; charset=utf-8'});
+      }
+    }
+    return http.Response('no route', 500);
+  });
+}
+
+void main() {
+  group('SoapScheduleService', () {
+    test('list parses the one-item fixture', () async {
+      final service = SoapScheduleService(
+        soap: SoapTransport(
+            client: router({
+          'X_GetRecordScheduleList': (200, soapFixture('schedule_list_one.xml')),
+        })),
+        controlUrl: xsrsUrl,
+      );
+      final list = await service.listSchedules();
+      expect(list.length, 1);
+      expect(list.single.id, '10000000000000000004');
+    });
+
+    test('create returns the normalised id (0x stripped)', () async {
+      late String seenBody;
+      final service = SoapScheduleService(
+        soap: SoapTransport(
+            client: router(
+          {
+            'X_CreateRecordSchedule':
+                (200, soapFixture('create_response.xml')),
+          },
+          onRequest: (r) => seenBody = r.body,
+        )),
+        controlUrl: xsrsUrl,
+      );
+      final id = await service.createSchedule(NewRecordSchedule(
+        start: DateTime.parse('2026-11-18T04:00:00+09:00'),
+        durationSeconds: 300,
+        channel: const ScheduleChannel(
+            broadcastingType: 2, channelType: 2, serviceId: 56832),
+        networkId: 30848,
+      ));
+      expect(id, '10000000000000000003');
+      // The Elements argument is transported XML-escaped (plan 12.3).
+      expect(seenBody, contains('&lt;scheduledStartDateTime&gt;'));
+      expect(seenBody, contains('X_CreateRecordSchedule'));
+    });
+
+    test('delete sends the canonical id', () async {
+      late String seenBody;
+      final service = SoapScheduleService(
+        soap: SoapTransport(
+            client: router(
+          {
+            'X_DeleteRecordSchedule': (
+              200,
+              '<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>'
+                  '<u:X_DeleteRecordScheduleResponse xmlns:u="urn:schemas-xsrs-org:service:X_ScheduledRecording:2">'
+                  '</u:X_DeleteRecordScheduleResponse></s:Body></s:Envelope>'
+            ),
+          },
+          onRequest: (r) => seenBody = r.body,
+        )),
+        controlUrl: xsrsUrl,
+      );
+      await service.deleteSchedule('10000000000000000004');
+      expect(seenBody,
+          contains('<RecordScheduleID>10000000000000000004</RecordScheduleID>'));
+    });
+
+    test('an empty update is rejected client-side', () async {
+      final service = SoapScheduleService(
+        soap: SoapTransport(client: router({})),
+        controlUrl: xsrsUrl,
+      );
+      await expectLater(
+        service.updateSchedule(const ScheduleUpdate(id: '1')),
+        throwsA(isA<NasneError>()
+            .having((e) => e.category, 'category',
+                NasneErrorCategory.validation)),
+      );
+    });
+
+    test('conflict fault + empty schedule list means "no conflicts"',
+        () async {
+      final service = SoapScheduleService(
+        soap: SoapTransport(
+            client: router({
+          'X_GetConflictList': (500, soapFixture('conflict_fault.xml')),
+          'X_GetRecordScheduleList':
+              (200, soapFixture('record_schedule_list_empty.xml')),
+        })),
+        controlUrl: xsrsUrl,
+      );
+      final conflicts = await service.checkConflicts(NewRecordSchedule(
+        start: DateTime.parse('2026-11-18T04:00:00+09:00'),
+        durationSeconds: 300,
+        channel: const ScheduleChannel(
+            broadcastingType: 2, channelType: 2, serviceId: 56832),
+        networkId: 30848,
+      ));
+      expect(conflicts, isEmpty);
+    });
+
+    test('conflict fault with existing schedules propagates', () async {
+      final service = SoapScheduleService(
+        soap: SoapTransport(
+            client: router({
+          'X_GetConflictList': (500, soapFixture('conflict_fault.xml')),
+          'X_GetRecordScheduleList':
+              (200, soapFixture('schedule_list_one.xml')),
+        })),
+        controlUrl: xsrsUrl,
+      );
+      await expectLater(
+        service.checkConflicts(NewRecordSchedule(
+          start: DateTime.parse('2026-11-18T04:00:00+09:00'),
+          durationSeconds: 300,
+          channel: const ScheduleChannel(
+              broadcastingType: 2, channelType: 2, serviceId: 56832),
+          networkId: 30848,
+        )),
+        throwsA(isA<NasneError>()
+            .having((e) => e.category, 'category',
+                NasneErrorCategory.soapFault)
+            .having((e) => e.code, 'code', '402')),
+      );
+    });
+
+    test('conflict list parses items when the call succeeds', () async {
+      final service = SoapScheduleService(
+        soap: SoapTransport(
+            client: router({
+          'X_GetConflictList': (200, soapFixture('conflict_ok.xml')),
+        })),
+        controlUrl: xsrsUrl,
+      );
+      final conflicts = await service.checkConflicts(NewRecordSchedule(
+        start: DateTime.parse('2026-11-18T04:00:00+09:00'),
+        durationSeconds: 300,
+        channel: const ScheduleChannel(
+            broadcastingType: 2, channelType: 2, serviceId: 56832),
+        networkId: 30848,
+      ));
+      expect(conflicts.length, 1);
+      expect(conflicts.single.id, '10000000000000000004');
+    });
+  });
+
+  group('SoapTitleCatalogService (XSRS + DIDL join)', () {
+    SoapTitleCatalogService build(MockClient client) {
+      return SoapTitleCatalogService(
+        soap: SoapTransport(client: client),
+        xsrsControlUrl: xsrsUrl,
+        webApi: WebApiTransport('192.0.2.1', client: client),
+        metadata: _FixtureMetadata(),
+      );
+    }
+
+    test('titles merge DIDL complement by title id', () async {
+      final catalog = build(router({
+        'X_GetTitleList': (200, soapFixture('title_list.xml')),
+      }));
+      final titles = await catalog.listTitles();
+      expect(titles.length, 2);
+      final t2 = titles.firstWhere((t) => t.id == '10000000000000000002');
+      expect(t2.copyCountRemaining, 10);
+      expect(t2.res.length, 3);
+      expect(t2.scheduledDurationSeconds, 854);
+      final t1 = titles.firstWhere((t) => t.id == '10000000000000000001');
+      expect(t1.copyCountRemaining, 9);
+      expect(t1.resumePointSeconds, 16);
+    });
+  });
+}
+
+class _FixtureMetadata implements MetadataService {
+  @override
+  Future<DidlDocument> browse(String objectId) async {
+    return parseDidl(
+        File('test/fixtures/dlna/browse_0_video_all.xml').readAsStringSync(),
+        'test');
+  }
+}

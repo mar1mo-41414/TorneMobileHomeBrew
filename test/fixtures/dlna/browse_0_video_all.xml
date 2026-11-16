@@ -1,0 +1,56 @@
+<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:arib="urn:schemas-arib-or-jp:elements-1-0/" xmlns:av="urn:schemas-sony-com:av" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/" xmlns:dtcp="urn:schemas-dtcp-com:metadata-1-0/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+<item id="0/video/all/pvr?id=10000000000000000002" parentID="0/video/all" restricted="0" dlna:dlnaManaged="00000004">
+<dc:title>テスト番組タイトル8</dc:title>
+<upnp:class>object.item.videoItem.movie</upnp:class>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_PN=DTCP_MPEG_TS_JP_T;DLNA.ORG_OP=10;DLNA.ORG_FLAGS=01119000000000000000000000000000;DTCP.COM_FLAGS=C0000000" duration="00:14:14" dlna:cleartextSize="1564986240">http://192.0.2.1:58890/web/video/pvr?id=10000000000000000002&amp;quality=dr</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_OP=10;DLNA.ORG_FLAGS=01109000000000000000000000000000;DTCP.COM_FLAGS=C0000000;ARIB.OR.JP_PN=MPEG_TTS_CP" duration="00:14:14" dlna:cleartextSize="1564986240">http://192.0.2.1:58890/web/video/pvr?id=10000000000000000002&amp;quality=dr&amp;sep</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_OP=10;DLNA.ORG_FLAGS=01109000000000000000000000000000;DTCP.COM_FLAGS=C0000000;SONY.COM_PN=DTCP_AVC_TS_SD_30_JP_AAC_T" duration="00:14:12" dlna:cleartextSize="258595584">http://192.0.2.1:58890/web/video/pvr?id=10000000000000000002&amp;quality=mobile</res>
+<arib:audioComponentType qualityIndicator="2">3</arib:audioComponentType>
+<arib:caProgramInfo>0</arib:caProgramInfo>
+<arib:captionInfo>1</arib:captionInfo>
+<arib:dataProgramInfo sync="0">0</arib:dataProgramInfo>
+<arib:longDescription>テスト概要テキスト</arib:longDescription>
+<arib:longDescription>テスト概要テキスト</arib:longDescription>
+<arib:multiESInfo>0</arib:multiESInfo>
+<arib:multiViewInfo>0</arib:multiViewInfo>
+<arib:objectType>ARIB_TB</arib:objectType>
+<arib:videoComponentType>179</arib:videoComponentType>
+<av:COGCount>10</av:COGCount>
+<av:chapterInfo>http://192.0.2.1:64220/10000000000000000002.ifo</av:chapterInfo>
+<dc:date>2026-11-16T11:39:49+09:00</dc:date>
+<dc:description>テスト概要テキスト</dc:description>
+<upnp:channelName>ＮＨＫ総合１・北九州</upnp:channelName>
+<upnp:channelNr>30310</upnp:channelNr>
+<upnp:genre>ドキュメンタリー／教養</upnp:genre>
+<upnp:genre>趣味／教育</upnp:genre>
+<upnp:scheduledEndTime>2026-11-16T11:54:00+09:00</upnp:scheduledEndTime>
+<upnp:scheduledStartTime>2026-11-16T11:40:00+09:00</upnp:scheduledStartTime>
+</item>
+<item id="0/video/all/pvr?id=10000000000000000001" parentID="0/video/all" restricted="0" dlna:dlnaManaged="00000004">
+<dc:title>テスト番組タイトル9</dc:title>
+<upnp:class>object.item.videoItem.movie</upnp:class>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_PN=DTCP_MPEG_TS_JP_T;DLNA.ORG_OP=10;DLNA.ORG_FLAGS=01119000000000000000000000000000;DTCP.COM_FLAGS=C0000000" duration="00:04:58" dlna:cleartextSize="494434560">http://192.0.2.1:58890/web/video/pvr?id=10000000000000000001&amp;quality=dr</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_OP=10;DLNA.ORG_FLAGS=01109000000000000000000000000000;DTCP.COM_FLAGS=C0000000;ARIB.OR.JP_PN=MPEG_TTS_CP" duration="00:04:58" dlna:cleartextSize="494434560">http://192.0.2.1:58890/web/video/pvr?id=10000000000000000001&amp;quality=dr&amp;sep</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_OP=10;DLNA.ORG_FLAGS=01109000000000000000000000000000;DTCP.COM_FLAGS=C0000000;SONY.COM_PN=DTCP_AVC_TS_SD_30_JP_AAC_T" duration="00:04:57" dlna:cleartextSize="48761088">http://192.0.2.1:58890/web/video/pvr?id=10000000000000000001&amp;quality=mobile</res>
+<arib:audioComponentType qualityIndicator="2">3</arib:audioComponentType>
+<arib:caProgramInfo>0</arib:caProgramInfo>
+<arib:captionInfo>1</arib:captionInfo>
+<arib:dataProgramInfo sync="0">0</arib:dataProgramInfo>
+<arib:longDescription>テスト概要テキスト</arib:longDescription>
+<arib:longDescription>テスト概要テキスト</arib:longDescription>
+<arib:multiESInfo>0</arib:multiESInfo>
+<arib:multiViewInfo>0</arib:multiViewInfo>
+<arib:objectType>ARIB_TB</arib:objectType>
+<arib:videoComponentType>179</arib:videoComponentType>
+<av:COGCount>9</av:COGCount>
+<av:chapterInfo>http://192.0.2.1:64220/10000000000000000001.ifo</av:chapterInfo>
+<dc:date>2026-11-16T11:34:46+09:00</dc:date>
+<dc:description>テスト概要テキスト</dc:description>
+<upnp:channelName>ＮＨＫ総合１・北九州</upnp:channelName>
+<upnp:channelNr>30310</upnp:channelNr>
+<upnp:genre>福祉</upnp:genre>
+<upnp:genre>趣味／教育</upnp:genre>
+<upnp:scheduledEndTime>2026-11-16T11:40:00+09:00</upnp:scheduledEndTime>
+<upnp:scheduledStartTime>2026-11-16T11:35:00+09:00</upnp:scheduledStartTime>
+</item>
+</DIDL-Lite>

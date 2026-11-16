@@ -1,0 +1,32 @@
+<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:arib="urn:schemas-arib-or-jp:elements-1-0/" xmlns:av="urn:schemas-sony-com:av" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/" xmlns:dtcp="urn:schemas-dtcp-com:metadata-1-0/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+<container id="0/video/genre" parentID="0/video" restricted="1">
+<dc:title>テスト番組タイトル3</dc:title>
+<upnp:class>object.container</upnp:class>
+<av:containerClass>videoAllGenres</av:containerClass>
+<av:mediaClass>V</av:mediaClass>
+</container>
+<container id="0/video/date" parentID="0/video" restricted="1">
+<dc:title>テスト番組タイトル4</dc:title>
+<upnp:class>object.container</upnp:class>
+<av:containerClass>videoAllDateTime:2</av:containerClass>
+<av:mediaClass>V</av:mediaClass>
+</container>
+<container id="0/video/all" parentID="0/video" restricted="0">
+<dc:title>テスト番組タイトル5</dc:title>
+<upnp:class>object.container</upnp:class>
+<av:containerClass>videoAllItems</av:containerClass>
+<av:mediaClass>V</av:mediaClass>
+</container>
+<container id="0/video/folder" parentID="0/video" restricted="1">
+<dc:title>テスト番組タイトル6</dc:title>
+<upnp:class>object.container</upnp:class>
+<av:mediaClass>V</av:mediaClass>
+</container>
+<container id="0/video/LiveTuner" parentID="0/video" restricted="1">
+<dc:title>テスト番組タイトル7</dc:title>
+<upnp:class>object.container</upnp:class>
+<av:containerClass>videoAllTuners</av:containerClass>
+<av:mediaClass>V</av:mediaClass>
+<dlna:containerType>Tuner_1_0</dlna:containerType>
+</container>
+</DIDL-Lite>
