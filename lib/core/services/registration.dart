@@ -16,7 +16,7 @@ import '../transport/webapi_transport.dart';
 import 'interfaces.dart';
 
 class WebApiRegistrationService implements RegistrationService {
-  WebApiRegistrationService({http.Client? client}) : _client = client;
+  WebApiRegistrationService({http.Client? client}) : _client = client; // ignore: prefer_initializing_formals - nullable pass-through, formal would change the public type
 
   final http.Client? _client;
 

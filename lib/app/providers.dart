@@ -1,0 +1,100 @@
+/// Composition root (plan 12.2 / 12.7): Riverpod providers that wire
+/// the domain interfaces to their transport implementations. UI and
+/// tests depend on the interfaces only; swapping an implementation
+/// (e.g. a mock in tests, or a future transport for a newly
+/// discovered path) is an override here, never a UI change.
+library;
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+
+import '../core/core.dart';
+
+final httpClientProvider = Provider<http.Client>((ref) => http.Client());
+
+final discoveryServiceProvider = Provider<DiscoveryService>(
+  (ref) => SsdpDiscoveryService(client: ref.watch(httpClientProvider)),
+);
+
+final registrationServiceProvider = Provider<RegistrationService>(
+  (ref) => WebApiRegistrationService(client: ref.watch(httpClientProvider)),
+);
+
+/// Defaults to in-memory; the app entry point overrides this with a
+/// file-backed store once the documents directory is known
+/// (phase 2 wiring).
+final registrationStoreProvider = Provider<RegistrationStore>(
+  (ref) => InMemoryRegistrationStore(),
+);
+
+final keyValueStoreProvider = Provider<KeyValueStore>(
+  (ref) => InMemoryKeyValueStore(),
+);
+
+final channelCacheProvider = Provider<ChannelCache>(
+  (ref) => ChannelCache(ref.watch(keyValueStoreProvider)),
+);
+
+final playbackEngineProvider = Provider<PlaybackEngine>(
+  (ref) => UnsupportedPlaybackEngine(),
+);
+
+/// The per-device service bundle, assembled from a registration.
+/// Control URLs come from [NasneDevice.direct] (the measured
+/// fallback forms, plan 11.6) unless a described device is supplied.
+class DeviceServices {
+  const DeviceServices({
+    required this.deviceInfo,
+    required this.settings,
+    required this.schedules,
+    required this.titles,
+    required this.metadata,
+    required this.playback,
+  });
+
+  final DeviceInfoService deviceInfo;
+  final SettingsService settings;
+  final ScheduleService schedules;
+  final TitleCatalogService titles;
+  final MetadataService metadata;
+  final PlaybackEngine playback;
+}
+
+DeviceServices assembleDeviceServices(
+  RegisteredNasne reg, {
+  NasneDevice? describedDevice,
+  http.Client? client,
+}) {
+  final device = describedDevice ?? NasneDevice.direct(reg.host);
+  final plain = WebApiTransport(reg.host, client: client);
+  final authed = WebApiTransport(reg.host,
+      client: client, tokenProvider: reg.tokenProvider);
+  final soap = SoapTransport(client: client);
+  final xsrs = device.controlUrl(SoapServices.scheduledRecording.serviceType);
+  final cds = device.controlUrl(SoapServices.contentDirectory.serviceType);
+  if (xsrs == null || cds == null) {
+    throw NasneError.validation(
+        'providers', 'device exposes no XSRS/ContentDirectory control URL');
+  }
+  final metadata = DlnaMetadataService(soap: soap, controlUrl: cds);
+  return DeviceServices(
+    deviceInfo: WebApiDeviceInfoService(plain),
+    settings: WebApiSettingsService(authed),
+    schedules: SoapScheduleService(soap: soap, controlUrl: xsrs),
+    titles: SoapTitleCatalogService(
+      soap: soap,
+      xsrsControlUrl: xsrs,
+      webApi: plain,
+      metadata: metadata,
+    ),
+    metadata: metadata,
+    playback: UnsupportedPlaybackEngine(),
+  );
+}
+
+final deviceServicesProvider = Provider.family<DeviceServices, RegisteredNasne>(
+  (ref, reg) => assembleDeviceServices(
+    reg,
+    client: ref.watch(httpClientProvider),
+  ),
+);

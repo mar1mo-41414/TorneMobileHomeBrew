@@ -27,6 +27,7 @@ export 'services/registration.dart';
 export 'services/schedule_service.dart';
 export 'services/settings.dart';
 export 'services/title_catalog.dart';
+export 'store/registration_store.dart';
 export 'transport/soap_transport.dart';
 export 'transport/ssdp_transport.dart';
 export 'transport/webapi_transport.dart';

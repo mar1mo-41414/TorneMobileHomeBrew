@@ -4,30 +4,22 @@
 ///
 /// Usage:
 ///   dart run tool/harness.dart discover
-///   dart run tool/harness.dart info   <host>
-///   dart run tool/harness.dart live   <host>
-///   dart run tool/harness.dart eitpf  <host>
-///   dart run tool/harness.dart schedule-list   <host>
-///   dart run tool/harness.dart schedule-cycle  <host>   (create->list->conflict->update->delete, test slot)
-///   dart run tool/harness.dart titles <host>
+///   dart run tool/harness.dart info   `<host>`
+///   dart run tool/harness.dart live   `<host>`
+///   dart run tool/harness.dart eitpf  `<host>`
+///   dart run tool/harness.dart schedule-list   `<host>`
+///   dart run tool/harness.dart schedule-cycle  `<host>`   (create->list->conflict->update->delete, test slot)
+///   dart run tool/harness.dart titles `<host>`
 ///
 /// Sensitive values (MAC address beyond the vendor prefix, HDD
 /// serial, B-CAS card id, PIN, tokens) are never printed.
+// ignore_for_file: avoid_print
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:tmhb/core/core.dart';
-import 'package:tmhb/core/services/device_info.dart';
-import 'package:tmhb/core/services/discovery.dart';
-import 'package:tmhb/core/services/metadata.dart';
-import 'package:tmhb/core/services/registration.dart';
-import 'package:tmhb/core/services/schedule_service.dart';
-import 'package:tmhb/core/services/settings.dart';
-import 'package:tmhb/core/services/title_catalog.dart';
-import 'package:tmhb/core/transport/soap_transport.dart';
-import 'package:tmhb/core/transport/webapi_transport.dart';
 
 String maskMac(String mac) {
   final parts = mac.split(':');
