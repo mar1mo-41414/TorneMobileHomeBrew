@@ -1013,3 +1013,78 @@ iPad 対応 (§12.7): 幅 720px 以上で下部タブからナビゲーション
 - `4c2e372` feat: サブネット走査式の発見を追加 (SSDP の代替経路)
 - `05b3f0d` ui: 画質モードを公式表記 (DR / 3倍) で表示
 - 本節 (§16 の記録と §5.0 / §10 / §15.5 / §15.10 の判定反映)
+
+## 17. フェーズ 3 の実施記録 (2026-11-16)
+
+同一コア・UI のまま Android のビルド環境を確立し、リリース APK を生成した。実機 (Xperia Ace、Android 12、LineageOS) へのインストールと機能一巡の確認は本人担当として残る (§17.6)。
+
+### 17.1 Android ビルド環境 (marnux)
+
+- **Android SDK**: `~/GitTmp/android-sdk` に新規導入 (Flutter SDK と同じく `~/GitTmp` 配下に揃え、ホーム直下には置かない)。command line tools は 11076708 (2023-10 版) を `cmdline-tools/latest` に配置し、`flutter config --android-sdk ~/GitTmp/android-sdk` で設定。ライセンスは sdkmanager で同意済み。
+- **導入コンポーネント**: platform-tools 37.0.1、platforms;android-36 (rev 2)、build-tools;36.0.0。ビルド時に AGP が追加で自動導入したもの: platforms;android-35 (rev 2)、NDK 28.2.13676358 (r28c)、CMake 3.22.1。
+- **JDK**: システムの OpenJDK 21.0.13 をそのまま使用 (新規導入なし)。Gradle はプロジェクトの wrapper 9.5.0。
+- `flutter doctor`: Android toolchain は ✓。残る注記は PATH 未設定の警告 (フルパス運用のため無害) と、システム側 `/usr/lib/android-sdk` の adb との二重検出 (情報のみ) の 2 件で、いずれもビルドに影響しない。
+
+### 17.2 APK ビルド
+
+- 手順: `flutter build apk --release` (marnux、リポルート)。初回は Gradle と依存・NDK のダウンロードを含み assembleRelease 268 秒、2 回目以降は 42〜52 秒。
+- 成果物は全 ABI 入りの単一 APK (fat APK)。ABI 分割や AAB は配布形態の話であり、フェーズ 4 で扱う。
+- Android 固有のビルド問題 (Gradle / Kotlin / 依存) は発生しなかった。
+
+### 17.3 署名の扱い
+
+- 現行の release ビルドはテンプレート既定の **debug 鍵** で署名される (apksigner で検証済み: Signer は Android Debug 証明書)。当面のサイドロード検証用としてはこれで足りる。
+- **配布用の署名方針 (release keystore の作成・保管・CI での扱い) はフェーズ 4 の論点** とし、ここでは決定しない。debug 鍵のままでは将来の更新互換 (同一署名での上書き) を配布鍵と混同できない点に注意する。
+
+### 17.4 SSDP の MulticastLock 対応
+
+Android では Wi-Fi のマルチキャスト受信がドライバにフィルタされ得るため、SSDP 探索中だけ WifiManager.MulticastLock を保持する仕組みを追加した (サブネット走査が代替として成立しているため必須ではないが、小さな追加で SSDP の第一経路を活かせる)。
+
+- **コア側**: `SsdpTransport` に純 Dart のインタフェース `MulticastLockGuard` (acquire / release) を追加し、`search()` の間だけ保持する。`SsdpDiscoveryService` が `lockGuard` を受けて transport へ渡す。インタフェースは「ベストエフォートで例外を投げない」契約。
+- **アプリ側**: `lib/app/multicast_lock.dart` の `MethodChannelMulticastLockGuard` がチャネル `com.markun.tmhb/multicast_lock` を叩く。Android 以外では no-op、チャネル不在・失敗時も握りつぶして発見自体は継続する。組み立て (providers) で SSDP 実装に注入。
+- **ネイティブ側**: `MainActivity.kt` にハンドラを追加し、`createMulticastLock("torne-mobile-hb-ssdp")` (参照カウントなし) を acquire / release する。権限 `CHANGE_WIFI_MULTICAST_STATE` を AndroidManifest に追加。
+- **検証**: 単体テスト 3 件を追加 (ガードの保持区間、ガードなしでの完了、非 Android での no-op)。APK の権限にも `CHANGE_WIFI_MULTICAST_STATE` が含まれることを apkanalyzer で確認した。実機での SSDP 成立可否は本人の実機確認で判定する (§17.6)。
+
+### 17.5 テスト結果
+
+- `flutter test`: **87 件全合格**、`flutter analyze`: No issues (marnux / Mac の双方で確認)。内訳: フェーズ 3 開始時 80 件 → MulticastLock の 3 件で 83 件 → §18 の表記修正の 4 件で 87 件。
+
+### 17.6 APK と残件
+
+- **APK**: `TorneMobileHomeBrew-1.0.0.apk`、**54,850,923 バイト**、SHA-256 `aae463c7939a2ce275e90296818cb433186e520548a279913d5b4d39b5b25ba0`。配置先は marnux の `~/ダウンロード/` (IPA の `~/tmp/Decrypted-ipa/` ルールは LC 用途のものなので APK には適用しない)。§18 の表記修正を含む最終コード (`7e668a7`) からのビルド。
+- apkanalyzer / apksigner での確認: applicationId `com.markun.tmhb`、versionName 1.0.0、minSdk 29、targetSdk 36、権限は INTERNET / ACCESS_NETWORK_STATE / CHANGE_WIFI_MULTICAST_STATE、署名は debug 証明書。
+- **残件 (本人担当)**: Xperia Ace 実機へのインストールと、iOS と同範囲の機能一巡 (§6 フェーズ 3 の完了条件)。特に SSDP 発見が MulticastLock で成立するか、手動登録・走査との比較を含め実機で判定する。
+
+### 17.7 commit 一覧
+
+- `94ce74d` feat: Android の SSDP 受信用に MulticastLock を追加
+- `7e668a7` ui: 地域名とソフトウェア版数を公式表記で表示 (§18 と共通)
+- 本節 (§17 / §18 の記録)
+
+## 18. 表記修正: 地域名とソフトウェア版数 (2026-11-16)
+
+§5.0 原則 5 (公式表記準拠) の適用例として、ホームの本体情報の 2 項目を公式表記に合わせた。いずれも表示層のみの変換で、モデルの保持値は従来どおり生値のままである。
+
+### 18.1 地域 (pref コード → 地域名)
+
+**症状**: 本体情報の「地域」が数値 (41) のまま表示されていた。
+
+**調査**:
+- `areaInfoGet` の生レスポンス (フェーズ 0 フィクスチャ) は `{errorcode, areaIdentifierCode: 55, pref: 41, zipCode}` のみで、**名称を取れるフィールドは無い**。
+- 本人仮説の都道府県コード (JIS X 0401) では 41 = 佐賀となり、実機 (福岡設定、受信局は北九州) の 41 と一致しない。**nasne の地域コードは JIS そのままではない (Sony 独自の地域表)** と判断し、JIS 表は採用しなかった。
+- 公式の地域名一覧は torne 公式資産から取得した: PS Vita 版 torne の `PvrResource.cxml` (SPVR リソース) の文字列テーブルに、53 地域の名称 (北海道（札幌）〜沖縄) が公式表記で収録されている。
+- ただし同文字列テーブルの並び順はコード順ではない (福岡は 46 番目に現れるが実測コードは 41)。コンテナ側の設定データにも (コード, 名称) の組は無く、**コードとの対応が裏取りできたのは 41 = 福岡のみ** である。
+
+**実装**: 表示変換 `areaPrefLabel` (`lib/ui/format.dart`) に、裏取り済みの **41 = 福岡** のみを登録し、未知のコードは数値のままフォールバックする (対応表を推測で埋めない)。適用箇所はホームの本体情報「地域」 (地域コードの表示はここだけ)。他の地域の実機が得られたら、同じ手順 (実機の pref と公式名一覧の照合) で表を拡張する。
+
+### 18.2 ソフトウェア版数 (0260 → 2.60)
+
+**根拠**: 公式の nasne 設定画面では版数は「Ver:2.60」と表示される (本人が公式画面のスクリーンショットで提示)。一方アプリは API の生値「0260」をそのまま出していた。
+
+**実装**: 表示変換 `softwareVersionLabel` (`lib/ui/format.dart`) で、4 桁数字の生値を「2.60」の形に直す (先行ゼロは落とす)。想定外の形式は生値フォールバック。適用箇所はホームの本体情報「ソフトウェア」 (ラベルは従来どおり)。
+
+### 18.3 テストと成果物
+
+- 追加テスト 4 件 (`test/format_test.dart`): 地域名の変換とフォールバック (JIS では福岡になる 40 が数値のままであることも含む)、版数の変換とフォールバック。総計 87 件全合格 (§17.5)。
+- **IPA**: 本修正を含む署名なし IPA を Mac で再ビルドし、marnux `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.0.0.ipa` を最新に更新した。**8,562,069 バイト**、SHA-256 `8163ce08f6c6392a87171426b3e5d6e47ba1cd772425d163a58772238de90118` (配置後にサイズ・ハッシュ一致を確認。Mac の Downloads 等には置いていない)。
+- **APK**: 同じコードからのビルドが §17.6 の APK である。
