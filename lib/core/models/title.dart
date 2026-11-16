@@ -1,0 +1,133 @@
+/// Recorded title model (plan 12.5): XSRS item as the primary source,
+/// DIDL (ContentDirectory Browse) as the complement. The join is done
+/// inside TitleCatalogService; the UI only ever sees this merged model.
+library;
+
+import 'schedule.dart';
+
+/// One `res` element of a DIDL item: a (future) playback locator.
+///
+/// Kept in full for the future playback engine (plan 1.4 / 5.7):
+/// URL, protocolInfo, and the DTCP connection parameters parsed out
+/// of it.
+class TitleRes {
+  const TitleRes({
+    required this.url,
+    required this.protocolInfo,
+    this.dtcpHost,
+    this.dtcpPort,
+    this.duration,
+    this.cleartextSize,
+    this.quality,
+  });
+
+  final String url;
+  final String protocolInfo;
+
+  /// DTCP1HOST from protocolInfo (the AKE target host).
+  final String? dtcpHost;
+
+  /// DTCP1PORT from protocolInfo (dynamic per session, plan 11.8).
+  final int? dtcpPort;
+
+  final Duration? duration;
+
+  /// `dlna:cleartextSize` attribute (bytes, pre-encryption size).
+  final int? cleartextSize;
+
+  /// The `quality` query value of the res URL (dr / mobile / ...).
+  final String? quality;
+}
+
+/// A recorded title.
+class RecordedTitle {
+  const RecordedTitle({
+    required this.id,
+    required this.title,
+    this.scheduledStart,
+    this.scheduledDurationSeconds,
+    this.channel,
+    this.desiredQualityMode,
+    this.genreId,
+    this.genreType,
+    this.reservationCreatorId,
+    this.protectFlag = false,
+    this.newFlag = false,
+    this.recordingFlag = false,
+    this.recordDestinationId,
+    this.recordSizeRaw,
+    this.lastPlaybackTime,
+    this.resumePointSeconds,
+    this.description,
+    this.longDescription,
+    this.channelName,
+    this.copyCountRemaining,
+    this.res = const [],
+  });
+
+  /// XSRS item id (also the join key with DIDL, plan 12.5).
+  final String id;
+  final String title;
+  final DateTime? scheduledStart;
+  final int? scheduledDurationSeconds;
+  final ScheduleChannel? channel;
+  final int? desiredQualityMode;
+  final String? genreId;
+  final int? genreType;
+  final String? reservationCreatorId;
+  final bool protectFlag;
+  final bool newFlag;
+  final bool recordingFlag;
+  final String? recordDestinationId;
+
+  /// XSRS `recordSize`. Its unit is undetermined (plan 12.5): kept raw,
+  /// never used for size display (DIDL cleartextSize is preferred).
+  final int? recordSizeRaw;
+
+  final DateTime? lastPlaybackTime;
+
+  /// Resume position in seconds, from the `resumePoint` attribute of
+  /// `lastPlaybackTime` (plan 12.5).
+  final int? resumePointSeconds;
+
+  // -- DIDL complement --
+  final String? description;
+  final String? longDescription;
+  final String? channelName;
+
+  /// Remaining copy count, DIDL `av:COGCount` (measured value 10).
+  final int? copyCountRemaining;
+  final List<TitleRes> res;
+
+  RecordedTitle withDidl({
+    String? description,
+    String? longDescription,
+    String? channelName,
+    int? copyCountRemaining,
+    List<TitleRes>? res,
+  }) {
+    return RecordedTitle(
+      id: id,
+      title: title,
+      scheduledStart: scheduledStart,
+      scheduledDurationSeconds: scheduledDurationSeconds,
+      channel: channel,
+      desiredQualityMode: desiredQualityMode,
+      genreId: genreId,
+      genreType: genreType,
+      reservationCreatorId: reservationCreatorId,
+      protectFlag: protectFlag,
+      newFlag: newFlag,
+      recordingFlag: recordingFlag,
+      recordDestinationId: recordDestinationId,
+      recordSizeRaw: recordSizeRaw,
+      lastPlaybackTime: lastPlaybackTime,
+      resumePointSeconds: resumePointSeconds,
+      description: description ?? this.description,
+      longDescription: longDescription ?? this.longDescription,
+      channelName: channelName ?? this.channelName,
+      copyCountRemaining: copyCountRemaining ?? this.copyCountRemaining,
+      res: res ?? this.res,
+    );
+  }
+}
