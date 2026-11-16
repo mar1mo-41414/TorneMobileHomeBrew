@@ -1,6 +1,7 @@
-/// Local persistence for registrations and cached channel lists
-/// (plan 12.7: registrations + channel lists persist; schedule and
-/// title lists are display caches only, with the device as truth).
+/// Local persistence for registrations, cached channel lists and
+/// the accumulated programme-guide events (plan 12.7 / 23:
+/// registrations + channel lists persist; schedule and title lists
+/// are display caches only, with the device as truth).
 library;
 
 import 'dart:convert';
@@ -8,6 +9,7 @@ import 'dart:io';
 
 import '../models/channel.dart';
 import '../models/device.dart';
+import '../models/epg.dart';
 
 /// Stores the user's registered nasne devices.
 abstract interface class RegistrationStore {
@@ -211,4 +213,95 @@ class ChannelCache {
           'remoteControlKeyId': c.remoteControlKeyId,
         'contract': c.contract,
       };
+}
+
+/// Persistent accumulation of programme-guide events, keyed per
+/// device and broadcasting type (plan 23). Only the events are
+/// stored (serviceId -> events); channels always come from the
+/// fresh fetch. See WebApiEpgService for why accumulation exists.
+class EpgGuideCache {
+  EpgGuideCache(this._kv);
+
+  final KeyValueStore _kv;
+
+  String _key(String host, int broadcastingType) =>
+      'epg-guide:$host:$broadcastingType';
+
+  Future<Map<int, List<EpgEvent>>> load(
+      String host, int broadcastingType) async {
+    final raw = await _kv.read(_key(host, broadcastingType));
+    if (raw == null) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      final services = decoded['services'];
+      if (services is! List) return const {};
+      return {
+        for (final s in services)
+          if (s is Map && s['serviceId'] is num && s['events'] is List)
+            (s['serviceId'] as num).toInt(): [
+              for (final e in s['events'] as List)
+                if (e is Map) _eventFromJson(e.cast<String, dynamic>()),
+            ],
+      };
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  Future<void> save(
+      String host, int broadcastingType, EpgGuide guide) async {
+    await _kv.write(
+      _key(host, broadcastingType),
+      jsonEncode({
+        'broadcastingType': broadcastingType,
+        'savedAt': DateTime.now().toIso8601String(),
+        'services': [
+          for (final s in guide.services)
+            {
+              'serviceId': s.channel.serviceId,
+              'events': [for (final e in s.events) _eventToJson(e)],
+            },
+        ],
+      }),
+    );
+  }
+
+  static Map<String, dynamic> _eventToJson(EpgEvent e) => {
+        'eventId': e.eventId,
+        'start': e.start.toIso8601String(),
+        'durationSec': e.duration.inSeconds,
+        if (e.title != null) 'title': e.title,
+        if (e.shortText != null) 'shortText': e.shortText,
+        if (e.description != null) 'description': e.description,
+        if (e.cast != null) 'cast': e.cast,
+        if (e.extendedText != null) 'extendedText': e.extendedText,
+        if (e.genreLevel1 != null) 'genreLevel1': e.genreLevel1,
+        if (e.genreLevel2 != null) 'genreLevel2': e.genreLevel2,
+        'extendedItems': [
+          for (final i in e.extendedItems)
+            {'label': i.label, 'value': i.value},
+        ],
+      };
+
+  static EpgEvent _eventFromJson(Map<String, dynamic> j) => EpgEvent(
+        eventId: (j['eventId'] as num).toInt(),
+        start: DateTime.parse(j['start'] as String),
+        duration: Duration(seconds: (j['durationSec'] as num).toInt()),
+        title: j['title'] as String?,
+        shortText: j['shortText'] as String?,
+        description: j['description'] as String?,
+        cast: j['cast'] as String?,
+        extendedItems: [
+          for (final i in (j['extendedItems'] as List? ?? const []))
+            if (i is Map)
+              EpgExtendedItem(
+                label: i['label'].toString(),
+                value: i['value'].toString(),
+              ),
+        ],
+        extendedText: j['extendedText'] as String?,
+        genreLevel1: (j['genreLevel1'] as num?)?.toInt(),
+        genreLevel2: (j['genreLevel2'] as num?)?.toInt(),
+      );
 }

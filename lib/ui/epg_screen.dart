@@ -44,12 +44,26 @@ class _ChannelSnapPhysics extends ScrollPhysics {
       return super.createBallisticSimulation(position, velocity);
     }
     final tolerance = toleranceFor(position);
+    final double nearest = ((position.pixels / _channelWidth).round() *
+            _channelWidth)
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+    if (velocity.abs() < tolerance.velocity &&
+        (position.pixels - nearest).abs() < tolerance.distance) {
+      // Already at rest on a boundary: defer to the parent physics,
+      // whose simulation is null in this state, so the position goes
+      // idle. Returning another spring simulation here would loop
+      // forever: BallisticScrollActivity re-enters goBallistic(0) when
+      // its simulation completes, so a degenerate start == end spring
+      // is recreated endlessly, the position never goes idle, and
+      // pointer input to the grid stops being delivered (plan 23).
+      return super.createBallisticSimulation(position, velocity);
+    }
     if (velocity.abs() < tolerance.velocity) {
       // Slow or finished drag: settle to the nearest boundary.
       return ScrollSpringSimulation(
         spring,
         position.pixels,
-        (position.pixels / _channelWidth).round() * _channelWidth,
+        nearest,
         velocity,
         tolerance: tolerance,
       );
@@ -214,8 +228,13 @@ class _GuideView extends StatelessWidget {
         if (bodyController.hasClients) {
           final now = DateTime.now();
           final minutes = now.difference(dayStart).inMinutes - 60;
+          // Clamp to the scrollable range: late in the evening the
+          // raw target exceeds the maximum extent, and an out-of-range
+          // rest position leaves the grid in a corrected state that
+          // does not accept drags cleanly (plan 23).
+          final target = math.max(0, minutes * _pxPerMinute).toDouble();
           bodyController.jumpTo(
-              math.max(0, minutes * _pxPerMinute).toDouble());
+              math.min(target, bodyController.position.maxScrollExtent));
         }
         onScrolledToNow();
       });

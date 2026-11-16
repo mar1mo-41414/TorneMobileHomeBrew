@@ -75,6 +75,7 @@ DeviceServices assembleDeviceServices(
   RegisteredNasne reg, {
   NasneDevice? describedDevice,
   http.Client? client,
+  KeyValueStore? keyValueStore,
 }) {
   final device = describedDevice ?? NasneDevice.direct(reg.host);
   final plain = WebApiTransport(reg.host, client: client);
@@ -89,7 +90,15 @@ DeviceServices assembleDeviceServices(
   }
   final metadata = CompositeMetadataService(
     dlna: DlnaMetadataService(soap: soap, controlUrl: cds),
-    epg: WebApiEpgService(plain: plain, authed: authed),
+    epg: WebApiEpgService(
+      plain: plain,
+      authed: authed,
+      // Persistent guide accumulation (plan 23), backed by the
+      // app's key-value store when one is wired.
+      guideCache:
+          keyValueStore == null ? null : EpgGuideCache(keyValueStore),
+      cacheHost: reg.host,
+    ),
   );
   return DeviceServices(
     deviceInfo: WebApiDeviceInfoService(plain),
@@ -110,5 +119,6 @@ final deviceServicesProvider = Provider.family<DeviceServices, RegisteredNasne>(
   (ref, reg) => assembleDeviceServices(
     reg,
     client: ref.watch(httpClientProvider),
+    keyValueStore: ref.watch(keyValueStoreProvider),
   ),
 );

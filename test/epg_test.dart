@@ -9,6 +9,7 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -570,6 +571,208 @@ void main() {
       final pixels = scrollable.position.pixels;
       expect(pixels, greaterThan(0));
       expect(pixels % 172, anyOf(closeTo(0, 1.0), closeTo(172, 1.0)));
+      // And the position must go idle: a snap simulation that is
+      // re-created on completion loops forever and blocks all
+      // further pointer input to the grid (plan 23).
+      expect(scrollable.position.activity, isA<IdleScrollActivity>());
+    });
+
+    testWidgets(
+        'after a horizontal scroll the grid still scrolls vertically '
+        'and tiles still respond (plan 23)', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      Channel channelN(int n) => Channel(
+            broadcastingType: 2,
+            networkId: 0x1111,
+            transportStreamId: 0x2222,
+            serviceId: 0x3300 + n,
+            serviceType: 1,
+            channelNumber: n + 1,
+            serviceName: '局$n',
+          );
+      // Two full days starting tomorrow (JST), so the initial
+      // jump-to-now never interferes at any time of day.
+      final jstNow = DateTime.now().toUtc().add(const Duration(hours: 9));
+      final firstDay = DateTime.utc(jstNow.year, jstNow.month, jstNow.day)
+          .add(const Duration(days: 1))
+          .subtract(const Duration(hours: 9));
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          for (var s = 0; s < 6; s++)
+            EpgServiceGuide(
+              channel: channelN(s),
+              events: [
+                for (var d = 0; d < 2; d++)
+                  for (var i = 0; i < 48; i++)
+                    EpgEvent(
+                      eventId: d * 100 + i + 1,
+                      start: firstDay
+                          .add(Duration(days: d, minutes: 30 * i)),
+                      duration: const Duration(minutes: 30),
+                      title: '番組$s-$d-$i',
+                    ),
+              ],
+            ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider
+                .overrideWithValue(InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final hScv = find.byWidgetPredicate((w) =>
+          w is SingleChildScrollView &&
+          w.scrollDirection == Axis.horizontal);
+      expect(hScv, findsOneWidget);
+      ScrollPosition positionOf(AxisDirection axis) => tester
+          .stateList<ScrollableState>(
+              find.descendant(of: hScv, matching: find.byType(Scrollable)))
+          .map((s) => s.position)
+          .firstWhere((p) => p.axisDirection == axis);
+      final hPos = positionOf(AxisDirection.right);
+      final vPos = positionOf(AxisDirection.down);
+
+      // 1) Scroll sideways, like reaching for a later channel.
+      await tester.timedDragFrom(const Offset(215, 500),
+          const Offset(-260, 0), const Duration(milliseconds: 400));
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(hPos.pixels, greaterThan(0));
+      expect(hPos.pixels % 172, anyOf(closeTo(0, 1.0), closeTo(172, 1.0)));
+      // The snap must come fully to rest (plan 23: a snap physics
+      // that keeps re-creating its ballistic simulation leaves the
+      // position scrolling forever and the grid stops accepting
+      // drags and taps).
+      expect(hPos.activity, isA<IdleScrollActivity>());
+
+      // 2) Tiles still respond to taps (event detail dialog),
+      // checked while the grid is at a known offset (v = 0, so
+      // (215, 500) lands mid-tile).
+      await tester.tapAt(const Offset(215, 500));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.tap(find.text('閉じる'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(AlertDialog), findsNothing);
+
+      // 3) Vertical drags move the grid again.
+      final before = vPos.pixels;
+      await tester.timedDragFrom(const Offset(215, 500),
+          const Offset(0, -400), const Duration(milliseconds: 400));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(vPos.pixels, greaterThan(before + 100));
+
+      // 4) Switching days keeps vertical scrolling alive.
+      await tester.tap(find.byType(ChoiceChip).at(1));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      final beforeSwitch = vPos.pixels;
+      await tester.timedDragFrom(const Offset(215, 500),
+          const Offset(0, -400), const Duration(milliseconds: 400));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(vPos.pixels, greaterThan(beforeSwitch + 100));
+    });
+
+    testWidgets('initial jump-to-now stays inside the scroll range',
+        (tester) async {
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      final jstNow = DateTime.now().toUtc().add(const Duration(hours: 9));
+      final todayStart =
+          DateTime.utc(jstNow.year, jstNow.month, jstNow.day)
+              .subtract(const Duration(hours: 9));
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          EpgServiceGuide(
+            channel: const Channel(
+              broadcastingType: 2,
+              networkId: 0x1111,
+              transportStreamId: 0x2222,
+              serviceId: 0x3300,
+              serviceType: 1,
+              channelNumber: 1,
+              serviceName: '局0',
+            ),
+            events: [
+              for (var i = 0; i < 48; i++)
+                EpgEvent(
+                  eventId: i + 1,
+                  start: todayStart.add(Duration(minutes: 30 * i)),
+                  duration: const Duration(minutes: 30),
+                  title: '番組$i',
+                ),
+            ],
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider
+                .overrideWithValue(InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final gridScv = find.descendant(
+        of: find.byWidgetPredicate((w) =>
+            w is SingleChildScrollView &&
+            w.scrollDirection == Axis.horizontal),
+        matching: find.byWidgetPredicate((w) =>
+            w is SingleChildScrollView &&
+            w.scrollDirection == Axis.vertical),
+      );
+      final pos = tester
+          .state<ScrollableState>(
+              find.descendant(of: gridScv, matching: find.byType(Scrollable)))
+          .position;
+      // Late in the evening the raw (now - 1h) target passes the
+      // end of the day grid; the jump must be clamped (plan 23).
+      expect(pos.pixels, lessThanOrEqualTo(pos.maxScrollExtent + 0.5));
     });
   });
 }
