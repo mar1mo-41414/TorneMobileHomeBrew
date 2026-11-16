@@ -12,8 +12,15 @@ import '../core/core.dart';
 
 final httpClientProvider = Provider<http.Client>((ref) => http.Client());
 
+/// Discovery chain (plan 16.3): SSDP first; when it finds nothing
+/// (multicast-restricted environments such as iOS sideloading), the
+/// unicast subnet scan runs. Manual registration stays available in
+/// the settings screen regardless.
 final discoveryServiceProvider = Provider<DiscoveryService>(
-  (ref) => SsdpDiscoveryService(client: ref.watch(httpClientProvider)),
+  (ref) => CompositeDiscoveryService([
+    SsdpDiscoveryService(client: ref.watch(httpClientProvider)),
+    SubnetScanDiscoveryService(client: ref.watch(httpClientProvider)),
+  ]),
 );
 
 final registrationServiceProvider = Provider<RegistrationService>(

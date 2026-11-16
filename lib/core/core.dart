@@ -21,6 +21,7 @@ export 'parsing/didl.dart';
 export 'parsing/xsrs.dart';
 export 'services/device_info.dart';
 export 'services/discovery.dart';
+export 'services/discovery_scan.dart';
 export 'services/interfaces.dart';
 export 'services/metadata.dart';
 export 'services/playback.dart';
