@@ -255,3 +255,59 @@ commit と xcframeworks 版数の確認、FFmpeg の版数確認、
 新リリースタグでの公開と vendored Makefile の差し替え)。
 互換修正2件 (fp.h / sincosf) は上流や SDK の状況で
 不要になる可能性があるため、再適用時に要否を確認する。
+
+## macOS (実施済み、2026-11-17)
+
+iOS と同じフォーク・同じ `arib-darwin.patch` から作る。
+ffmpeg 側の変更 (mk-pkg-ffmpeg の buildInputs と meson
+オプション) はターゲット非依存で、mk-pkg-aribb24 の
+targets にも macOS (arm64 / amd64) が含まれているため、
+追加のパッチ作業は不要だった。
+
+### 手順
+
+iOS の手順と同じフォークで、ターゲットだけ macOS 用に変える:
+
+```sh
+# まず aribb24 単体で早期検証
+make XCODE_PATH=/Applications/Xcode.app TARGET=mk-pkg-aribb24-macos-arm64
+
+# 本体 (macos universal video default のアーカイブ一式)
+make XCODE_PATH=/Applications/Xcode.app TARGET=mk-out-archive-xcframeworks-macos-universal-video-default
+```
+
+成果物は `result/libmpv-xcframeworks_develop_macos-universal-video-default.tar.gz`。
+配布時は iOS と同様に上流のファイル名
+(`libmpv-xcframeworks_v0.6.0_macos-universal-video-default.tar.gz`)
+にリネームする。
+
+### 配布と取り込み
+
+- tar.gz は本リポの GitHub リリースに置く (現行: タグ
+  `libmpv-macos-v0.6.0-arib1`、SHA-256 は
+  `71c070fffec2d0c33d7d57e284b5ddb5a38eb02e57b22e529a9576b07e3c05ea`)。
+- アプリ側は `third_party/media_kit_libs_macos_video`
+  (pub の 1.1.4 を vendored したもの) の `macos/Makefile` が、
+  そのリリースの URL と SHA-256 を指す。`pubspec.yaml` の
+  `dependency_overrides` で vendored 版が優先される。
+- 更新手順は iOS と同じ (新リリースタグ + Makefile 差し替え、
+  ビルド時に SHA-256 検証)。
+
+### 検証方法
+
+- 成果物の Libavcodec (macOS 両スライス) の configuration
+  文字列に `--enable-libaribb24` / `--enable-decoder=libaribb24`
+  が含まれ、デコーダ文字列があること。`otool -L` で
+  Png16 へのリンク (DRCS) も確認できる。
+- 機能実証は iOS の節のホスト実証 (§57: 同じパッチ済み
+  ソース + macOS 用 aribb24 パッケージで組んだ FFmpeg 6.0
+  CLI で字幕付き TS からキュー抽出) がそのまま効く。
+- 出荷前監査: `audit_load_commands.py` は macOS の
+  バージョン付きフレームワーク配置
+  (`@rpath/<Name>.framework/Versions/A/<Name>`) も同梱
+  フレームワークへの依存として受理するよう拡張済み。
+  公式 macOS アーカイブも自前 arib アーカイブもこの監査を
+  通過し、iOS arib1 (SwiftCoreMedia の実在しない依存) は
+  従来どおり12件の未解決依存で失敗する。監査結果の
+  「audited N binaries」が 0 の場合はパスの指定ミスを
+  疑うこと (空振りは OK と表示される)。
