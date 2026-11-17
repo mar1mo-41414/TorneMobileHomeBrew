@@ -2063,3 +2063,38 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - Linux の資格情報の libsecret 保存も実利用では未確認 (実行環境のシークレットサービスに依存する)。
 - Windows 版は今回の範囲外 (本人の指示で Mac と Linux が先)。
 - コミット (いずれも開発側のみ): `d198cc6` (ターゲット有効化)、`64a8d41` (表示名)。
+
+## 39. デスクトップ版の修正: 資格情報保存 -34018 と保存先の Application Support 化 (2026-11-17)
+
+§38 のデスクトップビルドを本人が実利用したところで見つかった2件の修正。いずれも本ブランチ (開発側のみ) の作業で、版数は 1.2.1 のまま据え置き。
+
+### 39.1 資格情報の保存が -34018 で失敗する
+
+- 症状: Mac のデスクトップ配置 .app で、資格情報のインポート (ファイルから読み込む → 検証して保存) が `PlatformException(Unexpected security result code, Code: -34018, Message: A required entitlement is not present.)` で失敗する (デバッグログ tmhb-debug-20261117-143319-965.log)。-34018 は errSecMissingEntitlement。
+- 切り分け (実測): 配置済み .app を `codesign -d --entitlements -` で確認すると entitlements は皆無だった (アドホック署名のみ、TeamIdentifier なし)。プロジェクトの `macos/Runner/Release.entitlements` には keychain-access-groups 等が定義されているが、§38 のビルド・署名経路では埋め込まれていなかった。
+- プラグイン側の仕組み: flutter_secure_storage 10.3.4 (darwin 実装 0.3.2) は macOS で `usesDataProtectionKeychain` がデフォルト true で、データ保護キーチェーンの利用には keychain-access-groups entitlement が必須 (無いと -34018)。アプリ側の `SecureCredentialStore` は mOptions を指定していなかった。
+- **entitlements を付ける案は実測で棄却**:
+  - Release.entitlements はそのまま使えない。`$(AppIdentifierPrefix)` はアドホック署名では展開されず (チームが無い)、app-sandbox を有効化すると保存先がコンテナへ移るなど頼まれていない挙動変更を伴う。
+  - グループ名をリテラルにした専用 entitlements を作り、署名して検証したところ、`codesign --verify --deep --strict` は通るのに launchd が spawn を拒否して起動できなかった (`RBSRequestErrorDomain Code=5 "Launch failed."` / `NSPOSIXErrorDomain Code=163`)。
+  - 二分探索 (macOS 27 実機): entitlements なし・空・network.client のみでは起動する。keychain-access-groups を含むと、`com.apple.application-identifier` を併記しても起動しない。署名方式 (--deep / inside-out) は無関係だった。アドホック署名にはチームが無く、アクセスグループの所有を OS が検証できないためと解釈する。専用 entitlements ファイルはコミットせず破棄した。
+- 採用した修正 (`fba5417`): `SecureCredentialStore` に `MacOsOptions(usesDataProtectionKeychain: false)` を指定し、macOS では従来型のログインキーチェーンを使う。保存先が OS の金庫 (Keychain) である点は変わらず、「資格情報は OS の金庫にのみ保存」の設計原則は維持される。entitlement が不要になるため、アドホック署名のまま起動と保存が両立する。保存の実成否は本人が再試行して確認する (こちら側の完了条件は原因確定・修正ビルドの配置・起動確認まで)。§38 で予告したとおり、アドホック署名は再ビルドのたびに変わるため、更新時にキーチェーンのアクセス確認ダイアログが出ることがある。
+
+### 39.2 保存先を Documents から Application Support へ
+
+- 本人指摘: デスクトップ版が実 `~/Documents` に registrations.json / key_values.json / debug_logs/ を置くのが嫌だ、とのこと。
+- 仕様: デスクトップ (macOS / Linux / Windows) の保存先は `getApplicationSupportDirectory()` に変更する。モバイル (iOS / Android) は従来どおり Documents のままで、既存利用者のデータを孤児化させない。デスクトップで旧 Documents 側にファイルがある場合は、新しい保存先へ一度だけ移行する。
+- 実装 (`1d7070f`): `lib/app/store_directory.dart` を新設。`resolveStoreDirectory()` がプラットフォームで保存先を振り分け、`migrateLegacyStoreFiles()` が移行を担う。移行は「新側に同名が無いファイルだけ」を移動し、上書きは決してしない (debug_logs はファイル単位でマージ、空になった旧ディレクトリは削除、別デバイス間はコピー+削除にフォールバック)。`main.dart` は解決済みディレクトリを使い、provider は `documentsDirectoryProvider` から `storeDirectoryProvider` へ改名した。移行テスト5件を追加し、テスト 207 件全合格・analyze クリーン。
+- 実機確認 (Mac): 本人の実状態 (Documents 側のファイルは本人が既に削除済みで実データなし) と等価な空の旧ファイル群 (registrations.json / key_values.json / debug_logs 内のマーカーファイル) を置いて新ビルドを起動したところ、3点とも `~/Library/Application Support/com.markun.tmhb/` へ移動し、Documents は空に戻った。path_provider の macOS の support ディレクトリは、このアプリではバンドル ID のフォルダになる。
+- Linux 確認: 再ビルド版を Xvfb で起動し、`~/.local/share/com.markun.tmhb` が作られることと Documents への生成がないことを確認した (marnux には ~/Documents 自体が存在しない)。
+
+### 39.3 ビルド・署名・配布手順 (再発防止)
+
+- macOS は `tool/build_macos_desktop.sh` に手順化した。骨子:
+  1. `flutter build macos --config-only --release` でプロジェクト生成だけ行い、`xcodebuild` を `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` で直接実行する。通常の `flutter build macos --release` は Release.entitlements の署名検証 (開発証明書が必要) で失敗する。環境変数で `CODE_SIGNING_ALLOWED=NO` を渡しても flutter ツールは転送しない。
+  2. 署名は `codesign --force --deep --sign -` (アドホック、**entitlements は付けない**。39.1 のとおり付けると起動できなくなる)。スクリプト内で keychain-access-groups の混入を検査し、あれば落とす。
+  3. `ditto -c -k --keepParent` で zip 化し、`TorneMobileHomeBrew-macos-<版数>.zip` とする。
+- Linux は sudo なしで libmpv を用意する手順が要る: `apt-get download libmpv-dev` で取得してローカル展開し、mpv.pc の prefix を展開先 (sysroot) へ書き換え、`Requires.private` 行を削除し、システムの libmpv.so.2 を sysroot へコピーして `PKG_CONFIG_PATH` を通し、`flutter build linux --release` する。Requires.private を残すと `pkg-config --exists` が private 依存の .pc 欠落で失敗し、CMake の `pkg_check_modules` が無言で不成立になって `PkgConfig::mpv` が見つからない生成エラーになる (実測で切り分け済み)。成果物は bundle の中身 + torne-mobile-hb.desktop を `TorneMobileHomeBrew-linux/` にまとめて tar.gz にする。
+- 成果物 (いずれも ~/ダウンロード と作業領域 `tmhb.work/2026-11-17-desktop/` に配置):
+  - macOS: `TorneMobileHomeBrew-macos-1.2.1.zip`、SHA-256 `10ece337bac069584535fbff5e95ddee9609d1e93eefb87951f9ee1cb6aa2559`。.app は本人のデスクトップへ差し替え済みで、起動 (プロセス生存)・新規クラッシュレポートなし・Documents に新規ファイルなしを確認し、起動したままにしてある (資格情報保存の再試行待ち)。
+  - Linux: `TorneMobileHomeBrew-linux-1.2.1.tar.gz`、SHA-256 `d6023f8c9a8afcd86077e2aa900b9604b1b6dc6164c219cd082ab511780bb79a`。Xvfb 起動と media_kit 登録を確認済み。
+- コミット (いずれも開発側のみ): `1d7070f` (保存先)、`fba5417` (Keychain)、本節とビルドスクリプトのコミット。
