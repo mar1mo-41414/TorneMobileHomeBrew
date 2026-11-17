@@ -3480,3 +3480,13 @@ Mac 版は ad-hoc 署名のため、ビルド毎にアプリの cdhash が変わ
 
 - 本人が §66.2 のコマンドを実行したら、次を続行する: (a) `security find-identity -v -p codesigning` で `torne-mobile-hb-signing` が valid な ID として並ぶことの確認、(b) 改修済みスクリプトで再ビルドして Desktop の `torne mobile HB 1.4.0.app` を差し替え、`codesign -dv` で署名 ID と designated requirement が安定していることの確認、(c) 起動スモークテスト。
 - 新しい身元での初回起動時は、既存の資格情報項目へのアクセス許可ダイアログが1回だけ出る想定。その場で「常に許可」を押せば、以後はビルドし直しても出なくなる。
+
+### 66.5 続行結果: ID は valid、ただし署名は SSH セッションから実行不可 (2026-11-18)
+
+本人が §66.2 のコマンドを実行した後の続行結果。
+
+- (a) ID の確認: `security find-identity -v -p codesigning` に `torne-mobile-hb-signing` (証明書 SHA-1 `CC2085F94C17C347E069FE7716D0375EB33F694C`) が valid な ID として並んだ。import・信頼設定・partition list の適用まで完了している。
+- 素材の削除: import 完了を確認したため、Mac の `/tmp/tmhb-signing/` (秘密鍵・.p12・パスワードファイル含む) を削除した。
+- (b) 再ビルド: Mac クローンを `4fe9602` へ更新し、改修済み `tool/build_macos_desktop.sh` を実行した。xcodebuild は **BUILD SUCCEEDED** で、スクリプトも ID を検出して署名段へ進んだが、`codesign` が Dav1d.framework の処理中に `errSecInternalComponent` で失敗した。
+- 切り分け (実測): SSH セッションからは `security show-keychain-info` 自体が `User interaction is not allowed.` を返し、`/bin/echo` のコピーへの単体署名テストも同じ `errSecInternalComponent` で失敗した。つまり原因はアプリ・スクリプト・特定フレームワークではなく、**SSH セッションからはログインキーチェーンの秘密鍵にアクセスできない**こと (§66.2 の import 不可と同じセッション分離の壁)。署名だけは本人の GUI セッション内で実行する必要がある。
+- 残件: 本人が Mac のローカル Terminal で、ビルド済みの .app への署名と検証の1コマンドを実行する (コマンドは本セッションの最終報告に記載)。実行後にエージェント側で続行する: 署名の検証 (`codesign -dv` で署名 ID と designated requirement の安定確認)、Desktop の `torne mobile HB 1.4.0.app` の差し替え、起動スモークテスト。Desktop の .app は現時点では従来の ad-hoc 署名ビルドのまま (未署名の新ビルドは配置していない)。
