@@ -234,6 +234,9 @@ class RecordingPlaybackEngine implements PlaybackEngine {
   RecordedTitle? lastTitle;
   TitleRes? lastRes;
   int startCalls = 0;
+  LiveChannel? lastLiveChannel;
+  TitleRes? lastLiveRes;
+  int liveStartCalls = 0;
 
   /// When set, startPlayback waits on this gate before failing,
   /// simulating a start that is still in flight (plan 35).
@@ -254,6 +257,66 @@ class RecordingPlaybackEngine implements PlaybackEngine {
     if (gate != null) await gate.future;
     throw NasneError.validation('test:playback', 'テスト用の検証エラー');
   }
+
+  @override
+  Future<PlaybackSession> startLivePlayback(
+    LiveChannel channel,
+    TitleRes res,
+  ) async {
+    liveStartCalls++;
+    lastLiveChannel = channel;
+    lastLiveRes = res;
+    final gate = startGate;
+    if (gate != null) await gate.future;
+    throw NasneError.validation('test:playback', 'テスト用の検証エラー');
+  }
+}
+
+/// Two terrestrial live channels (plan 39): the first offers a
+/// mobile resource alongside the original, the second does not.
+class FakeLiveCatalog implements LiveCatalogService {
+  static TitleRes liveRes(String svid, String quality) => TitleRes(
+        url: 'http://192.0.2.10:58890/web/video/ch?nid=7880&tsid=7880'
+            '&svid=$svid&quality=$quality',
+        protocolInfo: 'http-get:*:application/x-dtcp1:*',
+        quality: quality,
+      );
+
+  static final bands = [
+    LiveBand(
+      containerId: '0/video/LiveTuner/DTTB',
+      title: '地上デジタル',
+      channels: [
+        LiveChannel(
+          id: '0/video/LiveTuner/DTTB/ch?nid=7880&tsid=7880&svid=de00',
+          bandId: '0/video/LiveTuner/DTTB',
+          networkId: 0x7880,
+          transportStreamId: 0x7880,
+          serviceId: 0xde00,
+          channelName: 'テスト放送１',
+          genre: 'ニュース／報道',
+          programTitle: 'ライブ番組A',
+          description: 'ライブ概要A',
+          programStart: DateTime.parse('2026-11-17T14:05:00+09:00'),
+          programEnd: DateTime.parse('2026-11-17T14:50:00+09:00'),
+          res: [liveRes('de00', 'dr'), liveRes('de00', 'mobile')],
+        ),
+        LiveChannel(
+          id: '0/video/LiveTuner/DTTB/ch?nid=7880&tsid=7880&svid=de08',
+          bandId: '0/video/LiveTuner/DTTB',
+          networkId: 0x7880,
+          transportStreamId: 0x7880,
+          serviceId: 0xde08,
+          channelName: 'テスト放送２',
+          programTitle: 'ライブ番組B',
+          res: [liveRes('de08', 'dr')],
+        ),
+      ],
+    ),
+  ];
+
+  @override
+  Future<List<LiveBand>> listLiveChannels() async => bands;
 }
 
 class FakeSettings implements SettingsService {
@@ -336,6 +399,7 @@ class Fixture {
       schedules: schedules,
       titles: FakeTitles(items: titles),
       metadata: FakeMetadata(),
+      live: FakeLiveCatalog(),
       playback: playback ?? const UnsupportedPlaybackEngine(),
     );
     return ProviderScope(
@@ -700,5 +764,84 @@ void main() {
     expect(find.textContaining('既存の予約番組'), findsWidgets);
     expect(find.text('編集'), findsOneWidget);
     expect(find.text('時刻を変更'), findsOneWidget);
+  });
+
+  testWidgets('live tab lists bands and channels with the current '
+      'programme (plan 39)', (tester) async {
+    usePhoneSize(tester);
+    await tester.pumpWidget(Fixture().app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('TV視聴'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('地上デジタル'), findsOneWidget);
+    expect(find.text('テスト放送１'), findsOneWidget);
+    expect(find.text('テスト放送２'), findsOneWidget);
+    // The on-air programme and its time range ride in the subtitle.
+    expect(find.textContaining('ライブ番組A'), findsOneWidget);
+    expect(find.textContaining('14:05–14:50'), findsOneWidget);
+  });
+
+  testWidgets('live detail offers the quality choice and viewing '
+      'passes the chosen res to the engine (plan 39)', (tester) async {
+    usePhoneSize(tester);
+    final engine = RecordingPlaybackEngine();
+    final fixture = Fixture(playback: engine);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('TV視聴'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('テスト放送１'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ライブ番組A'), findsWidgets);
+    expect(find.text('再生画質'), findsOneWidget);
+    expect(find.text('元画質 (DR)'), findsOneWidget);
+    expect(find.text('モバイル'), findsOneWidget);
+
+    // No selection change: the engine receives the original res.
+    await tester.tap(find.text('視聴'));
+    await tester.pumpAndSettle();
+    expect(engine.liveStartCalls, 1);
+    expect(engine.lastLiveChannel?.serviceId, 0xde00);
+    expect(engine.lastLiveRes?.quality, 'dr');
+    expect(find.text('再生について'), findsOneWidget);
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+
+    // Selecting mobile switches the res the engine receives.
+    await tester.tap(find.text('モバイル'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('視聴'));
+    await tester.pumpAndSettle();
+    expect(engine.liveStartCalls, 2);
+    expect(engine.lastLiveRes?.quality, 'mobile');
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('live detail without a mobile res shows no quality '
+      'choice (plan 39)', (tester) async {
+    usePhoneSize(tester);
+    final engine = RecordingPlaybackEngine();
+    final fixture = Fixture(playback: engine);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('TV視聴'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('テスト放送２'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('再生画質'), findsNothing);
+    expect(find.text('モバイル'), findsNothing);
+
+    await tester.tap(find.text('視聴'));
+    await tester.pumpAndSettle();
+    expect(engine.lastLiveRes?.quality, 'dr');
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
   });
 }

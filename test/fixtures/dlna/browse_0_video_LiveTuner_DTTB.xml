@@ -1,0 +1,48 @@
+<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:arib="urn:schemas-arib-or-jp:elements-1-0/" xmlns:av="urn:schemas-sony-com:av" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/" xmlns:dtcp="urn:schemas-dtcp-com:metadata-1-0/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+<item id="0/video/LiveTuner/DTTB/ch?nid=7880&amp;tsid=7880&amp;svid=de00" parentID="0/video/LiveTuner/DTTB" restricted="1">
+<dc:title>テスト番組タイトルL1</dc:title>
+<upnp:class>object.item.videoItem.videoBroadcast</upnp:class>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_PN=DTCP_MPEG_TS_JP_T;DLNA.ORG_FLAGS=01110000000000000000000000000000;ARIB.OR.JP_PN=MPEG_TTS_CP">http://192.0.2.1:58890/web/video/ch?nid=7880&amp;tsid=7880&amp;svid=de00&amp;quality=dr</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_PN=DTCP_AVC_TS_JP_AAC_T;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01110000000000000000000000000000">http://192.0.2.1:58890/web/video/ch?nid=7880&amp;tsid=7880&amp;svid=de00&amp;quality=x3</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01100000000000000000000000000000;SONY.COM_PN=DTCP_AVC_TS_SD_30_JP_AAC_T">http://192.0.2.1:58890/web/video/ch?nid=7880&amp;tsid=7880&amp;svid=de00&amp;quality=mobile</res>
+<arib:audioComponentType qualityIndicator="2">3</arib:audioComponentType>
+<arib:caProgramInfo>0</arib:caProgramInfo>
+<arib:captionInfo>1</arib:captionInfo>
+<arib:dataProgramInfo sync="0">0</arib:dataProgramInfo>
+<arib:longDescription>テスト番組内容L1</arib:longDescription>
+<arib:longDescription>テスト出演者L1</arib:longDescription>
+<arib:multiESInfo>0</arib:multiESInfo>
+<arib:multiViewInfo>0</arib:multiViewInfo>
+<arib:objectType>ARIB_TB</arib:objectType>
+<arib:videoComponentType>179</arib:videoComponentType>
+<dc:description>テスト概要L1</dc:description>
+<upnp:channelName>ＮＨＫ総合１・北九州</upnp:channelName>
+<upnp:channelNr>30310</upnp:channelNr>
+<upnp:genre>ニュース／報道</upnp:genre>
+<upnp:scheduledEndTime>2026-11-17T14:50:00+09:00</upnp:scheduledEndTime>
+<upnp:scheduledStartTime>2026-11-17T14:05:00+09:00</upnp:scheduledStartTime>
+</item>
+<item id="0/video/LiveTuner/DTTB/ch?nid=7880&amp;tsid=7880&amp;svid=de01" parentID="0/video/LiveTuner/DTTB" restricted="1">
+<dc:title>テスト番組タイトルL1</dc:title>
+<upnp:class>object.item.videoItem.videoBroadcast</upnp:class>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_PN=DTCP_MPEG_TS_JP_T;DLNA.ORG_FLAGS=01110000000000000000000000000000;ARIB.OR.JP_PN=MPEG_TTS_CP">http://192.0.2.1:58890/web/video/ch?nid=7880&amp;tsid=7880&amp;svid=de01&amp;quality=dr</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_PN=DTCP_AVC_TS_JP_AAC_T;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01110000000000000000000000000000">http://192.0.2.1:58890/web/video/ch?nid=7880&amp;tsid=7880&amp;svid=de01&amp;quality=x3</res>
+<res protocolInfo="http-get:*:application/x-dtcp1;DTCP1HOST=192.0.2.1;DTCP1PORT=57343;CONTENTFORMAT=&quot;video/vnd.dlna.mpeg-tts&quot;:DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01100000000000000000000000000000;SONY.COM_PN=DTCP_AVC_TS_SD_30_JP_AAC_T">http://192.0.2.1:58890/web/video/ch?nid=7880&amp;tsid=7880&amp;svid=de01&amp;quality=mobile</res>
+<arib:audioComponentType qualityIndicator="2">3</arib:audioComponentType>
+<arib:caProgramInfo>0</arib:caProgramInfo>
+<arib:captionInfo>1</arib:captionInfo>
+<arib:dataProgramInfo sync="0">0</arib:dataProgramInfo>
+<arib:longDescription>テスト番組内容L1</arib:longDescription>
+<arib:longDescription>テスト出演者L1</arib:longDescription>
+<arib:multiESInfo>0</arib:multiESInfo>
+<arib:multiViewInfo>0</arib:multiViewInfo>
+<arib:objectType>ARIB_TB</arib:objectType>
+<arib:videoComponentType>179</arib:videoComponentType>
+<dc:description>テスト概要L1</dc:description>
+<upnp:channelName>ＮＨＫ総合２・北九州</upnp:channelName>
+<upnp:channelNr>30320</upnp:channelNr>
+<upnp:genre>ニュース／報道</upnp:genre>
+<upnp:scheduledEndTime>2026-11-17T14:50:00+09:00</upnp:scheduledEndTime>
+<upnp:scheduledStartTime>2026-11-17T14:05:00+09:00</upnp:scheduledStartTime>
+</item>
+</DIDL-Lite>

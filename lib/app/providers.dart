@@ -203,6 +203,7 @@ class DeviceServices {
     required this.schedules,
     required this.titles,
     required this.metadata,
+    required this.live,
     required this.playback,
   });
 
@@ -211,6 +212,7 @@ class DeviceServices {
   final ScheduleService schedules;
   final TitleCatalogService titles;
   final MetadataService metadata;
+  final LiveCatalogService live;
   final PlaybackEngine playback;
 }
 
@@ -258,6 +260,7 @@ DeviceServices assembleDeviceServices(
       metadata: metadata,
     ),
     metadata: metadata,
+    live: DlnaLiveCatalogService(metadata: metadata),
     playback: DtcpPlaybackEngine(
       credentialStore: credentialStore ?? SecureCredentialStore(),
       srmStore: srmStore ??

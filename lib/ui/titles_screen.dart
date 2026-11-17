@@ -12,8 +12,8 @@ import 'package:material_ui/material_ui.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
-import 'error_messages.dart';
 import 'format.dart';
+import 'playback_launcher.dart';
 import 'player_screen.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
 import 'widgets.dart';
@@ -319,7 +319,7 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
     if (_starting) return;
     final engine = ref.read(deviceServicesProvider(reg)).playback;
     if (!engine.isSupported) {
-      await _showPlaybackNotice(context);
+      await showPlaybackUnsupportedDialog(context, subject: '録画の再生');
       return;
     }
     if (title.res.isEmpty) {
@@ -330,100 +330,16 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
         (_useMobile ? title.mobileRes : title.originalRes) ?? title.res.first;
     setState(() => _starting = true);
     try {
-      final session = await engine.startPlayback(title, res);
-      if (!context.mounted) {
-        await session.stop();
-        return;
-      }
-      await Navigator.push(
-        context,
-        MaterialPageRoute<void>(
-          builder: (_) => PlayerScreen(title: title, session: session),
-        ),
+      await startPlaybackAndShowPlayer(
+        context: context,
+        ref: ref,
+        start: () => engine.startPlayback(title, res),
+        buildPlayer: (session) =>
+            PlayerScreen(title: title.title, session: session),
+        unsupportedSubject: '録画の再生',
       );
-    } on NasneError catch (e) {
-      if (!context.mounted) return;
-      if (e.category == NasneErrorCategory.unsupported) {
-        await _showPlaybackNotice(context);
-      } else if (e.category == NasneErrorCategory.validation) {
-        await _showCredentialGuidance(context, userMessageForError(e));
-      } else {
-        // Name the failing stage instead of collapsing everything
-        // into one opaque snack (plan 28): the dialog carries the
-        // classification (category / source / code / detail), and
-        // the failure is recorded under the ui category when debug
-        // mode is on. No credential or key material is included.
-        ref.read(diagLogProvider)(
-          DiagCategory.ui,
-          'playback start failed: $e',
-        );
-        await _showPlaybackError(context, e);
-      }
-    } catch (e) {
-      if (!context.mounted) return;
-      ref.read(diagLogProvider)(
-        DiagCategory.ui,
-        'playback start failed (unclassified): $e',
-      );
-      showSnack(context, '再生を開始できませんでした');
     } finally {
       if (mounted) setState(() => _starting = false);
     }
-  }
-
-  Future<void> _showPlaybackError(BuildContext context, NasneError e) {
-    final detail = StringBuffer(userMessageForError(e));
-    detail.write('\n\n分類: ${e.category.name} / 発生元: ${e.source}');
-    if (e.code != null) detail.write(' / コード: ${e.code}');
-    if (e.detail != null) detail.write('\n詳細: ${e.detail}');
-    return showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('再生を開始できませんでした'),
-        content: Text(detail.toString()),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('閉じる'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showCredentialGuidance(
-      BuildContext context, String message) {
-    return showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('再生について'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('閉じる'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showPlaybackNotice(BuildContext context) {
-    return showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('再生は未実装です'),
-        content: const Text(
-          '録画の再生には DTCP-IP の資格情報 (DTLA 署名の証明書と機器秘密鍵のペア) '
-          'が必要です。資格情報ペアが得られていないため、v1 では再生は未実装です。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('閉じる'),
-          ),
-        ],
-      ),
-    );
   }
 }

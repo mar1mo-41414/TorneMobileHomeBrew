@@ -18,8 +18,8 @@ library;
 /// Version name from pubspec.yaml (`version:`), e.g. `1.2.1`.
 const String appVersionName = '1.2.1';
 
-/// Build number from pubspec.yaml (`version:`), e.g. `15`.
-const int appBuildNumber = 15;
+/// Build number from pubspec.yaml (`version:`), e.g. `16`.
+const int appBuildNumber = 16;
 
 /// How the settings screen presents the version.
 const String appVersionLabel =

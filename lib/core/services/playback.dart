@@ -5,6 +5,7 @@
 library;
 
 import '../errors.dart';
+import '../models/live_channel.dart';
 import '../models/title.dart';
 import 'interfaces.dart';
 
@@ -19,6 +20,17 @@ class UnsupportedPlaybackEngine implements PlaybackEngine {
     throw NasneError.unsupported(
       'playback:startPlayback',
       detail: 'DTCP-IP playback is not implemented in v1',
+    );
+  }
+
+  @override
+  Future<PlaybackSession> startLivePlayback(
+    LiveChannel channel,
+    TitleRes res,
+  ) {
+    throw NasneError.unsupported(
+      'playback:startLivePlayback',
+      detail: 'DTCP-IP live viewing is not implemented in v1',
     );
   }
 }

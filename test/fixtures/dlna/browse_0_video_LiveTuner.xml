@@ -1,0 +1,14 @@
+<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:arib="urn:schemas-arib-or-jp:elements-1-0/" xmlns:av="urn:schemas-sony-com:av" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/" xmlns:dtcp="urn:schemas-dtcp-com:metadata-1-0/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+<container id="0/video/LiveTuner/DTTB" parentID="0/video/LiveTuner" restricted="1">
+<dc:title>地上デジタル</dc:title>
+<upnp:class>object.container</upnp:class>
+</container>
+<container id="0/video/LiveTuner/BS" parentID="0/video/LiveTuner" restricted="1">
+<dc:title>ＢＳデジタル</dc:title>
+<upnp:class>object.container</upnp:class>
+</container>
+<container id="0/video/LiveTuner/CS" parentID="0/video/LiveTuner" restricted="1">
+<dc:title>１１０度ＣＳ</dc:title>
+<upnp:class>object.container</upnp:class>
+</container>
+</DIDL-Lite>

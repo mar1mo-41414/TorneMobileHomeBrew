@@ -25,6 +25,14 @@
 /// opens a session on the app-wide [PlaybackWakelock], so two
 /// overlapping player screens cannot drop the OS lock from under
 /// each other (build-13 field log).
+///
+/// Plan 39: live viewing reuses this screen unchanged. Nothing
+/// here seeks, resumes, or assumes a stream length (recordings
+/// also arrive as an unbounded chunked stream), so an endless
+/// broadcast needs no special case; leaving the screen stops
+/// the session in dispose, which is what a channel switch is.
+/// The wakelock follows the playing stream exactly as it does
+/// for recordings.
 library;
 
 import 'dart:async';
@@ -40,7 +48,10 @@ import '../core/core.dart';
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({super.key, required this.title, required this.session});
 
-  final RecordedTitle title;
+  /// Display heading: a recording's title, or a live channel's
+  /// name (plan 39). The screen itself is source-agnostic — it
+  /// plays the session's stream, finite or endless.
+  final String title;
   final PlaybackSession session;
 
   @override
@@ -157,7 +168,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title.title)),
+      appBar: AppBar(title: Text(widget.title)),
       body: _error != null
           ? Center(
               child: Padding(
