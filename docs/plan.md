@@ -1991,3 +1991,75 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - 作業領域: `tmhb.work/2026-11-17-build15/` に両バイナリを保管。
 - コミット: 実装 `19c4594`。
 - 残件 (本人の実機確認待ち): ビルド 15 で再生し、スリープが再発したらログを回収する。verify の記録列とライフサイクル遷移で「検証タイマーが回っていたか」「いつサスペンドされたか」「保持中に idle timer が戻されていたか」が切り分けられる。
+
+## 37. Phase 6: PC クライアント (macOS / Linux) — 設計と実装 (2026-11-17)
+
+### 37.1 本人の決定と公開方針
+
+- PC で見るクライアントが欲しい。UI は iPad の大画面レイアウトのままでよい。まずは Mac と Linux から。
+- **PC 版の情報は GitHub に一切上げない** (本人の追加指示。リリースだけでなく、コード・記録・言及も含む)。当面は開発側のみに留める。そのため実装は専用ブランチ `desktop-macos-linux` に分離し、このブランチは GitHub へ push しない。モバイル側の main は従来どおり両方へ push する。
+- 採番の注意: plan.md の §37 以降はこのブランチ専用の採番である。main 側の plan.md は §36 で終わっており、将来 main 側が §37 以降を使うとマージ時に番号が衝突しうる。
+
+### 37.2 方式
+
+- Flutter の macOS / Linux デスクトップターゲットを有効化した (`flutter create --platforms=macos,linux --org com.markun --project-name tmhb`)。識別子は両 OS とも `com.markun.tmhb`。
+- `lib/` は無変更でそのまま使う (通信・DTCP AKE・復号・プロキシ・番組表・モデル)。UI は既存の大画面レイアウト (レール ≥720px、2 ペイン ≥1000px) をそのまま使う。
+- 初期ウィンドウは両 OS とも 1280x800 にした (macOS は `MainFlutterWindow.swift`、Linux は `linux/runner/my_application.cc`)。起動直後から 2 ペイン表示になる。
+- 依存の追加は不要だった: `media_kit_libs_video` (umbrella) が macos / linux の libmpv バンドルを含み、`flutter_secure_storage` は darwin / linux 実装を含む。pubspec.lock に両 OS のプラグインが入った。
+- macOS のアプリアイコンは flutter_launcher_icons の macos 生成で既存アイコンから作った。
+
+### 37.3 プラットフォーム足回りの判断
+
+- **資格情報の保管**: flutter_secure_storage のデスクトップ実装 (macOS は Keychain、Linux は libsecret) を使い、「OS 保管庫のみ」の方針をモバイルと同一に維持する。macOS の entitlements (Debug / Release 両方) に `network.client` (本体への通信)、`network.server` (ループバックプロキシの待ち受け)、`keychain-access-groups` (`com.markun.tmhb`) を設定した。Info.plist には iOS と同じ文面の `NSLocalNetworkUsageDescription` を追加した。
+  - ただし今回の .app は署名なしビルド (38.2) のため entitlements は埋め込まれておらず、実行時はサンドボックス外で動く。上記の entitlements は署名付きビルドのための正設定として置いてある。
+- **AKE ソケット**: デスクトップでは `nativeAkeConnectionFactory` が自動的に dart:io 経路に落ちる (デバッグログに `ake transport: dart socket (not a mobile platform)` と出る)。TTL 3 は付かない。pydtcpip が素のソケットで AKE を完走する前例があるため、まずこの形で成立を狙う。ネイティブ TTL が必要になったら次段で検討する。デスクトップでの AKE 成立は未確認 (38.6)。
+- **wakelock チャネル**: デスクトップでは `NativeWakelockGuard` が対象外プラットフォームとして要求状態を返すだけ (実質 no-op)。PC のスリープ抑止は当面行わない。既知の差分として記録する。
+- **発見**: SSDP / サブネット走査は dart:io のまま動く前提。サンドボックス下でのマルチキャスト可否は、今回の macOS ビルドがサンドボックス外のため未検証。
+- **Linux のビルド要件**: media_kit_video の Linux 実装が pkg-config の `mpv` と `epoxy` を要求する。epoxy (libepoxy-dev) は marnux に導入済みだったが libmpv-dev が無かった。sudo は対話パスワード必須でエージェントからは実行できないため、`apt-get download libmpv-dev` で .deb を取得し、ローカル展開した mpv.pc (prefix を展開先に付け替え、動的リンクでは不要な Requires.private を除去) を `PKG_CONFIG_PATH` で読ませてビルドした。正規の直し方はビルド機での `sudo apt install libmpv-dev` である。実行時はシステムの `libmpv.so.2` (libmpv2) と libepoxy が必要 (media_kit の Linux 要件どおり)。marnux には両方入っている。
+
+### 37.4 テスト
+
+- `lib/` 無変更のため、ブランチ上でもテスト **202 件全合格**、`flutter analyze` 検出なし (ターゲット有効化直後に確認)。
+
+## 38. Phase 6: ビルドと macOS 起動失敗の切り分け (2026-11-17)
+
+### 38.1 Linux ビルド
+
+- marnux 上で `flutter build linux --release` 成功 (37.3 の mpv.pc 対応込み)。バンドル 28 MB。
+- 起動確認: Xvfb 上で起動し、プロセスが生存し続け、Flutter エンジンと `media_kit_libs_linux` の登録 (libmpv のロード) までログで確認した。リンク不足 (`not found`) はなし。
+- 配布物: `TorneMobileHomeBrew-linux-1.2.1.tar.gz` (バンドル一式 + `torne-mobile-hb.desktop`)。marnux `~/ダウンロード/` と `tmhb.work/2026-11-17-desktop/` に配置。SHA-256 `58a494af8985e1af7f5bf18eb91ab52e059c82f1cfbb98340733f5df63baf39b`。
+- 版数は **1.2.1 (ビルド 15) のまま** (デスクトップは main のコードにターゲットを足したもの)。
+
+### 38.2 macOS ビルドの作法
+
+- Mac 上でビルドする。素の `flutter build macos` は、entitlements が開発者証明書での署名を要求して失敗する (開発用署名の無い環境のため)。そのため `flutter build macos --release --config-only` で準備し、xcodebuild を `CODE_SIGNING_ALLOWED=NO` で回す「署名なし .app」とした (署名なしでよい、という本人の指定どおり)。
+- 非対話 ssh では Homebrew のパスが通らず CocoaPods が見つからないため、ビルドスクリプトで `/opt/homebrew/bin` を PATH に足す (既知の癖)。
+- Mac 側 clone の Gitea への直接 pull は、Mac から Gitea の ssh (22 番) に到達できず失敗する。そのため marnux から `git bundle` でブランチを渡して checkout する方式を取った。
+- ただし署名なしのままだと起動しない (38.3)。**ビルド後に `codesign --force --deep --sign -` でアドホック署名を付けるのが必須手順**である。
+
+### 38.3 起動失敗 (本人の実機報告) と根本原因
+
+- 本人が 2026-11-17 14:11 頃、Mac 実機で `tmhb.app` を開いたところ、「問題が起きたため tmhb を開けません」というダイアログが出て起動しなかった。
+- クラッシュレポート `~/Library/Logs/DiagnosticReports/tmhb-2026-11-17-141116.ips`: `fatalDyldError`、終了名前空間 DYLD、理由 "Library missing"、**`Library not loaded: @rpath/Ass.framework/Versions/A/Ass` — 試した先で "missing code signature"**。
+- **根本原因**: 署名なし (`CODE_SIGNING_ALLOWED=NO`) ビルドでは、`media_kit_libs_macos_video` が同梱するフレームワーク群 (Ass.framework = libass 他) が無署名のまま `Contents/Frameworks` にコピーされる。Apple Silicon の dyld は無署名コードのロードを拒否するため、アプリは起動直後に落ち、macOS があのダイアログを出す。本体の実行ファイルはリンカのアドホック署名で通るが、後からコピーされるフレームワークには署名が付かない、という落差である。deployment target やアーキテクチャの問題ではない (バイナリは universal で、版数も 1.2.1 / 15 がレポートに記録されている)。
+- **修正**: ビルド後に .app 全体へアドホック署名を付ける (`codesign --force --deep --sign -`)。`codesign --verify --deep --strict` 通過を確認した。
+- 教訓: ビルド直後の起動確認で一度プロセス生存を確認した時点があったが、本人が開いたのは署名付け前の成果物だった。**完了条件は「配布する成果物そのもの (zip を展開したコピー) を起動して確認する」まで**とし、38.5 でその形で実施した。
+
+### 38.4 表示名の修正
+
+- 本人の指摘: アプリの表示名が「tmhb」になっていた。モバイル側の表記方針に合わせ、macOS の `PRODUCT_NAME` を `torne mobile HB` に変更した (`macos/Runner/Configs/AppInfo.xcconfig`)。バンドル名・CFBundleName・ウィンドウタイトルが torne mobile HB になる。識別子 `com.markun.tmhb` は不変。
+- Linux はウィンドウタイトルが既に torne mobile HB (37.2)。配布 tar に `torne-mobile-hb.desktop` (Name=torne mobile HB) を追加した。実行バイナリ名 `tmhb` はファイル名として据え置く。
+
+### 38.5 成果物の起動確認 (完了条件として実施)
+
+- ビルドツリーの `torne mobile HB.app` (アドホック署名後): `open` して 10 秒間プロセス生存、新規クラッシュレポートなし。
+- **配布 zip を新規フォルダに展開したコピー**でも同じ確認を実施: 署名検証通過、`open` して 10 秒間プロセス生存、新規クラッシュレポートなし。System Events 経由でプロセスのウィンドウ名 **`torne mobile HB`** を取得できた (画面が出ていることの直接の証拠)。スクリーンショットは ssh セッションに画面収録の権限がなく取得できなかった。
+- 配布物: `TorneMobileHomeBrew-macos-1.2.1.zip` (`torne mobile HB.app` 入り、38,390,327 バイト)。marnux `~/ダウンロード/` と `tmhb.work/2026-11-17-desktop/` に配置。SHA-256 `8f6eeca3b91ff16938904fd59aea75584709f57814eb67a473997d3783318626`。
+
+### 38.6 未確認・残件
+
+- macOS / Linux とも、nasne の登録・録画一覧・再生開始までの実利用は本人の確認待ち (デスクトップでの AKE (dart:io 経路) の成立を含む)。
+- macOS の資格情報の Keychain 保存は、今回のビルドがサンドボックス外・アドホック署名のため、署名付きビルドでの挙動とは別に実利用での確認が要る。再ビルドのたびに署名が変わるため、Keychain のアクセス許可ダイアログが再出現しうる (アドホック署名の一般的性質)。
+- Linux の資格情報の libsecret 保存も実利用では未確認 (実行環境のシークレットサービスに依存する)。
+- Windows 版は今回の範囲外 (本人の指示で Mac と Linux が先)。
+- コミット (いずれも開発側のみ): `d198cc6` (ターゲット有効化)、`64a8d41` (表示名)。
