@@ -162,12 +162,11 @@ private class AkeSocketConnection(
                 if (ready <= 0) {
                     throw ErrnoException("connect", OsConstants.ETIMEDOUT)
                 }
-                val error = Os.getsockoptInt(
-                    descriptor,
-                    OsConstants.SOL_SOCKET,
-                    OsConstants.SO_ERROR,
-                )
-                if (error != 0) throw ErrnoException("connect", error)
+                // A failed connect also reports writable; confirm
+                // the peer exists (throws ENOTCONN otherwise).
+                // (android.system.Os has no public getsockoptInt in
+                // the SDK stubs, hence getpeername.)
+                Os.getpeername(descriptor)
             }
             Os.fcntlInt(descriptor, OsConstants.F_SETFL, flags)
         } catch (e: Exception) {
