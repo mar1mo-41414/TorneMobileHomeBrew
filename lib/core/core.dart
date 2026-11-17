@@ -28,6 +28,7 @@ export 'parsing/xsrs.dart';
 export 'arib_b24.dart';
 export 'dtcp/ake.dart';
 export 'dtcp/credential_store.dart';
+export 'dtcp/credentials_env.dart';
 export 'dtcp/dtcp_crypto.dart';
 export 'dtcp/dtcp_proxy.dart';
 export 'dtcp/pcp.dart';

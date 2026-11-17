@@ -5,6 +5,10 @@
 /// The pair is validated, then stored only in the OS vault. The
 /// bytes are never shown after entry, never logged, and the text
 /// fields are cleared as soon as the import completes.
+///
+/// Since plan 67 the pair can also be imported from a pydtcpip-style
+/// credentials.env file; that path feeds the same validation + save
+/// as the manual entry kept below it.
 library;
 
 import 'dart:convert';
@@ -65,18 +69,42 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
     return result.files.first.bytes;
   }
 
-  Future<void> _import() async {
+  /// Imports from a pydtcpip-style credentials.env file (plan 67):
+  /// picking the file is all the user does — the parsed pair goes
+  /// through the exact same validation + vault save as the manual
+  /// entry below.
+  Future<void> _importFromEnvFile() async {
+    final bytes = await _pickFile();
+    if (bytes == null) return;
+    final String text;
+    try {
+      text = utf8.decode(bytes);
+    } on FormatException {
+      setState(() => _error = 'credentials.env をテキストとして読み取れませんでした');
+      return;
+    }
+    try {
+      final env = parseCredentialsEnv(text);
+      await _import(certificate: env.certificate, privateKey: env.privateKey);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
+  Future<void> _import({Uint8List? certificate, Uint8List? privateKey}) async {
     FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final certificate = _certFileBytes ?? _decodePasted(_certText.text);
-      final privateKey = _keyFileBytes ?? _decodePasted(_keyText.text);
+      final certificateBytes =
+          certificate ?? _certFileBytes ?? _decodePasted(_certText.text);
+      final privateKeyBytes =
+          privateKey ?? _keyFileBytes ?? _decodePasted(_keyText.text);
       await ref
           .read(credentialStoreProvider)
-          .save(certificate: certificate, privateKey: privateKey);
+          .save(certificate: certificateBytes, privateKey: privateKeyBytes);
       // Clear the entry surfaces immediately; the pair now lives
       // only in the vault.
       _certText.clear();
@@ -156,6 +184,28 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
             error: (e, _) => ListTile(title: Text('読み込みエラー: $e')),
           ),
           const Divider(),
+          Text(
+            'credentials.env から読み込む',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'pydtcpip 形式の credentials.env ファイル '
+            '(PYDTCPIP_CERTIFICATE / PYDTCPIP_PRIVATE_KEY) を選ぶと、'
+            'そのまま検証して保存します。',
+          ),
+          const SizedBox(height: 6),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _importFromEnvFile,
+            icon: const Icon(Icons.folder_open),
+            label: const Text('credentials.env を選択'),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '証明書・秘密鍵を直接入力',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
           _pairFields(
             label: '証明書 (88 バイト)',
             controller: _certText,
@@ -186,7 +236,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
           ],
           const SizedBox(height: 20),
           FilledButton.icon(
-            onPressed: _busy ? null : _import,
+            onPressed: _busy ? null : () => _import(),
             icon: const Icon(Icons.download_done),
             label: const Text('検証して保存'),
           ),
