@@ -159,7 +159,7 @@ void main() {
   });
 
   group('native AKE transport fallback', () {
-    // Linux is a native-socket platform too (plan 39.6) and the
+    // Linux is a native-socket platform too (plan 44.6) and the
     // test host is Linux, so the factory now enters the native
     // path here. Simulate the channel being unavailable (as in a
     // test process) to exercise the documented fallback.

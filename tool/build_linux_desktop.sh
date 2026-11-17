@@ -5,7 +5,7 @@
 #   tool/build_linux_desktop.sh
 # Output: build/TorneMobileHomeBrew-linux-<version>.tar.gz
 #
-# Why the sysroot dance (plan 39.3 — a trap that was actually hit):
+# Why the sysroot dance (plan 44.3 — a trap that was actually hit):
 # media_kit's CMake locates libmpv via pkg_check_modules, which
 # needs libmpv-dev. The build host has only the runtime library
 # and packages are not installed with sudo here, so the .deb is

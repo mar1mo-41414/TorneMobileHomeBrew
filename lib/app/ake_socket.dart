@@ -9,7 +9,7 @@
 /// setsockopt. On other platforms — and if the native channel is
 /// unavailable — this falls back to the dart:io transport (which
 /// sets TCP_NODELAY only). Beware: the nasne refuses the AKE TCP
-/// connection itself (RST) when the TTL is above 3 (plan 39.5),
+/// connection itself (RST) when the TTL is above 3 (plan 44.5),
 /// so the dart:io fallback cannot authenticate against it; it
 /// exists for graceful degradation and shows up in the log.
 library;

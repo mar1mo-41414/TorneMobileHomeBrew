@@ -25,6 +25,23 @@
 /// opens a session on the app-wide [PlaybackWakelock], so two
 /// overlapping player screens cannot drop the OS lock from under
 /// each other (build-13 field log).
+///
+/// Plan 39: live viewing reuses this screen unchanged. Nothing
+/// here seeks, resumes, or assumes a stream length (recordings
+/// also arrive as an unbounded chunked stream), so an endless
+/// broadcast needs no special case; leaving the screen stops
+/// the session in dispose, which is what a channel switch is.
+/// The wakelock follows the playing stream exactly as it does
+/// for recordings.
+///
+/// Plan 42: for live viewing, mpv's "Cannot seek in this
+/// stream." complaint no longer fails the start. mpv queues an
+/// initial seek for streams whose timestamps do not start at
+/// zero (observed with DR broadcasts on Android) and reports
+/// the refusal at error level even though playback itself is
+/// unaffected; the live stream is unseekable by design, so the
+/// complaint is logged and ignored (see player_error_policy).
+/// Recorded playback keeps the previous behaviour.
 library;
 
 import 'dart:async';
@@ -36,12 +53,26 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../app/providers.dart';
 import '../core/core.dart';
+import 'player_error_policy.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
-  const PlayerScreen({super.key, required this.title, required this.session});
+  const PlayerScreen({
+    super.key,
+    required this.title,
+    required this.session,
+    this.live = false,
+  });
 
-  final RecordedTitle title;
+  /// Display heading: a recording's title, or a live channel's
+  /// name (plan 39). The screen itself is source-agnostic — it
+  /// plays the session's stream, finite or endless.
+  final String title;
   final PlaybackSession session;
+
+  /// Whether the session is a live broadcast (plan 43). A live
+  /// stream is unseekable by design, so mpv's seek complaint is
+  /// non-fatal there (see player_error_policy).
+  final bool live;
 
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
@@ -94,6 +125,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     _subscriptions.add(
       _player.stream.error.listen((error) {
         _diag(DiagCategory.playback, 'player: error: $error');
+        if (!playerErrorIsFatal(error, live: widget.live)) {
+          // A seek complaint against a live stream (plan 43):
+          // the stream is unseekable by design and mpv keeps
+          // playing, so leave the watchdog running as the
+          // arbiter of a start that never reaches playback.
+          _diag(
+            DiagCategory.playback,
+            'player: ignoring the seek complaint for live viewing',
+          );
+          return;
+        }
         _wakelockSession.setPlaying(false);
         _watchdog?.cancel();
         if (mounted && _error == null) {
@@ -137,6 +179,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _diag(DiagCategory.playback, 'player: open completed');
     } catch (e) {
       _diag(DiagCategory.playback, 'player: open failed: $e');
+      if (!playerErrorIsFatal('$e', live: widget.live)) {
+        // Same seek complaint as the error-stream path, thrown
+        // through open() instead (plan 43): not a failed start.
+        _diag(
+          DiagCategory.playback,
+          'player: ignoring the seek complaint for live viewing',
+        );
+        return;
+      }
       _watchdog?.cancel();
       if (mounted) setState(() => _error = '$e');
     }
@@ -157,7 +208,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title.title)),
+      appBar: AppBar(title: Text(widget.title)),
       body: _error != null
           ? Center(
               child: Padding(

@@ -6,7 +6,7 @@
 # Output: ~/Desktop/TorneMobileHomeBrew-macos-<version>.zip
 # (plus the built .app under build/macos/Build/Products/Release/)
 #
-# Why it looks like this (plan 39 — every step is a trap that was
+# Why it looks like this (plan 44 — every step is a trap that was
 # actually hit):
 #
 # 1. `flutter build macos --release` FAILS in this project:
@@ -24,7 +24,7 @@
 #    spawn time (RBSRequestErrorDomain 5 / NSPOSIXErrorDomain
 #    163), even though `codesign --verify` passes. Credential
 #    storage does not need the entitlement — the app uses the
-#    legacy login keychain on macOS (plan 39).
+#    legacy login keychain on macOS (plan 44).
 #
 # 3. The version in the zip name is read from pubspec.yaml.
 set -euo pipefail
@@ -46,7 +46,7 @@ codesign --verify --deep --strict "$APP"
 # back into the ad-hoc signature, the app will not launch.
 if codesign -d --entitlements - "$APP" 2>/dev/null | grep -q keychain-access-groups; then
   echo "ERROR: keychain-access-groups present in ad-hoc signature;" >&2
-  echo "launchd will refuse to spawn this app (plan 39)." >&2
+  echo "launchd will refuse to spawn this app (plan 44)." >&2
   exit 1
 fi
 

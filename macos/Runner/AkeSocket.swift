@@ -2,7 +2,7 @@ import Darwin
 import FlutterMacOS
 import Foundation
 
-/// Native AKE socket hub (plan 28, macOS added in plan 39.5): BSD
+/// Native AKE socket hub (plan 28, macOS added in plan 44.5): BSD
 /// sockets with IP TTL 3 and
 /// TCP_NODELAY (the DTCP-IP proximity requirement the reference
 /// client implements), exposed to Dart over the ake_socket

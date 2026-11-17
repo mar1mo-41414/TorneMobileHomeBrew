@@ -15,11 +15,11 @@
 /// these constants ever drift from pubspec.yaml's `version:`.
 library;
 
-/// Version name from pubspec.yaml (`version:`), e.g. `1.2.1`.
-const String appVersionName = '1.2.1';
+/// Version name from pubspec.yaml (`version:`), e.g. `1.3.0`.
+const String appVersionName = '1.3.0';
 
-/// Build number from pubspec.yaml (`version:`), e.g. `15`.
-const int appBuildNumber = 15;
+/// Build number from pubspec.yaml (`version:`), e.g. `17`.
+const int appBuildNumber = 18;
 
 /// How the settings screen presents the version.
 const String appVersionLabel =

@@ -12,13 +12,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/core.dart';
 import 'providers.dart';
 
-/// Tab indices of the v1 shell (plan 5.6).
+/// Tab indices of the app shell (plan 5.6; live viewing added
+/// in plan 39).
 abstract final class AppTabs {
   static const int home = 0;
-  static const int schedules = 1;
-  static const int titles = 2;
-  static const int epg = 3;
-  static const int settings = 4;
+  static const int live = 1;
+  static const int schedules = 2;
+  static const int titles = 3;
+  static const int epg = 4;
+  static const int settings = 5;
 }
 
 /// The WebAPI broadcasting type of terrestrial digital (measured,
@@ -216,6 +218,15 @@ final titlesProvider =
       (ref, reg) => ref.watch(deviceServicesProvider(reg)).titles.listTitles(),
     );
 
+/// Live bands and channels with the programme currently on air
+/// (plan 39). The programme information is a snapshot of the
+/// fetch moment; the screen's refresh action re-fetches it.
+final liveChannelsProvider =
+    FutureProvider.family<List<LiveBand>, RegisteredNasne>(
+      (ref, reg) =>
+          ref.watch(deviceServicesProvider(reg)).live.listLiveChannels(),
+    );
+
 /// Recorded-title counts (current / maximum).
 class TitleCounts {
   const TitleCounts(this.count, this.max);
@@ -246,4 +257,5 @@ void invalidateDeviceData(WidgetRef ref, RegisteredNasne reg) {
   ref.invalidate(schedulesProvider(reg));
   ref.invalidate(titlesProvider(reg));
   ref.invalidate(titleCountsProvider(reg));
+  ref.invalidate(liveChannelsProvider(reg));
 }

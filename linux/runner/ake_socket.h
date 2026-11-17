@@ -1,4 +1,4 @@
-// Native AKE socket hub for Linux (plan 39.6): registers the
+// Native AKE socket hub for Linux (plan 44.6): registers the
 // com.markun.tmhb/ake_socket method channel and the
 // com.markun.tmhb/ake_socket_events event channel on the runner's
 // binary messenger.

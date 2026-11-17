@@ -120,7 +120,7 @@ final showSubchannelsProvider =
         ShowSubchannelsNotifier.new);
 
 /// The app store directory (file stores and the debug log
-/// destination, plan 28; location rule in plan 39).
+/// destination, plan 28; location rule in plan 44).
 /// The bootstrap overrides this with the real directory; null in
 /// tests / headless contexts (debug logging then stays off).
 final storeDirectoryProvider = Provider<Directory?>((ref) => null);
@@ -204,6 +204,7 @@ class DeviceServices {
     required this.schedules,
     required this.titles,
     required this.metadata,
+    required this.live,
     required this.playback,
   });
 
@@ -212,6 +213,7 @@ class DeviceServices {
   final ScheduleService schedules;
   final TitleCatalogService titles;
   final MetadataService metadata;
+  final LiveCatalogService live;
   final PlaybackEngine playback;
 }
 
@@ -259,6 +261,7 @@ DeviceServices assembleDeviceServices(
       metadata: metadata,
     ),
     metadata: metadata,
+    live: DlnaLiveCatalogService(metadata: metadata),
     playback: DtcpPlaybackEngine(
       credentialStore: credentialStore ?? SecureCredentialStore(),
       srmStore: srmStore ??

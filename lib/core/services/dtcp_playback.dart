@@ -14,6 +14,7 @@ import '../dtcp/credential_store.dart';
 import '../dtcp/dtcp_crypto.dart';
 import '../dtcp/dtcp_proxy.dart';
 import '../errors.dart';
+import '../models/live_channel.dart';
 import '../models/title.dart';
 import 'interfaces.dart';
 
@@ -150,17 +151,38 @@ class DtcpPlaybackEngine implements PlaybackEngine {
   Future<PlaybackSession> startPlayback(
     RecordedTitle title,
     TitleRes res,
-  ) async {
+  ) {
+    diag(
+      DiagCategory.playback,
+      'start: res quality=${res.quality ?? '(none)'}; '
+      'credentials -> HEAD -> AKE -> proxy',
+    );
+    return _start(res);
+  }
+
+  /// Live viewing (plan 39): the identical path against the
+  /// channel's stream resource. The stream is endless, which the
+  /// proxy already serves as-is (chunked, no content length);
+  /// the session runs until the caller stops it.
+  @override
+  Future<PlaybackSession> startLivePlayback(
+    LiveChannel channel,
+    TitleRes res,
+  ) {
+    diag(
+      DiagCategory.playback,
+      'start (live): res quality=${res.quality ?? '(none)'}; '
+      'credentials -> HEAD -> AKE -> proxy',
+    );
+    return _start(res);
+  }
+
+  Future<PlaybackSession> _start(TitleRes res) async {
     final stopwatch = Stopwatch()..start();
     var stage = 'credentials';
     AkeSession? session;
     final fetcher = _fetcherFactory();
     try {
-      diag(
-        DiagCategory.playback,
-        'start: res quality=${res.quality ?? '(none)'}; '
-        'credentials -> HEAD -> AKE -> proxy',
-      );
       final credentials = await credentialStore.load();
       if (credentials == null) {
         throw NasneError.validation(

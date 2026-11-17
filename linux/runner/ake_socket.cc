@@ -1,4 +1,4 @@
-// Native AKE socket hub (plan 28, Linux added in plan 39.6): BSD
+// Native AKE socket hub (plan 28, Linux added in plan 44.6): BSD
 // sockets with IP TTL 3 and TCP_NODELAY (the DTCP-IP proximity
 // requirement the reference client implements), exposed to Dart over
 // the ake_socket channels. This mirrors the iOS/macOS Swift
@@ -15,7 +15,7 @@
 //     {id, kind: "done"}
 //
 // The nasne refuses the AKE TCP connection itself (RST) when the TTL
-// is above 3 (plan 39.5), and dart:io has no TTL API, which is why
+// is above 3 (plan 44.5), and dart:io has no TTL API, which is why
 // this native path exists on every desktop/mobile platform.
 
 #include "ake_socket.h"

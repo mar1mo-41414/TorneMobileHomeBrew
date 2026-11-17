@@ -73,7 +73,7 @@ class CredentialSummary {
 /// with a Keystore-held key.
 ///
 /// On macOS the items go to the legacy login keychain
-/// (usesDataProtectionKeychain: false, plan 39). The plugin's
+/// (usesDataProtectionKeychain: false, plan 44). The plugin's
 /// default — the data protection keychain — requires a
 /// keychain-access-groups entitlement, and an ad-hoc signed app
 /// (how the desktop build is distributed) cannot carry one:
@@ -155,7 +155,7 @@ class SecureCredentialStore implements CredentialStore {
     // errSecMissingEntitlement (-34018) -- not errSecItemNotFound --
     // when there is nothing to delete; the plugin then reports the
     // whole delete as failed (measured on the real machine,
-    // plan 39). Reads are unaffected, and when an item does exist
+    // plan 44). Reads are unaffected, and when an item does exist
     // the plugin's second (non-synchronizable) pass deletes it and
     // the call succeeds, so guarding on presence avoids the failure
     // without changing the semantics. This is also what makes

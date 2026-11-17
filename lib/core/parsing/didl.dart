@@ -6,6 +6,7 @@ import 'package:xml/xml.dart';
 import '../broadcast_text.dart';
 import '../errors.dart';
 import '../models/didl.dart';
+import '../models/live_channel.dart';
 import '../models/title.dart';
 import '../transport/xml_util.dart';
 
@@ -89,6 +90,48 @@ DidlItem _parseItem(XmlElement el) {
     copyCountRemaining: cogCount,
     res: resList,
     properties: properties,
+  );
+}
+
+/// Converts one LiveTuner DIDL item into a [LiveChannel]
+/// (plan 39). The channel identity rides in the item id's query
+/// (`ch?nid=7880&tsid=7880&svid=de00`, hex — the same space as
+/// `channelListGet`'s decimal ids, verified in the live survey);
+/// the current programme's genre and scheduled times ride in the
+/// `upnp:` properties the generic item parse retains.
+LiveChannel liveChannelFromDidl(DidlItem item) {
+  int? hexParam(String name) {
+    final q = item.id.indexOf('?');
+    if (q < 0) return null;
+    for (final pair in item.id.substring(q + 1).split('&')) {
+      final eq = pair.indexOf('=');
+      if (eq > 0 && pair.substring(0, eq) == name) {
+        return int.tryParse(pair.substring(eq + 1), radix: 16);
+      }
+    }
+    return null;
+  }
+
+  DateTime? timeProp(String key) {
+    final raw = item.properties[key];
+    return raw == null ? null : DateTime.tryParse(raw.trim());
+  }
+
+  return LiveChannel(
+    id: item.id,
+    bandId: item.parentId,
+    networkId: hexParam('nid'),
+    transportStreamId: hexParam('tsid'),
+    serviceId: hexParam('svid'),
+    channelName: item.channelName,
+    channelNr: item.channelNr,
+    genre: item.properties['upnp:genre'],
+    programTitle: item.title,
+    description: item.description,
+    longDescription: item.longDescription,
+    programStart: timeProp('upnp:scheduledStartTime'),
+    programEnd: timeProp('upnp:scheduledEndTime'),
+    res: item.res,
   );
 }
 

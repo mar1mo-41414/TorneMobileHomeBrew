@@ -8,6 +8,7 @@ library;
 import '../models/device.dart';
 import '../models/didl.dart';
 import '../models/epg.dart';
+import '../models/live_channel.dart';
 import '../models/live_status.dart';
 import '../models/channel.dart';
 import '../models/schedule.dart';
@@ -89,11 +90,24 @@ abstract interface class SettingsService {
   Future<void> setMobileBitrate(int bitrateInfo);
 }
 
+/// Live channels: the DMS LiveTuner tree (plan 39). Each channel
+/// carries the programme currently on air; the enumeration is a
+/// DIDL walk (the X_GetLiveChList SOAP action returns terrestrial
+/// service ids only and carries no programme information, so it
+/// is not the primary path — live survey, 2026-11-17).
+abstract interface class LiveCatalogService {
+  /// All bands with their channels, in the device's order.
+  Future<List<LiveBand>> listLiveChannels();
+}
+
 /// DLNA ContentDirectory Browse (plan 12.1) and the programme
 /// guide behind the same boundary (plan 12.8 / 21).
 abstract interface class MetadataService {
   /// The container holding all recordings (plan 11.8).
   static const String allRecordingsContainer = '0/video/all';
+
+  /// The container holding the live tuner bands (plan 39).
+  static const String liveTunerContainer = '0/video/LiveTuner';
 
   Future<DidlDocument> browse(String objectId);
 
@@ -128,4 +142,10 @@ abstract interface class PlaybackEngine {
   /// `unsupported`; the DTCP-IP engine throws `validation` when no
   /// credential pair has been imported.
   Future<PlaybackSession> startPlayback(RecordedTitle title, TitleRes res);
+
+  /// Starts live viewing of [channel] via [res] (plan 39): the
+  /// same DTCP-IP path as a recording, against the channel's
+  /// endless stream. Switching channels is starting a new session
+  /// after stopping the old one; there is no resume or seek.
+  Future<PlaybackSession> startLivePlayback(LiveChannel channel, TitleRes res);
 }

@@ -14,7 +14,7 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
-    // Native AKE socket channels (IP TTL 3, plan 28 / 39.5): the
+    // Native AKE socket channels (IP TTL 3, plan 28 / 44.5): the
     // nasne refuses AKE connections whose IP TTL exceeds 3, and
     // dart:io cannot set the TTL, so macOS uses the same native
     // socket as iOS.

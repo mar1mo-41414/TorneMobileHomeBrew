@@ -131,22 +131,34 @@ class RecordedTitle {
     );
   }
 
-  /// The original-quality resource (plan 33): the title's own
-  /// recording (DR / 3倍 / …), i.e. the first res that is not the
-  /// mobile transcode. Falls back to the first res when every res
-  /// is mobile, and is null when the title carries no res.
+  /// The original-quality resource (plan 33; selection logic in
+  /// [TitleResListSelection], shared with live channels).
+  TitleRes? get originalRes => res.originalRes;
+
+  /// The mobile (low-bitrate) resource, when offered (plan 33).
+  TitleRes? get mobileRes => res.mobileRes;
+}
+
+/// Playback resource selection over a DIDL res list (plan 33),
+/// shared by recorded titles and live channels (plan 39): both
+/// carry the same dr / x3 / mobile resource family.
+extension TitleResListSelection on List<TitleRes> {
+  /// The original-quality resource: the content's own quality
+  /// (DR / 3倍 / …), i.e. the first res that is not the mobile
+  /// transcode. Falls back to the first res when every res is
+  /// mobile, and is null when the list is empty.
   TitleRes? get originalRes {
-    for (final r in res) {
+    for (final r in this) {
       if (r.quality != 'mobile') return r;
     }
-    return res.isEmpty ? null : res.first;
+    return isEmpty ? null : first;
   }
 
   /// The mobile (low-bitrate) resource, when the nasne offers one
-  /// alongside the original (plan 33). Null when it does not, in
-  /// which case the UI offers no quality choice.
+  /// alongside the original. Null when it does not, in which case
+  /// the UI offers no quality choice.
   TitleRes? get mobileRes {
-    for (final r in res) {
+    for (final r in this) {
       if (r.quality == 'mobile') return r;
     }
     return null;
