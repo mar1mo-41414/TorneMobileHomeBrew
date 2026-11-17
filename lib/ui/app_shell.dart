@@ -17,6 +17,17 @@ import 'titles_screen.dart';
 /// Width at or above which the shell uses a navigation rail.
 const double railBreakpoint = 720;
 
+/// Minimum top clearance guaranteed in the rail (wide) layout, in
+/// logical pixels. Some environments (LiveContainer on iPad, observed
+/// 2026-11-17) report a top safe-area inset smaller than the status
+/// bar actually drawn over the app, which left the rail and the
+/// screens' app bars flush with the top edge of the screen. The
+/// screens' app bars already consume the reported inset, so the shell
+/// only tops up the shortfall below this floor; where the inset is
+/// reported correctly nothing is added. The phone (bottom bar) layout
+/// is unaffected.
+const double wideLayoutMinTopInset = 24;
+
 class AppShell extends ConsumerWidget {
   const AppShell({super.key});
 
@@ -56,25 +67,32 @@ class AppShell extends ConsumerWidget {
       builder: (context, constraints) {
         final body = IndexedStack(index: tab, children: screens);
         if (constraints.maxWidth >= railBreakpoint) {
+          final reportedTopInset = MediaQuery.paddingOf(context).top;
+          final extraTop = wideLayoutMinTopInset > reportedTopInset
+              ? wideLayoutMinTopInset - reportedTopInset
+              : 0.0;
           return Scaffold(
-            body: Row(
-              children: [
-                NavigationRail(
-                  selectedIndex: tab,
-                  onDestinationSelected: select,
-                  labelType: NavigationRailLabelType.all,
-                  destinations: [
-                    for (final d in _destinations)
-                      NavigationRailDestination(
-                        icon: Icon(d.icon),
-                        selectedIcon: Icon(d.selectedIcon),
-                        label: Text(d.label),
-                      ),
-                  ],
-                ),
-                const VerticalDivider(thickness: 1, width: 1),
-                Expanded(child: body),
-              ],
+            body: Padding(
+              padding: EdgeInsets.only(top: extraTop),
+              child: Row(
+                children: [
+                  NavigationRail(
+                    selectedIndex: tab,
+                    onDestinationSelected: select,
+                    labelType: NavigationRailLabelType.all,
+                    destinations: [
+                      for (final d in _destinations)
+                        NavigationRailDestination(
+                          icon: Icon(d.icon),
+                          selectedIcon: Icon(d.selectedIcon),
+                          label: Text(d.label),
+                        ),
+                    ],
+                  ),
+                  const VerticalDivider(thickness: 1, width: 1),
+                  Expanded(child: body),
+                ],
+              ),
             ),
           );
         }
