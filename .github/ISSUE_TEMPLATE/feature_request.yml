@@ -1,0 +1,29 @@
+name: 機能リクエスト(こんな機能が欲しい)
+description: torne mobile HB に欲しい機能を教えてください
+title: "[機能] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ありがとうございます。「こんな機能があったらいいのに」は大歓迎です。
+        思いついた場面そのままに書いてもらえれば大丈夫です。技術的な書き方に直す必要はありません。
+  - type: textarea
+    id: feature
+    attributes:
+      label: 欲しい機能
+      description: 何ができるようになってほしいですか
+      placeholder: "例: 録画一覧をタイトルで検索したい"
+    validations: {required: true}
+  - type: textarea
+    id: usecase
+    attributes:
+      label: どんな場面で使いますか
+      description: いつ・どこで・何のために使う想定ですか
+      placeholder: "例: 外出先から、昨日のドラマが録れているか確認して、そのまま見たい"
+  - type: textarea
+    id: current
+    attributes:
+      label: 今はどうしていますか
+      description: 公式 torne や他の手段で代用している方法があれば教えてください
+      placeholder: "例: 公式アプリでは ○○ はできるけど、△△ が不便"

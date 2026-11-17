@@ -1,0 +1,19 @@
+name: 質問・その他
+description: 使い方の質問、感想、その他なんでも
+title: "[質問] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ありがとうございます。使い方の質問や感想など、気軽にどうぞ。
+  - type: textarea
+    id: content
+    attributes:
+      label: 内容
+    validations: {required: true}
+  - type: input
+    id: env
+    attributes:
+      label: 環境(関係ありそうなら)
+      placeholder: "例: アプリ 1.2.0 / iPhone 15 Plus / CECH-ZNR2J"

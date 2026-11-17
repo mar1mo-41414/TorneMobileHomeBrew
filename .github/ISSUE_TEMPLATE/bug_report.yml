@@ -1,0 +1,45 @@
+name: バグ報告(うまく動かない)
+description: アプリの不具合を報告する
+title: "[バグ] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ありがとうございます。分かる範囲で大丈夫です。
+        **MAC アドレス・IP アドレス・資格情報(証明書や鍵の内容)は書かないでください。**
+  - type: input
+    id: appversion
+    attributes:
+      label: アプリのバージョン
+      description: 版数とビルド番号(設定などで確認できます)
+      placeholder: "例: 1.2.0(ビルド 12)"
+    validations: {required: true}
+  - type: input
+    id: device
+    attributes:
+      label: 端末と OS
+      placeholder: "例: iPad Air(M3)/ iOS 26、Xperia Ace / Android 12"
+    validations: {required: true}
+  - type: input
+    id: nasne
+    attributes:
+      label: nasne の型番とファームウェア
+      placeholder: "例: CECH-ZNR2J / FW 2.60(分からなければ空欄でよい)"
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: どう操作したら起きるか、順番に書いてください
+    validations: {required: true}
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 期待した動作 / 実際の動作
+      placeholder: "例: 再生が始まると思ったが、エラーが表示されて始まらない"
+  - type: textarea
+    id: debuglog
+    attributes:
+      label: デバッグログ(あれば)
+      description: 設定でデバッグモードを ON にすると、アプリの Documents/debug_logs にログが残ります。再現したときのログがあれば、該当部分を貼ってください(資格情報や鍵そのものはログに含まれません)
+      render: markdown
