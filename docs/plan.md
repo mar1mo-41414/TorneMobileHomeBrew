@@ -2440,3 +2440,29 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - 本人から 2026-11-17 に「Linux 版が**資格情報の入力欄をクリックした瞬間にフリーズ**する」との不具合報告があった (他の部分は問題なしとのこと)。原因調査と修正は並行して実施中。
 - そのため、v1.3.0 リリースへの **Linux tar.gz (`TorneMobileHomeBrew-linux-1.3.0.tar.gz`、SHA-256 `136f0cd7be6718ea883466f85efabfcc96fc65dc6280a691c7b057cc16499bf1`) の追加は保留**し、修正済みビルドで差し替える。リリースノートには「Linux 版は後日追加予定です」と記載した。Linux 対応のコード自体は §49.2 のマージで main に入っている。
 - §47.6 で未確認とした「Linux アプリ内での AKE 認証の完走」も引き続き未確認 (本人の Linux 版への資格情報取り込みが上記フリーズで妨げられている状態)。
+
+## 50. dev prerelease の資産名固定と更新方式の変更 (2026-11-17)
+
+### 50.1 背景
+
+- §44 で設けた dev prerelease は、資産名に版数とビルド番号を含めていた (例: `TorneMobileHomeBrew-1.3.0+19-dev.apk`) ため、ビルドのたびにダウンロード URL が変わった。さらに更新方式が「リリースを削除して作り直し」だったため、作り直しの最中は URL が 404 になった。
+- 実際に、協力者へ渡した APK の URL が (ファイル名の変化により) 未ログインで 404 になる問題が発生した。恒常的に同じ URL で案内できるよう、本人の承認のもとで資産名の固定と更新方式の変更を行った。
+
+### 50.2 変更内容 (commit `445b038`)
+
+- `.github/workflows/dev-build.yml`:
+  - 資産名を固定した: APK は `TorneMobileHomeBrew-dev.apk`、IPA は `TorneMobileHomeBrew-dev.ipa`。
+  - prerelease の更新を「削除して作り直し」から「既存リリースへの資産の差し替え」に変えた: リリース (タグ `dev`) がなければ `gh release create` で作り、あれば今回の成果物と名前が一致しない資産 (旧名のもの) を `gh release delete-asset` で除去してから `gh release upload --clobber` で置き換え、説明文 (バージョン・元 commit) は `gh release edit` で更新する。
+  - 署名まわり (Secrets 契約、§44.2) は変更していない。
+- AGENTS.md §9 に、固定資産名と固定 URL で案内する旨を追記した。
+- 固定 URL:
+  - APK: `https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/download/dev/TorneMobileHomeBrew-dev.apk`
+  - IPA: `https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/download/dev/TorneMobileHomeBrew-dev.ipa`
+
+### 50.3 検証
+
+- 実行1回目 (run `44040631319`、push トリガー、commit `445b038`): 全ジョブ成功 (Android 5m32s / iOS 5m48s / prerelease 15s)。リリースの資産は固定名の2点 (`TorneMobileHomeBrew-dev.apk` 101,817,565 バイト / `TorneMobileHomeBrew-dev.ipa` 17,058,203 バイト) のみとなり、旧名の資産は残っていない。
+- 未認証での確認: 固定 URL は APK / IPA とも 200、APK の range GET は 206、旧名 (`+19-dev`) の URL は 404、リリースページは 200。
+- なお、この実行と並行していた旧方式の実行2件 (run `44040058335` / `44040231202`、§49 の公開 push が起動) は、いずれも prerelease ジョブで失敗していた。削除→作り直し方式は並行実行に弱く、これも今回の方式変更で解消される。
+- 実行2回目 (run `44041558381`、手動実行): 全ジョブ成功。リリースの `createdAt` は実行前と不変で、作り直しではなく差し替えで更新されたことを確認した。資産は固定名2点のまま、説明文の元 commit も更新され、固定 URL は引き続き未認証で 200。
+- 本節の記録の push でも同じ手順で更新される (以降の実行も同様)。
