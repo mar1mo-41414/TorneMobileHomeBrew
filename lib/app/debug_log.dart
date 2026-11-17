@@ -2,7 +2,7 @@
 ///
 /// When the master switch (settings screen) is on, the [DiagLog]
 /// built by `diagLogProvider` (app/providers.dart) writes
-/// category-tagged records to files in the app documents
+/// category-tagged records to files in the app store
 /// directory, so the user can pull them off the device and hand
 /// them over. When off (the default), nothing is recorded
 /// anywhere.
@@ -17,6 +17,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../core/core.dart';
+import 'bootstrap.dart';
 
 /// Debug mode settings: the master switch and the enabled
 /// category set. Persisted in the key-value store by
@@ -71,24 +72,24 @@ String diagCategoryLabel(DiagCategory category) => switch (category) {
 };
 
 /// Appends diagnostics lines to timestamped files under
-/// `<documents>/debug_logs/`, with rotation so an always-on debug
+/// `<store>/debug_logs/`, with rotation so an always-on debug
 /// mode cannot grow without bound: at most [maxFiles] files and
 /// [maxTotalBytes] in total; a single file rolls at [maxFileBytes].
 class FileDebugLogSink {
   FileDebugLogSink(
-    this._documentsDirectory, {
+    this._storeDirectory, {
     this.maxFiles = 5,
     this.maxTotalBytes = 2 * 1024 * 1024,
     this.maxFileBytes = 512 * 1024,
   });
 
-  final Directory _documentsDirectory;
+  final Directory _storeDirectory;
   final int maxFiles;
   final int maxTotalBytes;
   final int maxFileBytes;
 
   Directory get _logDirectory =>
-      Directory('${_documentsDirectory.path}/debug_logs');
+      Directory('${_storeDirectory.path}/$debugLogsDirectoryName');
 
   /// The directory the log files live in (shown in settings).
   String get logDirectoryPath => _logDirectory.path;

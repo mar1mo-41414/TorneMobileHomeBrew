@@ -120,10 +120,11 @@ final showSubchannelsProvider = NotifierProvider<ShowSubchannelsNotifier, bool>(
   ShowSubchannelsNotifier.new,
 );
 
-/// The app documents directory (debug log destination, plan 28).
+/// The app store directory (file stores and the debug log
+/// destination, plan 28; location rule in plan 47).
 /// The bootstrap overrides this with the real directory; null in
 /// tests / headless contexts (debug logging then stays off).
-final documentsDirectoryProvider = Provider<Directory?>((ref) => null);
+final storeDirectoryProvider = Provider<Directory?>((ref) => null);
 
 /// Debug mode settings (plan 28): the master switch and the
 /// enabled category set, persisted in the key-value store.
@@ -171,9 +172,9 @@ final debugSettingsProvider =
 
 /// The app-wide diagnostics logger (plan 28). Reflects the current
 /// debug settings on every record: master off, the category off,
-/// or no documents directory records nothing.
+/// or no store directory records nothing.
 final diagLogProvider = Provider<DiagLog>((ref) {
-  final dir = ref.watch(documentsDirectoryProvider);
+  final dir = ref.watch(storeDirectoryProvider);
   if (dir == null) return const DiagLog.none();
   final sink = FileDebugLogSink(dir);
   return DiagLog((category, message) => sink.write(category, message), (
@@ -185,13 +186,13 @@ final diagLogProvider = Provider<DiagLog>((ref) {
 });
 
 /// Shares the recorded debug logs through the OS share sheet
-/// (plan 46). Null when there is no documents directory (tests /
+/// (plan 46). Null when there is no store directory (tests /
 /// headless contexts) — the settings screen then hides the share
 /// action, like the log destination display.
 final debugLogSharerProvider = Provider<DebugLogSharer?>((ref) {
-  final dir = ref.watch(documentsDirectoryProvider);
+  final dir = ref.watch(storeDirectoryProvider);
   if (dir == null) return null;
-  return DebugLogSharer(documentsDirectory: dir);
+  return DebugLogSharer(storeDirectory: dir);
 });
 
 final playbackEngineProvider = Provider<PlaybackEngine>(

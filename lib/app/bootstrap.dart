@@ -1,8 +1,9 @@
 /// App bootstrap (phase 2): builds the provider container whose
 /// local stores are backed by JSON files, so registrations and
-/// caches survive app restarts. [main] resolves the application
-/// documents directory via path_provider and hands it here; tests
-/// pass a temporary directory instead.
+/// caches survive app restarts. [main] resolves the store
+/// directory (app/store_directory.dart: documents on mobile,
+/// application support on desktop) and hands it here; tests pass
+/// a temporary directory instead.
 library;
 
 import 'dart:io';
@@ -12,28 +13,29 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/core.dart';
 import 'providers.dart';
 
-/// File names used inside the documents directory.
+/// File and directory names used inside the store directory.
 const registrationFileName = 'registrations.json';
 const keyValueFileName = 'key_values.json';
+const debugLogsDirectoryName = 'debug_logs';
 
 /// A [ProviderContainer] with [registrationStoreProvider] and
 /// [keyValueStoreProvider] — and therefore the channel cache —
-/// wired to JSON files inside [documentsDirectory], instead of the
+/// wired to JSON files inside [storeDirectory], instead of the
 /// in-memory defaults.
-ProviderContainer fileStoreContainer(Directory documentsDirectory) {
+ProviderContainer fileStoreContainer(Directory storeDirectory) {
   return ProviderContainer(
     overrides: [
       registrationStoreProvider.overrideWithValue(
         JsonFileRegistrationStore(
-          File('${documentsDirectory.path}/$registrationFileName'),
+          File('${storeDirectory.path}/$registrationFileName'),
         ),
       ),
       keyValueStoreProvider.overrideWithValue(
         JsonFileKeyValueStore(
-          File('${documentsDirectory.path}/$keyValueFileName'),
+          File('${storeDirectory.path}/$keyValueFileName'),
         ),
       ),
-      documentsDirectoryProvider.overrideWithValue(documentsDirectory),
+      storeDirectoryProvider.overrideWithValue(storeDirectory),
     ],
   );
 }

@@ -71,12 +71,21 @@ class CredentialSummary {
 /// first-unlock, this-device-only (Keychain), which also excludes
 /// them from iCloud Keychain sync; on Android they are encrypted
 /// with a Keystore-held key.
+///
+/// On macOS the items go to the legacy login keychain
+/// (usesDataProtectionKeychain: false, plan 47). The plugin's
+/// default — the data protection keychain — requires a
+/// keychain-access-groups entitlement, and an ad-hoc signed app
+/// (how the desktop build is distributed) cannot carry one:
+/// launchd refuses to spawn it at all. The legacy keychain is
+/// still the OS vault, so the "OS vault only" rule holds.
 class SecureCredentialStore implements CredentialStore {
   SecureCredentialStore({this.authorityKeys = const []})
     : _storage = const FlutterSecureStorage(
         iOptions: IOSOptions(
           accessibility: KeychainAccessibility.first_unlock_this_device,
         ),
+        mOptions: MacOsOptions(usesDataProtectionKeychain: false),
       );
 
   final FlutterSecureStorage _storage;
@@ -138,8 +147,25 @@ class SecureCredentialStore implements CredentialStore {
 
   @override
   Future<void> delete() async {
-    await _storage.delete(key: _certKey);
-    await _storage.delete(key: _privKey);
+    // Delete each key only when it is actually stored. On macOS,
+    // flutter_secure_storage_darwin's delete probes the
+    // synchronizable keychain variant first, and for an ad-hoc
+    // signed app a SecItemDelete carrying
+    // kSecAttrSynchronizable=true returns
+    // errSecMissingEntitlement (-34018) -- not errSecItemNotFound --
+    // when there is nothing to delete; the plugin then reports the
+    // whole delete as failed (measured on the real machine,
+    // plan 47). Reads are unaffected, and when an item does exist
+    // the plugin's second (non-synchronizable) pass deletes it and
+    // the call succeeds, so guarding on presence avoids the failure
+    // without changing the semantics. This is also what makes
+    // save() work on a first import: it deletes before writing.
+    if (await _storage.read(key: _certKey) != null) {
+      await _storage.delete(key: _certKey);
+    }
+    if (await _storage.read(key: _privKey) != null) {
+      await _storage.delete(key: _privKey);
+    }
   }
 
   @override

@@ -16,7 +16,7 @@
 ///
 /// Only log files are ever shared. The collection below looks at
 /// `debug_logs/*.log` and nothing else — registrations and other
-/// documents-directory files never enter the list. The log
+/// store-directory files never enter the list. The log
 /// contents themselves are guaranteed free of credential material
 /// and session keys by the diagnostics design
 /// (core/diagnostics.dart) and the call-site audit in
@@ -33,13 +33,13 @@ import 'package:path_provider/path_provider.dart';
 /// exactly this subdirectory of the cache dir — nothing else.
 const String logShareStagingDirName = 'tmhb_log_share';
 
-/// Lists the debug log files under `<documents>/debug_logs/`,
+/// Lists the debug log files under `<store>/debug_logs/`,
 /// oldest first (file names are timestamps, so name order is
 /// chronological). Only `.log` files count; anything else that
 /// happens to sit in the directory is ignored. A missing
 /// directory yields an empty list.
-Future<List<File>> collectDebugLogFiles(Directory documentsDirectory) async {
-  final dir = Directory('${documentsDirectory.path}/debug_logs');
+Future<List<File>> collectDebugLogFiles(Directory storeDirectory) async {
+  final dir = Directory('${storeDirectory.path}/debug_logs');
   if (!await dir.exists()) return const [];
   final files = <File>[];
   await for (final entity in dir.list()) {
@@ -55,7 +55,7 @@ Future<List<File>> collectDebugLogFiles(Directory documentsDirectory) async {
 /// Sharing works on copies, not the originals: the log rotation
 /// may delete an original at any moment, and on Android the
 /// FileProvider can only serve files under configured roots
-/// (the cache dir is one; the documents directory is not).
+/// (the cache dir is one; the store directory is not).
 /// Stale staged copies from a previous share are cleared first.
 /// A source that vanishes mid-copy (rotation) is skipped.
 Future<List<File>> stageDebugLogFiles(
@@ -97,7 +97,7 @@ enum DebugLogShareOutcome {
 /// platform channel `com.markun.tmhb/share_files`.
 class DebugLogSharer {
   DebugLogSharer({
-    required this._documentsDirectory,
+    required this._storeDirectory,
     Future<Directory> Function()? stagingDirectory,
     MethodChannel? channel,
     bool? supported,
@@ -107,7 +107,7 @@ class DebugLogSharer {
 
   static const String _channelName = 'com.markun.tmhb/share_files';
 
-  final Directory _documentsDirectory;
+  final Directory _storeDirectory;
   final Future<Directory> Function() _stagingDirectory;
   final MethodChannel _channel;
   final bool _supported;
@@ -117,7 +117,7 @@ class DebugLogSharer {
   /// share sheet as a popover and crashes without an anchor, so
   /// the UI passes its tile's rect; Android ignores it.
   Future<DebugLogShareOutcome> share({Rect? origin}) async {
-    final files = await collectDebugLogFiles(_documentsDirectory);
+    final files = await collectDebugLogFiles(_storeDirectory);
     if (files.isEmpty) return DebugLogShareOutcome.noLogs;
     if (!_supported) return DebugLogShareOutcome.unsupported;
     final staged = await stageDebugLogFiles(files, await _stagingDirectory());

@@ -1992,6 +1992,78 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - コミット: 実装 `19c4594`。
 - 残件 (本人の実機確認待ち): ビルド 15 で再生し、スリープが再発したらログを回収する。verify の記録列とライフサイクル遷移で「検証タイマーが回っていたか」「いつサスペンドされたか」「保持中に idle timer が戻されていたか」が切り分けられる。
 
+## 37. Phase 6: PC クライアント (macOS / Linux) — 設計と実装 (2026-11-17)
+
+### 37.1 本人の決定と公開方針
+
+- PC で見るクライアントが欲しい。UI は iPad の大画面レイアウトのままでよい。まずは Mac と Linux から。
+- **PC 版の情報は GitHub に一切上げない** (本人の追加指示。リリースだけでなく、コード・記録・言及も含む)。当面は開発側のみに留める。そのため実装は専用ブランチ `desktop-macos-linux` に分離し、このブランチは GitHub へ push しない。モバイル側の main は従来どおり両方へ push する。
+- 採番の注意: plan.md の §37 以降はこのブランチ専用の採番である。main 側の plan.md は §36 で終わっており、将来 main 側が §37 以降を使うとマージ時に番号が衝突しうる。
+
+### 37.2 方式
+
+- Flutter の macOS / Linux デスクトップターゲットを有効化した (`flutter create --platforms=macos,linux --org com.markun --project-name tmhb`)。識別子は両 OS とも `com.markun.tmhb`。
+- `lib/` は無変更でそのまま使う (通信・DTCP AKE・復号・プロキシ・番組表・モデル)。UI は既存の大画面レイアウト (レール ≥720px、2 ペイン ≥1000px) をそのまま使う。
+- 初期ウィンドウは両 OS とも 1280x800 にした (macOS は `MainFlutterWindow.swift`、Linux は `linux/runner/my_application.cc`)。起動直後から 2 ペイン表示になる。
+- 依存の追加は不要だった: `media_kit_libs_video` (umbrella) が macos / linux の libmpv バンドルを含み、`flutter_secure_storage` は darwin / linux 実装を含む。pubspec.lock に両 OS のプラグインが入った。
+- macOS のアプリアイコンは flutter_launcher_icons の macos 生成で既存アイコンから作った。
+
+### 37.3 プラットフォーム足回りの判断
+
+- **資格情報の保管**: flutter_secure_storage のデスクトップ実装 (macOS は Keychain、Linux は libsecret) を使い、「OS 保管庫のみ」の方針をモバイルと同一に維持する。macOS の entitlements (Debug / Release 両方) に `network.client` (本体への通信)、`network.server` (ループバックプロキシの待ち受け)、`keychain-access-groups` (`com.markun.tmhb`) を設定した。Info.plist には iOS と同じ文面の `NSLocalNetworkUsageDescription` を追加した。
+  - ただし今回の .app は署名なしビルド (38.2) のため entitlements は埋め込まれておらず、実行時はサンドボックス外で動く。上記の entitlements は署名付きビルドのための正設定として置いてある。
+- **AKE ソケット**: デスクトップでは `nativeAkeConnectionFactory` が自動的に dart:io 経路に落ちる (デバッグログに `ake transport: dart socket (not a mobile platform)` と出る)。TTL 3 は付かない。pydtcpip が素のソケットで AKE を完走する前例があるため、まずこの形で成立を狙う。ネイティブ TTL が必要になったら次段で検討する。デスクトップでの AKE 成立は未確認 (38.6)。
+- **wakelock チャネル**: デスクトップでは `NativeWakelockGuard` が対象外プラットフォームとして要求状態を返すだけ (実質 no-op)。PC のスリープ抑止は当面行わない。既知の差分として記録する。
+- **発見**: SSDP / サブネット走査は dart:io のまま動く前提。サンドボックス下でのマルチキャスト可否は、今回の macOS ビルドがサンドボックス外のため未検証。
+- **Linux のビルド要件**: media_kit_video の Linux 実装が pkg-config の `mpv` と `epoxy` を要求する。epoxy (libepoxy-dev) は marnux に導入済みだったが libmpv-dev が無かった。sudo は対話パスワード必須でエージェントからは実行できないため、`apt-get download libmpv-dev` で .deb を取得し、ローカル展開した mpv.pc (prefix を展開先に付け替え、動的リンクでは不要な Requires.private を除去) を `PKG_CONFIG_PATH` で読ませてビルドした。正規の直し方はビルド機での `sudo apt install libmpv-dev` である。実行時はシステムの `libmpv.so.2` (libmpv2) と libepoxy が必要 (media_kit の Linux 要件どおり)。marnux には両方入っている。
+
+### 37.4 テスト
+
+- `lib/` 無変更のため、ブランチ上でもテスト **202 件全合格**、`flutter analyze` 検出なし (ターゲット有効化直後に確認)。
+
+## 38. Phase 6: ビルドと macOS 起動失敗の切り分け (2026-11-17)
+
+### 38.1 Linux ビルド
+
+- marnux 上で `flutter build linux --release` 成功 (37.3 の mpv.pc 対応込み)。バンドル 28 MB。
+- 起動確認: Xvfb 上で起動し、プロセスが生存し続け、Flutter エンジンと `media_kit_libs_linux` の登録 (libmpv のロード) までログで確認した。リンク不足 (`not found`) はなし。
+- 配布物: `TorneMobileHomeBrew-linux-1.2.1.tar.gz` (バンドル一式 + `torne-mobile-hb.desktop`)。marnux `~/ダウンロード/` と `tmhb.work/2026-11-17-desktop/` に配置。SHA-256 `58a494af8985e1af7f5bf18eb91ab52e059c82f1cfbb98340733f5df63baf39b`。
+- 版数は **1.2.1 (ビルド 15) のまま** (デスクトップは main のコードにターゲットを足したもの)。
+
+### 38.2 macOS ビルドの作法
+
+- Mac 上でビルドする。素の `flutter build macos` は、entitlements が開発者証明書での署名を要求して失敗する (開発用署名の無い環境のため)。そのため `flutter build macos --release --config-only` で準備し、xcodebuild を `CODE_SIGNING_ALLOWED=NO` で回す「署名なし .app」とした (署名なしでよい、という本人の指定どおり)。
+- 非対話 ssh では Homebrew のパスが通らず CocoaPods が見つからないため、ビルドスクリプトで `/opt/homebrew/bin` を PATH に足す (既知の癖)。
+- Mac 側 clone の Gitea への直接 pull は、Mac から Gitea の ssh (22 番) に到達できず失敗する。そのため marnux から `git bundle` でブランチを渡して checkout する方式を取った。
+- ただし署名なしのままだと起動しない (38.3)。**ビルド後に `codesign --force --deep --sign -` でアドホック署名を付けるのが必須手順**である。
+
+### 38.3 起動失敗 (本人の実機報告) と根本原因
+
+- 本人が 2026-11-17 14:11 頃、Mac 実機で `tmhb.app` を開いたところ、「問題が起きたため tmhb を開けません」というダイアログが出て起動しなかった。
+- クラッシュレポート `~/Library/Logs/DiagnosticReports/tmhb-2026-11-17-141116.ips`: `fatalDyldError`、終了名前空間 DYLD、理由 "Library missing"、**`Library not loaded: @rpath/Ass.framework/Versions/A/Ass` — 試した先で "missing code signature"**。
+- **根本原因**: 署名なし (`CODE_SIGNING_ALLOWED=NO`) ビルドでは、`media_kit_libs_macos_video` が同梱するフレームワーク群 (Ass.framework = libass 他) が無署名のまま `Contents/Frameworks` にコピーされる。Apple Silicon の dyld は無署名コードのロードを拒否するため、アプリは起動直後に落ち、macOS があのダイアログを出す。本体の実行ファイルはリンカのアドホック署名で通るが、後からコピーされるフレームワークには署名が付かない、という落差である。deployment target やアーキテクチャの問題ではない (バイナリは universal で、版数も 1.2.1 / 15 がレポートに記録されている)。
+- **修正**: ビルド後に .app 全体へアドホック署名を付ける (`codesign --force --deep --sign -`)。`codesign --verify --deep --strict` 通過を確認した。
+- 教訓: ビルド直後の起動確認で一度プロセス生存を確認した時点があったが、本人が開いたのは署名付け前の成果物だった。**完了条件は「配布する成果物そのもの (zip を展開したコピー) を起動して確認する」まで**とし、38.5 でその形で実施した。
+
+### 38.4 表示名の修正
+
+- 本人の指摘: アプリの表示名が「tmhb」になっていた。モバイル側の表記方針に合わせ、macOS の `PRODUCT_NAME` を `torne mobile HB` に変更した (`macos/Runner/Configs/AppInfo.xcconfig`)。バンドル名・CFBundleName・ウィンドウタイトルが torne mobile HB になる。識別子 `com.markun.tmhb` は不変。
+- Linux はウィンドウタイトルが既に torne mobile HB (37.2)。配布 tar に `torne-mobile-hb.desktop` (Name=torne mobile HB) を追加した。実行バイナリ名 `tmhb` はファイル名として据え置く。
+
+### 38.5 成果物の起動確認 (完了条件として実施)
+
+- ビルドツリーの `torne mobile HB.app` (アドホック署名後): `open` して 10 秒間プロセス生存、新規クラッシュレポートなし。
+- **配布 zip を新規フォルダに展開したコピー**でも同じ確認を実施: 署名検証通過、`open` して 10 秒間プロセス生存、新規クラッシュレポートなし。System Events 経由でプロセスのウィンドウ名 **`torne mobile HB`** を取得できた (画面が出ていることの直接の証拠)。スクリーンショットは ssh セッションに画面収録の権限がなく取得できなかった。
+- 配布物: `TorneMobileHomeBrew-macos-1.2.1.zip` (`torne mobile HB.app` 入り、38,390,327 バイト)。marnux `~/ダウンロード/` と `tmhb.work/2026-11-17-desktop/` に配置。SHA-256 `8f6eeca3b91ff16938904fd59aea75584709f57814eb67a473997d3783318626`。
+
+### 38.6 未確認・残件
+
+- macOS / Linux とも、nasne の登録・録画一覧・再生開始までの実利用は本人の確認待ち (デスクトップでの AKE (dart:io 経路) の成立を含む)。
+- macOS の資格情報の Keychain 保存は、今回のビルドがサンドボックス外・アドホック署名のため、署名付きビルドでの挙動とは別に実利用での確認が要る。再ビルドのたびに署名が変わるため、Keychain のアクセス許可ダイアログが再出現しうる (アドホック署名の一般的性質)。
+- Linux の資格情報の libsecret 保存も実利用では未確認 (実行環境のシークレットサービスに依存する)。
+- Windows 版は今回の範囲外 (本人の指示で Mac と Linux が先)。
+- コミット (いずれも開発側のみ): `d198cc6` (ターゲット有効化)、`64a8d41` (表示名)。
+
 ## 39. ライブ視聴の実装 (2026-11-17、ビルド +16)
 
 ### 39.1 発端と調査
@@ -2241,3 +2313,96 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 ### 46.4 未確認事項
 
 - 実機での共有シートの動作確認 (iPad のポップオーバー表示、Android の chooser と受け側アプリでの読み取り) は本人の実機確認待ち。
+## 47. デスクトップ版の修正: 資格情報保存 -34018 と保存先の Application Support 化 (2026-11-17)
+> 付け直しの注記 (2026-11-17 の main マージ時): 本節は desktop-macos-linux ブランチ側で §39 として書かれたが、main 側の §39 (ライブ視聴) 〜 §43 と番号が衝突したため、§44 へ付け直した (小節 39.1〜39.6 は 44.1〜44.6)。コード内コメントの plan 参照も 同時に付け直してある。ブランチ側の §37・§38 は main 側に同番号が 無かったため、そのままの番号で残した。
+> 付け直しの注記 (main 統合時、2026-11-17): main 側の §44 (デバッグビルドの GitHub Actions 配布) と番号が衝突したため、本節を §47 へ再付け直しした (小節 44.1〜44.6 は 47.1〜47.6)。コード内コメントの plan 参照も同時に付け直してある。本節の後に続く main マージの記録 (ブランチ側で §45 として書かれた) も、main 側の §45 (wakelock の決着) と衝突したため §48 へ付け直した。
+
+§38 のデスクトップビルドを本人が実利用したところで見つかった2件の修正。いずれも本ブランチ (開発側のみ) の作業で、版数は 1.2.1 のまま据え置き。
+
+### 47.1 資格情報の保存が -34018 で失敗する
+
+- 症状: Mac のデスクトップ配置 .app で、資格情報のインポート (ファイルから読み込む → 検証して保存) が `PlatformException(Unexpected security result code, Code: -34018, Message: A required entitlement is not present.)` で失敗する (デバッグログ tmhb-debug-20261117-143319-965.log)。-34018 は errSecMissingEntitlement。
+- 切り分け (実測): 配置済み .app を `codesign -d --entitlements -` で確認すると entitlements は皆無だった (アドホック署名のみ、TeamIdentifier なし)。プロジェクトの `macos/Runner/Release.entitlements` には keychain-access-groups 等が定義されているが、§38 のビルド・署名経路では埋め込まれていなかった。
+- プラグイン側の仕組み: flutter_secure_storage 10.3.4 (darwin 実装 0.3.2) は macOS で `usesDataProtectionKeychain` がデフォルト true で、データ保護キーチェーンの利用には keychain-access-groups entitlement が必須 (無いと -34018)。アプリ側の `SecureCredentialStore` は mOptions を指定していなかった。
+- **entitlements を付ける案は実測で棄却**:
+  - Release.entitlements はそのまま使えない。`$(AppIdentifierPrefix)` はアドホック署名では展開されず (チームが無い)、app-sandbox を有効化すると保存先がコンテナへ移るなど頼まれていない挙動変更を伴う。
+  - グループ名をリテラルにした専用 entitlements を作り、署名して検証したところ、`codesign --verify --deep --strict` は通るのに launchd が spawn を拒否して起動できなかった (`RBSRequestErrorDomain Code=5 "Launch failed."` / `NSPOSIXErrorDomain Code=163`)。
+  - 二分探索 (macOS 27 実機): entitlements なし・空・network.client のみでは起動する。keychain-access-groups を含むと、`com.apple.application-identifier` を併記しても起動しない。署名方式 (--deep / inside-out) は無関係だった。アドホック署名にはチームが無く、アクセスグループの所有を OS が検証できないためと解釈する。専用 entitlements ファイルはコミットせず破棄した。
+- 採用した修正 (`fba5417`): `SecureCredentialStore` に `MacOsOptions(usesDataProtectionKeychain: false)` を指定し、macOS では従来型のログインキーチェーンを使う。保存先が OS の金庫 (Keychain) である点は変わらず、「資格情報は OS の金庫にのみ保存」の設計原則は維持される。entitlement が不要になるため、アドホック署名のまま起動と保存が両立する。保存の実成否は本人が再試行して確認する (こちら側の完了条件は原因確定・修正ビルドの配置・起動確認まで)。§38 で予告したとおり、アドホック署名は再ビルドのたびに変わるため、更新時にキーチェーンのアクセス確認ダイアログが出ることがある。
+
+### 47.2 保存先を Documents から Application Support へ
+
+- 本人指摘: デスクトップ版が実 `~/Documents` に registrations.json / key_values.json / debug_logs/ を置くのが嫌だ、とのこと。
+- 仕様: デスクトップ (macOS / Linux / Windows) の保存先は `getApplicationSupportDirectory()` に変更する。モバイル (iOS / Android) は従来どおり Documents のままで、既存利用者のデータを孤児化させない。デスクトップで旧 Documents 側にファイルがある場合は、新しい保存先へ一度だけ移行する。
+- 実装 (`1d7070f`): `lib/app/store_directory.dart` を新設。`resolveStoreDirectory()` がプラットフォームで保存先を振り分け、`migrateLegacyStoreFiles()` が移行を担う。移行は「新側に同名が無いファイルだけ」を移動し、上書きは決してしない (debug_logs はファイル単位でマージ、空になった旧ディレクトリは削除、別デバイス間はコピー+削除にフォールバック)。`main.dart` は解決済みディレクトリを使い、provider は `documentsDirectoryProvider` から `storeDirectoryProvider` へ改名した。移行テスト5件を追加し、テスト 207 件全合格・analyze クリーン。
+- 実機確認 (Mac): 本人の実状態 (Documents 側のファイルは本人が既に削除済みで実データなし) と等価な空の旧ファイル群 (registrations.json / key_values.json / debug_logs 内のマーカーファイル) を置いて新ビルドを起動したところ、3点とも `~/Library/Application Support/com.markun.tmhb/` へ移動し、Documents は空に戻った。path_provider の macOS の support ディレクトリは、このアプリではバンドル ID のフォルダになる。
+- Linux 確認: 再ビルド版を Xvfb で起動し、`~/.local/share/com.markun.tmhb` が作られることと Documents への生成がないことを確認した (marnux には ~/Documents 自体が存在しない)。
+
+### 47.3 ビルド・署名・配布手順 (再発防止)
+
+- macOS は `tool/build_macos_desktop.sh` に手順化した。骨子:
+  1. `flutter build macos --config-only --release` でプロジェクト生成だけ行い、`xcodebuild` を `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` で直接実行する。通常の `flutter build macos --release` は Release.entitlements の署名検証 (開発証明書が必要) で失敗する。環境変数で `CODE_SIGNING_ALLOWED=NO` を渡しても flutter ツールは転送しない。
+  2. 署名は `codesign --force --deep --sign -` (アドホック、**entitlements は付けない**。47.1 のとおり付けると起動できなくなる)。スクリプト内で keychain-access-groups の混入を検査し、あれば落とす。
+  3. `ditto -c -k --keepParent` で zip 化し、`TorneMobileHomeBrew-macos-<版数>.zip` とする。
+- Linux は sudo なしで libmpv を用意する手順が要る: `apt-get download libmpv-dev` で取得してローカル展開し、mpv.pc の prefix を展開先 (sysroot) へ書き換え、`Requires.private` 行を削除し、システムの libmpv.so.2 を sysroot へコピーして `PKG_CONFIG_PATH` を通し、`flutter build linux --release` する。Requires.private を残すと `pkg-config --exists` が private 依存の .pc 欠落で失敗し、CMake の `pkg_check_modules` が無言で不成立になって `PkgConfig::mpv` が見つからない生成エラーになる (実測で切り分け済み)。成果物は bundle の中身 + torne-mobile-hb.desktop を `TorneMobileHomeBrew-linux/` にまとめて tar.gz にする。
+- 成果物 (いずれも ~/ダウンロード と作業領域 `tmhb.work/2026-11-17-desktop/` に配置):
+  - macOS: `TorneMobileHomeBrew-macos-1.2.1.zip`、SHA-256 `10ece337bac069584535fbff5e95ddee9609d1e93eefb87951f9ee1cb6aa2559`。.app は本人のデスクトップへ差し替え済みで、起動 (プロセス生存)・新規クラッシュレポートなし・Documents に新規ファイルなしを確認し、起動したままにしてある (資格情報保存の再試行待ち)。
+  - Linux: `TorneMobileHomeBrew-linux-1.2.1.tar.gz`、SHA-256 `d6023f8c9a8afcd86077e2aa900b9604b1b6dc6164c219cd082ab511780bb79a`。Xvfb 起動と media_kit 登録を確認済み。
+- コミット (いずれも開発側のみ): `1d7070f` (保存先)、`fba5417` (Keychain)、本節とビルドスクリプトのコミット。
+
+### 47.4 補正: -34018 の真因は synchronizable 側の delete プローブだった (2026-11-17)
+
+§47.1 の修正 (`fba5417`) を入れたビルドで本人が再試行したところ、同じ -34018 が再現した。再調査を実測で行い、真因を確定した。§47.1 の「アドホック署名のまま起動と保存が両立する」という結論は誤りだった (当時の検証は起動確認までで、資格情報の操作自体は一度も実行していなかった)。
+
+- 実行実体の照合: 実行中プロセスはデスクトップ配置の .app (15:20:40 起動) で、その App.framework は配布 zip (SHA-256 `10ece337…`) とバイト一致。さらに A/B ビルドで確認した: 修正前ソースのスナップショットは `597978b1…`、配置済みは `51ed5622…` で修正後ソースのビルドと一致する。**「古いビルドが残っていた」説は棄却**。`fba5417` は確かに出荷ビルドに入っていたが、それでも直らなかった。
+- コード監査: `FlutterSecureStorage` の生成は `SecureCredentialStore` の1箇所のみで mOptions を指定し、全 read/write/delete はコンストラクタの options を継承する (プラグイン 10.3.4 / darwin 0.3.2 / platform_interface 2.1.1 のソースで受け渡しまで確認)。デフォルト options のままの呼び出しは無い。
+- プローブ実測 (アドホック署名の使い捨てアプリを GUI セッションで実行し、プラグインと同一のクエリを再現):
+  - 従来型キーチェーンへの Add / Read (DP 指定なし、`kSecAttrSynchronizable=false`) は成功する。DP=true は対照どおり -34018。
+  - **`kSecAttrSynchronizable=true` を付けた SecItemDelete / SecItemAdd は、対象の有無によらず -34018** になる (entitlement の無いアドホック署名では、synchronizable 側の書き込み系操作そのものが entitlement エラー)。Read は -25300 (通常の未発見)。
+- 真因: プラグインの `performDelete` は synchronizable=true のパスを先に試す。アイテムが存在すれば次の false パスが実物を消して全体は成功するが、**何も保存されていないと true パスの -34018 が「未発見」と誤判定されずにそのまま delete 全体の失敗として伝播する**。アプリの `save()` は書き込み前に `delete()` を呼ぶため、初回インポートは必ずここで死ぬ。DP フラグとは無関係な経路であり、`fba5417` の前後で症状が同一だったことと一致する。
+- 採用した修正: `SecureCredentialStore.delete()` は、各キーを「保存されている場合にだけ」プラグイン delete で消す (存在確認の read は影響を受けない)。空のときは no-op になり、`save()` の事前 delete もそのまま成立する。テスト 207 件全合格。再ビルドした .app をデスクトップへ差し替え済み。最終確認は本人のインポート再試行。
+
+### 47.5 補正: デスクトップ版の AKE には TTL 3 が必須だった (2026-11-17)
+
+§37 の「デスクトップの AKE は dart:io 経路に自動で落ち、pydtcpip の前例がある」という前提が誤っていた。Mac 版で録画再生が開始できない件で確定した。
+
+- 症状: Mac 版で録画タイトルの再生を開始すると、再生画面にすら進まず「再生を開始できませんでした」。同機では SSDP 発見・登録・資格情報の保存は成功済みだった。
+- ログ (Mac の `debug_logs/tmhb-debug-20261117-153223-091.log`、15:38:51 の試行): `start: res quality=dr` → HEAD は 200 (113 ms、endpoint は 192.168.11.129:57343) → transport は `dart socket (not a mobile platform)` → **AKE の TCP 接続そのものが `SocketException: Connection refused (errno 61)` で失敗**。AKE メッセージは1つも流れておらず、ソース側の AKE 応答コード等も存在しない (接続段階の拒否)。
+- 同時セッション上限説は棄却: 本人が iPad・iPhone の再生を両方止めた状態で再試行しても失敗した。また marnux から素の TCP 接続を試すと、セッションが何も無い状態でも refused だった。なお同時ストリーム上限 2 の記録 (SonyNasne-DTCP docs/47) は Buffalo LS210D (DiXiM) のもので、**nasne 自体の同時上限は未確認**のままである。
+- 切り分け (実測): marnux から 192.168.11.129:57343 へ IP TTL を変えて接続試行したところ、**TTL 64 と 4 は Connection refused、TTL 3・2・1 は接続成功**。nasne の AKE リスナは TTL が 4 以上の SYN を RST で拒否する (DTCP-IP の近接性要件 TTL≦3 を、AKE 以前・TCP 接続の段階で検査している)。閾値はちょうど 3。
+- pydtcpip が「前例」にならなかった理由: pydtcpip は `pydtcpip/dtcp/ake.py` で `AKE_IP_TTL = 3` を定数に持ち、接続前に setsockopt で TTL 3 を設定している (コメントには「レコーダによっては TTL が高いと CHALLENGE の直後に切断する」とあるが、nasne は接続自体を拒否する点が異なる)。2026-11-17 朝の救出パイプラインが marnux / Windows / Mac から AKE を完走できたのはこの設定のためであり、「素の dart:io で通る」根拠にはならなかった。dart:io には TTL を設定する API が無い。
+- 採用した修正 (`a543ce6`、`bca3b56`): macOS もモバイルと同じネイティブソケット経路を使う。`macos/Runner/AkeSocket.swift` (iOS 版と同一実装、import のみ FlutterMacOS に変更) を追加し、`MainFlutterWindow` でチャンネル (`com.markun.tmhb/ake_socket`) を登録、Dart 側の振り分け (`lib/app/ake_socket.dart`) に macOS を追加した。FlutterMacOS では registrar が非 Optional で `messenger` がプロパティである点が iOS と異なり、その差分は `bca3b56` で吸収した。チャンネルが登録されていない環境では従来どおり dart:io に落ちてログに残る (その場合は nasne 相手では上記の理由で接続できない)。テスト 207 件全合格・analyze クリーン。
+- ビルドと配置: 47.3 の手順 (tool/build_macos_desktop.sh) で再ビルドし、実行ファイルに AkeSocketHub が含まれることと署名検証を確認して、本人のデスクトップの .app を差し替えて起動済み (新規クラッシュレポートなし)。配布 zip も更新: `TorneMobileHomeBrew-macos-1.2.1.zip`、SHA-256 `8ea435dc5b85a9b5959172bfa342761306ae3f2c46a388bd4397c1cdd978639d` (marnux の ~/ダウンロード と作業領域に配置)。再生の実成否は本人の再試行で確認する (ログに `ake transport: native socket, ip ttl 3` が出れば経路は確定する)。
+- Linux 版は未修正: 同じ理由で AKE の接続が refused になるはずであり、直すには Linux 側のネイティブチャンネル実装が別途必要。本節で直したのは macOS のみ。
+
+### 47.6 Linux 版の AKE もネイティブソケット (TTL 3) へ (2026-11-17)
+
+§47.5 で「Linux 版は未修正」とした分の実施。macOS と同じ理由 (dart:io には TTL を設定する API が無く、nasne の AKE リスナは TTL≧4 の接続を RST で拒否する) で、Linux 版も AKE の TCP 接続自体が成立しなかった。
+
+- 実装 (`d185d1b`):
+  - `linux/runner/ake_socket.cc` / `ake_socket.h` を新設し、iOS/macOS の `AkeSocket.swift` と同じ契約を Flutter Linux の C API で実装した。チャンネル名 (`com.markun.tmhb/ake_socket` / `com.markun.tmhb/ake_socket_events`)、メソッド (connect / send / close)、イベント形式 ({id, kind, data/message})、エラーコード (`connect_failed` / `bad_args`) とメッセージの形まで Swift 版に一致させてある。接続は IP_TTL=3 と TCP_NODELAY を setsockopt してから非ブロッキング connect + poll (10 秒) で行い、受信は専用スレッドの recv ループから GLib メインループ経由でイベントを送る。
+  - 登録は `my_application.cc` の activate で `fl_register_plugins` の直後。`linux/runner/CMakeLists.txt` にソースを追加。
+  - Dart 側の振り分け (`lib/app/ake_socket.dart`) に Linux を追加。これで「ネイティブが無いプラットフォーム」だけが dart:io に落ちる。
+  - テスト側の追随: フォールバック検証テストは、テストホストが Linux (= ネイティブ対象プラットフォーム) になったため、そのままでは実チャンネルを触りに行く。チャンネル不在 (MissingPluginException) をモックして「ネイティブが使えない場合は dart ソケットへ落ちる」検証に直した。
+  - §47.3 の Linux ビルド手順を `tool/build_linux_desktop.sh` にスクリプト化し、配布 tar にだけ存在した `torne-mobile-hb.desktop` を `linux/` 配下のリポ管理に移した。
+- テスト 207 件全合格、`flutter analyze` 検出なし。
+- 検証 (実測):
+  - 前提の再確認: marnux から 192.168.11.129:57343 へ、TTL 64 は Connection refused、TTL 3 は接続成功 (本作業の開始時点でも不変)。
+  - プローブ (作業領域 `tmhb.work/2026-11-17-desktop-fix/probe/`、リポのネイティブ実装と同一ソース・同一チャンネル手順を組み込んだ使い捨てアプリ): 対照の dart:io 接続は refused (errno 111)、ネイティブ経由の connect は成功。接続後にソースから自発的なデータが来ないのは AKE の仕様どおり (最初に話すのはシンク側) で、異常ではない。
+  - 実アプリ: ビルド成功、Xvfb 上で起動してプロセス生存と media_kit 登録を確認。実行バイナリ内に両チャンネル名が存在することも確認した。
+  - 成果物: `TorneMobileHomeBrew-linux-1.2.1.tar.gz`、SHA-256 `02315db28211bfef75a57c10e6b57470314a6bb22e961525e8611d5392f88e5d`。marnux の ~/ダウンロード と `tmhb.work/2026-11-17-desktop/` に配置。
+- 未確認 (境界の明記): Linux アプリ内での AKE 認証の完走 (交換鍵の受領まで) は未確認。marnux 上の Linux アプリには資格情報が未登録で、値の投入は本人の領域のためこちらでは行わない。§47.5 の macOS が本人の再試行で成立したのと同じ状態であり、プラットフォーム固有層 (ソケット) は上記のとおり実測で確認済み、それより上はプラットフォーム非依存の Dart 実装で iOS / Android / macOS で成立済みのものを使う。本人が Linux 版に資格情報を取り込んだ後の初回再生で完走確認が取れる。
+
+## 48. main のマージ (ライブ視聴の取り込み) と番号付け直し (2026-11-17)
+
+デスクトップブランチが main のライブ視聴 (§39) より前に分岐していたため、Mac デスクトップ版に「TV視聴」が無い状態だった。main を `desktop-macos-linux` へマージして解消した (マージコミット `bfa457c`、取り込み元は main の `bcc83a4`: §39 ライブ / §40 実況調査 / §41 v1.3.0 / §42 BS/CS 調査 / §43 seek 修正 / dev-build CI)。
+
+- コンフリクト: コード側はゼロ (全て自動マージ)。plan.md のみ、両側が §36 の後に節を追加していたため衝突した。
+- 番号の付け直し: main 側の §39〜§43 は公開済みの番号なので維持し、ブランチ側のデスクトップ修正の節を §39 → **§44** へ付け直した (小節 39.1〜39.6 → 44.1〜44.6、§44 冒頭に注記あり)。コード内コメントの plan 参照 (AkeSocket.swift、ake_socket.cc/h、ビルドスクリプト、store_directory.dart、credential_store.dart、providers.dart、ake_socket.dart、テスト) も 44 系へ付け直した。ブランチ側の §37・§38 は main に同番号が無く、そのまま。なお main 統合時 (2026-11-17) に §44 は main 側の §44 (Actions) と衝突したため §47 へ再付け直しされ (小節は 47.1〜47.6、コード内コメントも同時に付け直し)、本節も §45 から §48 へ付け直された。
+- 両立の確認: デスクトップ側の変更 (保存先の Application Support 化、macOS レガシーキーチェーン + delete 修正、AKE ネイティブソケット macOS/Linux) と main 側の変更 (ライブ、エラーポリシー、seek 修正) は競合なく共存。wakelock はデスクトップで no-op のまま (ガードの対象は iOS/Android のみ)。版数は main に合わせて 1.3.0+18 (pubspec と app_version 定数の一致はドリフトテストで担保)。
+- テスト 222 件全合格、`flutter analyze` 検出なし。
+- 再ビルドと配置:
+  - Linux: `TorneMobileHomeBrew-linux-1.3.0.tar.gz`、SHA-256 `136f0cd7be6718ea883466f85efabfcc96fc65dc6280a691c7b057cc16499bf1`。~/ダウンロード と `tmhb.work/2026-11-17-desktop/` に配置。Xvfb 上の起動と AKE チャンネルの同梱を確認。
+  - macOS: `TorneMobileHomeBrew-macos-1.3.0.zip`、SHA-256 `94c98f46666e548deb53dbb9e60c9b9e227b947be7b550140aa9302dd6c90fd3`。Mac の Desktop と marnux の両方に配置。Desktop の .app をマージ済みビルド (1.3.0 / ビルド 18) に差し替えて起動し、実機 nasne に対する番組表取得 (6,450 件) がデバッグログに残ることまで確認した。
+- 未確認 (境界の明記): Mac 実機アプリでの「TV視聴」タブの目視確認と、ライブ開始→AKE のデバッグログ確認は、こちら側からは完了できなかった。理由は環境側にあり、Flutter のキャンバスはアクセシビリティツリーに現れず、ssh 経由の画面キャプチャは権限が無く、さらに Mac の GUI フォーカスが数秒ごとに Notes へ奪われる状態で、複数ステップのクリック操作を最後まで通せなかった (フォーカス確認付きのレールクリックは TV視聴 の位置へ 2 回届いている)。「TV視聴」の存在自体はマージ済みソース (遷移先 2 番目に LiveScreen) とマージ済みテスト (UI テスト含む 222 件) で担保され、ライブ→AKE の経路も層ごとに成立済み (Mac のネイティブソケットは §47.5 で本人の再生確認済み、ライブ AKE は §41 でモバイル実証済み・同一 Dart 実装)。実機での最終確認は、配置済みアプリで本人が TV視聴 を開く際の初回利用に委ねられる。
+- 公開の扱い: 本人の指示 (マージ作業の検証が済むまでは公開に進まない) に従い、GitHub への公開 (main への取り込み・v1.3.0 へのデスクトップ成果物追加) は上記の実機確認が取れるまで実施しない。ブランチ側の準備 (マージ・テスト・両 OS の成果物) は完了しているので、確認が取れれば即座に公開へ進める。

@@ -113,7 +113,7 @@ void main() {
         'log body\n',
       );
       return DebugLogSharer(
-        documentsDirectory: docs,
+        storeDirectory: docs,
         stagingDirectory: () async => stagingParent,
         supported: supported,
       );
@@ -123,7 +123,7 @@ void main() {
       final docs = await tempDir('tmhb_share_none');
       final stagingParent = await tempDir('tmhb_share_none_stage');
       final sharer = DebugLogSharer(
-        documentsDirectory: docs,
+        storeDirectory: docs,
         stagingDirectory: () async => stagingParent,
         supported: true,
       );
