@@ -3661,3 +3661,43 @@ DLL 内の FFmpeg configuration 文字列と、superbuild の
 - 本人の実機確認: Windows 版でライブ・録画が再生開始すること、
   字幕が描画されること。成立するまで版数は 1.4.0 据え置き。
 - ビルド27 のシーク確認 (§61) は引き続き本人待ち。
+
+## 69. §67 の実機確認と macOS 版ファイルピッカー不具合の修正 (2026-11-18、ビルド29)
+
+### 69.1 実機確認の結果 (本人)
+
+- **iPhone: 資格情報の削除と credentials.env インポート、どちらも正常動作** → §67 の機能は iOS で実機成立。
+- **Mac: 資格情報の削除は確認できたが、「credentials.env を選択」ボタンが機能しない。** 押下反応 (見た目) はあるのにファイルピッカーが開かず、何も起きない。
+
+### 69.2 原因 (実測で特定)
+
+- 資格情報画面のピッカーは、env・証明書・秘密鍵の3ボタンとも共通の `_pickFile()` (`FilePicker.platform.pickFiles(withData: true)`、拡張子指定なし) を使う。よって不具合は env ボタン固有ではなく、**macOS では3ボタンとも同じく開かない**はずのもの (本人が踏んだのは env ボタン)。
+- file_picker 10.3.10 の macOS 実装 (`macos/file_picker/Sources/file_picker/FilePickerPlugin.swift`) は、パネルを開く前に `checkEntitlement(.readOrWrite)` で実行中プロセスの entitlement を `SecTaskCopyValueForEntitlement` で検査し、`com.apple.security.files.user-selected.read-only` / `read-write` のどちらも無ければ `FlutterError (ENTITLEMENT_NOT_FOUND)` を返して即終了する。**NSOpenPanel は生成すらされない。**
+- 本アプリの macOS 版は `tool/build_macos_desktop.sh` が `CODE_SIGNING_ALLOWED=NO` でビルドして未署名で出力するため、entitlement の有無は最終署名だけで決まる。§66/§67 の署名 (スクリプト側・本人の手動コマンド側とも) は `--entitlements` を付けていなかったため、**出荷アプリの entitlement はゼロ**だった。実測: Desktop の署名済みビルド28で `codesign -d --entitlements -` の出力は Executable 行のみ (対照として Calculator.app では dict が出ることを確認済み)。Runner の `Release.entitlements` / `DebugProfile.entitlements` 側にも当該キーは無かった。なお署名に entitlement を付けないのは意図的な側面もある: keychain-access-groups を含む署名は launchd が起動を拒否する (§47 の罠) ため、Runner の entitlements を丸ごと付けることはできない。
+- Dart 側の `_pickFile()` には try/catch が無く、返された PlatformException が未処理の非同期エラーになる。Release ビルドでは画面に何も出ない — 「押した反応はあるのに無反応」の正体はこれ。
+- プラグイン登録 (`macos/Flutter/GeneratedPluginRegistrant.swift` に `FilePickerPlugin`) は正常。iOS 実装には entitlement 検査が無いため iPhone では正常。削除はピッカーを使わないため Mac でも正常。観測事実の全てと一致する。
+
+### 69.3 修正 (コミット `6983943`)
+
+- **`macos/Runner/Signing.entitlements` を新設**: 署名時に付ける最小セットで、中身は `com.apple.security.files.user-selected.read-only` の1件のみ。アプリはユーザーが選んだファイル (証明書・秘密鍵・credentials.env) を読むだけなので read-only が正しい範囲。keychain-access-groups は §47 の罠のため絶対に入れない。app-sandbox も出荷実績 (無し) を変えないため入れない。
+- **`tool/build_macos_desktop.sh`**: 署名の両経路 (自己署名 ID / ad-hoc フォールバック) に `--entitlements macos/Runner/Signing.entitlements` を追加。ヘッダの説明 (罠 #2) とガード文言を実態に合わせて更新 (ガード自体は keychain-access-groups 混入の検出として存続)。
+- **`macos/Runner/Release.entitlements` / `DebugProfile.entitlements`** にも同キーを追加 (Xcode 経由でビルドした場合にも欠けないように)。
+- 版数は 1.4.0 据え置き、ビルド番号 28 → 29 (pubspec.yaml と `lib/core/app_version.dart` の両方)。テストは全 281 件合格。
+- 修正は macOS 固有 (entitlements とビルドスクリプトのみ、Dart は無変更) のため、モバイルの成果物 (ビルド28 の IPA/APK) は作り直さない。
+
+### 69.4 再ビルドと検証 (Mac、SSH 経由)
+
+- Mac クローンを `6983943` へ更新して `tool/build_macos_desktop.sh` を実行: xcodebuild は **BUILD SUCCEEDED** (Info.plist で 1.4.0 / 29 を確認)。署名段は従来通り SSH セッション制約で `errSecInternalComponent` となり停止し、ビルド済み .app はクローンの `build/macos/Build/Products/Release/torne mobile HB.app` に未署名で残置した。
+- 同一フラグでの署名が成立することは、コピーへの ad-hoc 署名で先に実証した: `--entitlements macos/Runner/Signing.entitlements` 付きで署名すると、埋め込まれる entitlement は当該キー1件のみ (keychain-access-groups なし) になり、`codesign --verify --deep --strict` 合格、起動 8 秒後もプロセス生存 (launchd の拒否なし)。
+- 本人の署名コマンドは §66/§67 のものに `--entitlements macos/Runner/Signing.entitlements` を足した形:
+
+```bash
+cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=none --entitlements macos/Runner/Signing.entitlements --sign torne-mobile-hb-signing "build/macos/Build/Products/Release/torne mobile HB.app" && codesign --verify --deep --strict "build/macos/Build/Products/Release/torne mobile HB.app" && echo SIGNED-OK
+```
+
+`SIGNED-OK` の後、署名済みビルド29で Desktop の `torne mobile HB 1.4.0.app` を差し替える。実機確認は、資格情報画面の3つのピッカー (env / 証明書 / 秘密鍵) が全て開くこと。
+
+### 69.5 申し送り
+
+- `_pickFile()` の例外が画面に出ない問題 (69.2) は、今回は entitlement 側で根本修正したため残置した。ピッカー例外をエラー表示にする Dart 側の防御はモバイル成果物の作り直しを伴うので、入れるかどうかは別途判断する。
+- 版数上げは引き続き実機確認の後 (従来ルール)。
