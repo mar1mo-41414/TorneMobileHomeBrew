@@ -1620,3 +1620,86 @@ PlaybackEngine の契約は `interfaces.dart` で発展させた: `startPlayback
 | APK (配布用署名) | 101,243,377 バイト | `469f8d44d7bd332bceceacc2bb58fe8fce780612cc30fd96ab192f2df9e97f1a` | marnux `~/ダウンロード/TorneMobileHomeBrew-1.1.0.apk` |
 
 APK の署名証明書 SHA-256 は `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5` (配布鍵、§20 と同一)。サイズ増は media_kit (mpv) のネイティブライブラリ同梱による。GitHub Release は作成していない。
+
+## 28. 再生失敗の切り分けと修正、デバッグモード、予約まわりの実値確定 (2026-11-17、ビルド +7)
+
+ビルド 6 でユーザーが自分の資格情報ペアをインポートして録画再生を試したところ「再生を開始できませんでした」で失敗した。切り分けと修正、併せてデバッグモードの新設、EPG からの録画予約、予約フィールドの実値確定を行った。版数は §22 のルール (成立確認まで上げない) により 1.1.0 のまま、ビルド番号のみ 7 に進めた。
+
+### 28.1 主因: HEAD の Content-Type パラメータ照合が常に失敗していた
+
+- 表示は titles_screen の汎用スナックで、内部エラーは握り潰されていた。コード追跡の結果、失敗は `DtcpMediaFetcher.akeEndpoint` の parse エラーが最有力だった。
+- **実証**: dart:io の `ContentType.parameters` はパラメータ名を小文字化する (実測: `DTCP1HOST` → キーは `dtcp1host`)。akeEndpoint は `'DTCP1HOST'` / `'DTCP1PORT'` で引いていたため常に null になり、**AKE 以前の HEAD 段階で決定的に失敗**していた。docs/37 の実測ヘッダ (`application/x-dtcp1; DTCP1HOST=...; DTCP1PORT=...`) でも同じく失敗する。
+- 傍証として、ユーザーが pydtcpip 側の credentials.env に同じペアを置いて救出パイプラインを実行したところ、実機 nasne に対して AKE が完走し録画 1 件 (DR 494,434,560 バイト) の転送・復号が成功した (SonyNasne-DTCP docs/48)。**ペアと nasne は正常であり、欠陥はアプリ側にあることが確定**した。
+- 修正: Content-Type は生ヘッダ文字列を自前でパースする (pydtcpip の parse_content_type と同じ方式、パラメータ名は大小文字を区別しない)。併せて pydtcpip に揃え、ステータス != 200 は http エラー、メディアタイプが `application/x-dtcp1` でなければ parse エラー、ポートは 1..65535 を検証し、ソケット/HTTP 例外は unreachable に分類する (従来は生例外が分類を素通りしていた)。回帰テストは `test/dtcp_fetcher_test.dart` (testWidgets の HttpClient モックと干渉しないよう分離)。
+
+### 28.2 pydtcpip とのステップ単位の再照合
+
+手順列 (HEAD → AKE 各ラウンド → EXCHANGE_KEY → GET → プロキシ) を pydtcpip の実物とステップ単位で再照合した。相違と処置:
+
+| # | 項目 | pydtcpip (検証済み) | ビルド 6 | 処置 |
+|---|---|---|---|---|
+| 1 | HEAD のエンドポイント取得 | 生ヘッダを自前パース | `ContentType.parameters` の大文字キー照合 (常に失敗) | §28.1 |
+| 2 | 要求フレームの status バイト (byte 10) | 0x0F | 0x00 | 0x0F に修正 |
+| 3 | ロールバイト (byte 8) | sink は 0x01 (device ID の最上位ニブル)、ソースは 0x00 | sink が 0x02 | 0x01 に修正 |
+| 4 | ACCEPTED 応答の構築 | 受信フレームのヘッダをコピーし ctype→0x09・status→0 のみ変更 | 新規ヘッダを自前値で構築 (procedure/keyType/role/label) | 全 8 箇所 (CHALLENGE / RESPONSE / RTT_READY / RTT_SETUP / RTT_TEST / RTT_VERIFY / EXCHANGE_KEY / SRM_UPDATE) を `accepted()` コピー方式に修正 |
+| 5 | AKE ソケット | IP TTL 3 + TCP_NODELAY (コメント: TTL が高いと CHALLENGE 受理直後に切断するレコーダーがある) | どちらもなし (dart:io) | ネイティブソケットで両方実装 (§28.3)。dart:io フォールバックにも TCP_NODELAY を追加 |
+| 6 | 認証の時間境界と完了条件 | authenticate() 全体 (交換鍵受領まで) を 30 秒で bound し、鍵を手にしてから戻る | connect は 10 秒のみ、フレーム待ちは無制限。RESPONSE 受理で即返り、交換鍵は裏ループ (失敗は握り潰され、プロキシ側で 15 秒待ち→502 に化けた) | 認証全体に 30 秒タイムアウト (失敗時にステージ名を残す)。開始経路で初回交換鍵を待つ (20 秒) 形に変更。セッション常駐ループ自体は §27 の設計 (ローテーション / SRM 処理) を維持 |
+| 7 | HEAD のステータス / メディアタイプ検証 | >= 400 で例外、メディアタイプ完全一致を要求 | 検証なし | §28.1 のとおり追加 |
+
+- #4 の帰結として、EXCHANGE_KEY の鍵ラベルはヘッダではなくペイロード [0] にあることが再確認できた。従来のフェイクソースの期待値 (受理フレームの header label == 0x2A) は旧方式前提の誤りで、コピー方式では 0 になる。フェイクを pydtcpip の fakes.py と同じ accepted() コピー方式に組み替え、クライアント送信フレームの生バイト検証 (要求の byte 8 = 0x01 / byte 10 = 0x0F、受理フレームのヘッダコピー) をテストに追加した。
+- 一致を確認して不変としたもの: HEAD/GET の DLNA ヘッダ (transferMode.dlna.org: Streaming、getcontentFeatures.dlna.org: 1、Accept-Encoding: identity)、RTT MAC の事前計算、ECDH 認証鍵 (共有 x 座標の下位 12 バイト)、EXCHANGE_KEY の XOR 解除、SRM 転送規則、PCP 復号。いずれも KAT で検証済み。
+
+### 28.3 IP TTL 3 のネイティブ実装
+
+- プラットフォームチャネル `com.markun.tmhb/ake_socket` (メソッド) + `com.markun.tmhb/ake_socket_events` (イベント) で、接続 id をキーに管理する。
+- Android (`MainActivity.kt` の AkeSocketConnection): `android.system.Os` で socket を作り、connect 前に setsockoptInt で IP_TTL=3 と TCP_NODELAY=1 を設定。非ブロッキング connect + `Os.poll` (10 秒) で待ち、成否は `Os.getpeername` で確認する (`Os.getsockoptInt` は SDK スタブに存在しないため)。確立後は FileInputStream/FileOutputStream でブロッキング I/O をワーカースレッドで回す。
+- iOS (`ios/Runner/AkeSocket.swift`、新規): BSD ソケット + setsockopt (IP_TTL=3、TCP_NODELAY) + poll 方式 connect + recv ループ。登録は AppDelegate の `didInitializeImplicitFlutterEngine` で pluginRegistry 経由 (registrar は Optional で、`messenger` はメソッド — 実機ビルドで確定)。pbxproj へ手動でファイル追加した (同期グループ方式ではないため)。
+- Dart 側 (`lib/app/ake_socket.dart`): モバイル以外、またはチャネル未実装 (MissingPluginException) の場合は dart:io へフォールバックし、その旨を ake カテゴリに記録する。ネイティブ接続失敗は unreachable に分類する。
+
+### 28.4 デバッグモード
+
+今後も継続的に使う前提で、設定画面に新設した。
+
+- **UI**: 設定画面「デバッグ」節にマスタートグル (デフォルト オフ) とカテゴリ別トグルを置く。カテゴリはモジュール構成に合わせた 6 種: ake / playback / network / epg / discovery / ui。マスターとカテゴリ集合は KeyValueStore の `debug_mode_enabled` / `debug_categories` に永続化する。
+- **保存先と形式**: オン時はアプリの Documents ディレクトリ配下 `debug_logs/tmhb-debug-<yyyyMMdd-HHmmss>-<ms>.log` に追記する (ファイルとして取り出せる形)。ローテーション: 1 ファイル 512KiB でロール、最大 5 ファイル・合計 2MiB を上限に古いものから削除する。
+- **記録するもの**: ステージ遷移、AKE フレームヘッダ (cmd / ctype / status / ペイロード長)、HTTP ステータス、バイト数、所要時間、エンドポイントの有無のみ。
+- **記録しないもの (設計として明記)**: 資格情報 (証明書・機器秘密鍵) とセッション鍵 (認証鍵・交換鍵・コンテンツ鍵) のバイト列は、デバッグモードでも絶対に記録しない。ノンス・署名・MAC も同様。担保は 3 層: (a) ログ呼び出しはそもそも値を受け取らない形に限定、(b) KAT フローに診断を有効化して流し、実鍵値 (認証鍵・交換鍵・秘密鍵・両ノンス・共有秘密) が hex / base64 のどちらの形でも出力に含まれないことを検証する実行時監査テスト、(c) `lib/` 全体のログ呼び出し箇所を走査し秘密系識別子の補間を検出する静的監査テスト。
+- **再生失敗の画面表示**: 従来は汎用文言のスナックに潰れていた失敗を、分類 (category) ・発生元 (source) ・コード・詳細を載せたダイアログで表示する。失敗は ui カテゴリにも記録する。
+- **カテゴリ基盤の範囲**: ロガー基盤 (`lib/core/diagnostics.dart` の DiagLog) はカテゴリ述語 + シンクで構成し、カテゴリ集合を設定で差し替え可能にした。今回、カテゴリ別トグルの UI まで実装した。ただし discovery カテゴリは基盤のみで、発見サービス側の記録点は未配線 (残件 §28.8)。
+
+### 28.5 EPG から録画予約
+
+- 番組表の番組詳細ダイアログに「録画予約」ボタンを追加した (終了済みの番組では表示しない)。押すと、その番組の情報 (サービス・開始時刻・長さ・タイトル・番組内容) をプリフィルした予約作成画面を開く。フォーム先頭に番組タイトル・チャンネル・日時・番組内容を表示し、画質 (DR / 3倍) はフォーム側で選べる既存の形のまま。
+- 予約作成の実経路は既存の XSRS create (§13 の契約、競合確認込み) をそのまま使う。EPG 経由では eventId を desiredMatchingID に載せる (公式 torne の EPG 予約の生 item が持つ形)。
+- 実機での作成成立は未確認 (ユーザーの実利用での確認待ち、§28.8)。
+
+### 28.6 予約の画質モード値域と録画先表示
+
+ユーザーが公式 torne で作った予約 (3倍モード) を本アプリの予約詳細で見た際の 2 点の指摘から、生 item で確定した。
+
+- **証拠**: (1) 公式 torne 製 3倍予約の生 item (`tmhb.work/2026-11-17-resv-fields/schedule_list_raw.xml`): `desiredQualityMode=230`、`recordDestinationID=USBHDD`、`reservationCreatorID=2000`、`recordSize=698`、`scheduledConditionID=1`、`portableRecordFile=150` (対象番組 600 秒)。(2) 2026-11-11 の実機スケジュールダンプ (SonyNasne-TryDebian 側資料 `schedule_result_full.xml`): DR 相当の予約が `100` / `HDD`、3倍相当の予約が `230` / `USBHDD` のペアで存在し、**230 / USBHDD の予約から録れたタイトルは `recordDestinationID=HDD` を報告**した。
+- **画質モードの確定**: XSRS の値空間では **DR = 100、3倍 = 230**。従来ラベル表と送信値に使っていた 101 は WebAPI JSON 側 (recNgList) の値空間であり、XSRS では観測がない。§13.7 の実測 (desiredQualityMode 100→101 の更新は受理されるが再読込では元の値のまま = 保存されない) とも整合し、**101 は有効値域外と判断**した。処置: ラベル表を 100 = DR / 230 = 3倍 に修正 (101 は生値表示にフォールバック)、作成・編集フォームの選択肢に 230 を追加 (従来は新規作成で 100 しか選べなかった)、送信値を torne の実値に合わせた。これは表示だけでなく機能の修正である (101 で作った「3倍」予約は機器に保存されない値だった)。
+- **作成テンプレートの destination ペアリング**: torne のサンプルは DR = `HDD` / 3倍 = `USBHDD` のペアで一貫するため、作成時は画質に合わせて送る形に合わせた。なお USBHDD の予約でも録画自体は内蔵 HDD に落ちる (証拠 (2))。
+- **録画先の表示**: 予約詳細から `recordDestinationID` の行を削除した。根拠: 予約側の値は作成者の希望 / テンプレート値であり物理的な録画先ではない (USBHDD の予約から録れたタイトルは HDD と報告する)。実態と違う固定 ID を「録画先」として事実のように見せる形を避けた。公式 torne がこの値を表示するか自体は未確認で、表示しない前提の判断である。編集フォームは生フィールドの編集画面として従来どおり表示する (残件として認識)。
+
+### 28.7 テストとビルド
+
+- `flutter test`: **159 件全合格** (ビルド 6 時点の 148 件 + 新規 11 件: ワイヤバイト検証、診断の実行時監査、フェッチャー回帰 3 件、デバッグログ 6 件、静的監査 1 件を含む)。`flutter analyze`: 検出なし。
+- コミット: `1bbe46a` (本体)、`2340b94` (iOS registrar の型合わせ)、`307a50f` (Android の接続確認方式)、本節。
+- Mac ビルド時の注意 (再発防止): Mac 側クローンはビルド生成物 (pbxproj / xcconfig) のローカル変更があると `git pull` が abort し、古いツリーのままビルドが成功して見えることがある (今回は CFBundleVersion で検出した)。生成物を破棄してから pull すること。また `pod` はログインシェルの PATH にのみあるため、iOS ビルドは `zsh -lc` で実行する。
+
+| 成果物 | サイズ | SHA-256 | 配置 |
+|---|---|---|---|
+| IPA (署名なし、CFBundleVersion 7 を実物で確認) | 16,926,927 バイト | `91393e22c6e4adb04637b3165d520bf98fcf2bbc60df5dd4813b1172fc8b5b45` | marnux `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.1.0.ipa` |
+| APK (配布用署名、versionCode 7 を aapt で確認) | 101,358,065 バイト | `585f8191bf8473eb44008d7c40ef26845e4bb89fee861e351af45d47830ce00f` | marnux `~/ダウンロード/TorneMobileHomeBrew-1.1.0.apk` |
+
+GitHub Release は作成していない。版数は 1.1.0 のまま (実再生の成立確認後に判断)。
+
+### 28.8 残る未確定事項
+
+- **実機での AKE 完走・実再生は依然未確認**。ユーザーの端末でビルド 7 を試す段階で、デバッグモード (ake / playback / network カテゴリ) のログから失敗ステージが特定できる状態にした。HEAD のバグは決定的に存在したため第一の壁だったことは確定しているが、TTL / フレームバイトの相違が実機でどこまで効いていたかは再試行で確定する。
+- クライアント登録 (nasne HOME の許可) の要否は未確定のまま (§27.4 から継続)。
+- EPG 予約の eventId 付き create の実機成立は未確認。
+- discovery カテゴリの記録点は未配線 (基盤とトグルのみ)。
+- 交換鍵ローテーション時のラベル不一致は従来どおりエラーとして扱う (§27.4 から継続)。
+- 予約の編集フォームでは recordDestinationID を生フィールドとして表示・編集する形が残っている (§28.6)。
