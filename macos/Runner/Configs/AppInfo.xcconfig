@@ -5,7 +5,9 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = tmhb
+// Display name follows the mobile apps' naming (plan 37): the
+// bundle/executable are "torne mobile HB", not the project name.
+PRODUCT_NAME = torne mobile HB
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.markun.tmhb
