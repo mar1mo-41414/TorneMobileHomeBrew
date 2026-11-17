@@ -302,6 +302,7 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
         buildPlayer: (session) => PlayerScreen(
           title: channel.channelName ?? channel.programTitle,
           session: session,
+          live: true,
         ),
         unsupportedSubject: 'TV視聴',
         startFailureMessage: '視聴を開始できませんでした',
