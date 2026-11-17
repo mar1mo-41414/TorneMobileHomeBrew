@@ -1703,3 +1703,57 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - discovery カテゴリの記録点は未配線 (基盤とトグルのみ)。
 - 交換鍵ローテーション時のラベル不一致は従来どおりエラーとして扱う (§27.4 から継続)。
 - 予約の編集フォームでは recordDestinationID を生フィールドとして表示・編集する形が残っている (§28.6)。
+
+## 29. ビルド 7 の実機検証: AKE 切断とフリーズの切り分けと修正 (2026-11-17、ビルド +8)
+
+### 29.1 観測事実 (ビルド 7、VPN 経由の実機検証)
+
+ユーザーが外出先から VPN 経由 (Tailscale / SoftEther L2TP) でビルド 7 を検証し、デバッグログ 2 件 (`tmhb-debug-20261117-094645-584.log` 09:46 JST、`tmhb-debug-20261117-094809-634.log` 09:48 JST) が得られた。両ログ共通の時系列:
+
+- HEAD 200 → endpoint 取得 → ネイティブソケット (TTL 3) で接続 → **Full Authentication 完走** (source 証明書検証・署名検証・応答受理) → **交換鍵受信 (label 115)** → プロキシ起動 → コンテンツ GET 開始 → **GET 200 (chunked)**。
+- **コンテンツ GET 開始の約 10 ms 後 (ログ 2 では約 135 ms 後) に `ake connection failed: ... the AKE connection closed`** と記録され、以後ログは途絶。`proxy: first decrypted packet out` は出ていない。
+- ユーザーの体感: 再生のインジケータごと固まり、**アプリ全体が操作不能**になる (デバッグのオン/オフ無関係)。UI アニメーション自体が止まることから、UI isolate が同期処理で塞がれている症状と判断した。
+
+### 29.2 切り分け 1: AKE 切断は source の正常動作 (確定)
+
+marnux から LAN で、pydtcpip の認証手順を使い認証完了後も AKE 接続を閉じずに保持して EOF を監視するプローブを実施した (対象: NHK手話ニュース845、DR、URL は実機の `/web/video/pvr`)。
+
+- 0.128 s: HEAD 完了。0.693 s: 認証完了 (label 115)。**0.704 s (認証完了の約 11 ms 後、コンテンツ GET の発行前) に source 側から AKE 接続が閉じられた** (read が 0 バイト = EOF)。
+- その後 GET 200 → パケット #1〜#40 はすべて正常に復号できた。つまり**切断は GET の成否と無関係な、認証直後の定常動作**である。
+- pydtcpip 側の前提も同一: `DTCPClient._authenticate` の docstring は "Authenticate for streaming and close the control connection afterward" で、認証直後に自側から閉じる。パケットのラベルが手持ちと合わなければ**再認証**する。
+- 結論: 切断自体は異常ではない。アプリ側の不整合は (a) post-auth の常駐メッセージループを前提にした設計、(b) EOF を `NasneError(unreachable)` の「接続失敗」として分類・記録していた点。なお切断自体はプロキシを止めない (ループ側のエラーはログのみで伝播しない) ため、フリーズの原因ではない。
+
+### 29.3 切り分け 2: フリーズの原因は AES-CBC 復号の O(n²) 化 (確定)
+
+- 同プローブの実測: 実機の PCP パケットは **content_length = 1,048,576 (1 MiB)** で、先頭 40 パケットすべて同値 (E-EMI 4、label 115)。パケットサイズの前提が KAT (数十バイト) と桁違いだった。
+- `aesCbcDecrypt` (dtcp_crypto.dart) が **16 バイトブロックごとに `Uint8List.fromList(data)` で入力全体を変換**していた。1 MiB パケット = 65,536 ブロック × 1 MiB ≈ **64 GiB のコピー**となり事実上返ってこない。復号・プロキシはすべて UI isolate 上で動くため、スピナーのアニメーションごと止まる症状 (§29.1) と一致し、ログが GET 200 の直後で途絶して初回パケットの記録が出ないことも一致する。`aesCbcEncrypt` にも同一の欠陥があった (テスト側のみ使用)。
+- 副次的な非効率: `PcpDecryptor` の平坦な `List<int>` バッファとパケットごとの `removeRange`、CBC チェーンの `sublist` コピー連鎖。pydtcpip はパケット単位で `readexactly` し単一の Cipher オブジェクトで処理する。また pydtcpip には content_length の上限 **128 MiB** (`_MAX_CONTENT_LENGTH`) があり、アプリには無かった。
+
+### 29.4 修正 (ビルド +8、版数は 1.1.0 のまま)
+
+1. **dtcp_crypto.dart**: 入力の `Uint8List` 変換を 1 回だけにし、ブロックエンジンへオフセット渡しする形に変更 (復号・暗号化とも)。O(n²) を解消。
+2. **pcp.dart**: バッファをチャンクキュー (先頭オフセット付き) に変更し、供給・消費を O(chunk) にした。content_length 上限 128 MiB を追加し、超過は parse エラー (無限バッファリングの排除)。
+3. **ake.dart**: 正常な EOF を専用例外 `AkeConnectionClosed` として区別し、到達不能エラーにしない。メッセージループの終了時に保留中の鍵待ちをすべて確定させ、未達ラベルへの待ちは即時に同例外で失敗する (再認証への合図)。認証途中の切断はステージ名付きの到達不能エラーに再分類。`AkeSession` の鍵まわりの表面を `ExchangeKeySession` インターフェースとして切り出した (テスト差し替え用)。
+4. **dtcp_playback.dart**: `PlaybackKeySource` を新設。既知ラベルは即時返却、生存中のセッションでは上限付きで待ち、**セッション終了後に未知ラベル (ローテーション) が来たら新規接続で再認証**する (pydtcpip 方式、単一飛行)。再認証は毎回新しい `AkeClient` を使う (クライアントは 1 セッション分の鍵状態を持つため)。再認証後もラベルが合わなければ parse エラー。
+5. **dtcp_proxy.dart**: 鍵取得を `keyForLabel` 注入に変更 (セッション直持ちを廃止)。診断を追加: プレイヤーからのリクエスト番号、初回パケット (平文バイト数・GET からの経過 ms)、50 パケットごとの進捗、終了時の総量 (パケット数・平文バイト・受信バイト)。パケット書き込みごとに `flush()` を await して背圧を効かせる。上流が 30 秒無音なら stall エラーとして 502 で閉じる (無限待ちの排除)。フェッチャーに接続タイムアウト 15 秒を設定。
+6. **player_screen.dart**: player の playing / buffering / error を playback カテゴリへ記録し、mpv のエラーを画面のエラー表示に反映する。開始ウォッチドッグ 30 秒を追加し、再生もエラーも無いままならタイムアウトエラーを表示する (無限スピナーの排除)。
+
+### 29.5 テストとビルド
+
+- 新規テスト 7 件: AES-CBC の 1 MiB 往復、PCP 1 MiB × 2 パケットを 16 KiB 刻みで供給して完全復号 (所要時間の回帰ゲート付き)、異常な content_length の parse エラー化、ループバック実 HTTP でのプロキシ通し (1 MiB × 2)、AKE 認証後切断の正常終了意味論 (既存の偽 source を再利用)、`PlaybackKeySource` の再認証と不一致エラー。
+- `flutter test`: **166 件全合格** (159 件 + 新規 7 件)。`flutter analyze`: 検出なし。
+- コミット: `bbaef01` (本体 + テスト)、本節。
+
+| 成果物 | サイズ | SHA-256 | 配置 |
+|---|---|---|---|
+| IPA (署名なし、CFBundleVersion 8 を実物で確認) | 16,938,582 バイト | `c2cad4d057db7f2a6b700409770bcef516a3a7c6d7f85f0735cab7df7120388e` | marnux `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.1.0.ipa` |
+| APK (配布用署名、versionCode 8 を aapt で確認) | 101,587,441 バイト | `25681f82c7fd321eac2205632e42476bb6c1d04dbd0737fa776afc4ed544e178` | marnux `~/ダウンロード/TorneMobileHomeBrew-1.1.0.apk` |
+
+GitHub Release は作成していない。版数は 1.1.0 のまま (実再生の成立確認後に判断)。
+
+### 29.6 残る未確定事項
+
+- **実機での再生成立は未確認** (ユーザーの再試行待ち)。次回は playback カテゴリのログで「初回パケットが何 ms で出たか・プレイヤーが何をしていたか・総量」が追える。
+- 1 タイトルの再生中に交換鍵ローテーションが実際に起きるかは未確定。起きれば再認証経路 (§29.4-4) が実地で検証される。
+- VPN 経由特有の要因 (MTU 等) が残る可能性の切り分け方: 同じタイトルを自宅 LAN で再試行し、LAN で成立すれば経路側の問題、LAN でも失敗すればログの初回パケット到達有無でアプリ側か source 側かを区別する。
+- §28.8 の継続残件 (クライアント登録の要否、EPG の eventId 付き create の実機成立、discovery カテゴリの記録点) は不変。
