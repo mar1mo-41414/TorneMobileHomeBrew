@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app/debug_log.dart';
+import '../app/log_share.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
@@ -29,6 +30,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   List<NasneDevice>? _found;
   String? _searchError;
   bool _registering = false;
+  bool _sharingLogs = false;
   final _manualHost = TextEditingController();
 
   @override
@@ -173,7 +175,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ListTile(
             title: const Text('DTCP-IP 資格情報'),
             subtitle: Text(
-              ref.watch(credentialSummaryProvider).when(
+              ref
+                  .watch(credentialSummaryProvider)
+                  .when(
                     data: (summary) => summary == null
                         ? '未インポート (再生には資格情報が必要です)'
                         : 'インポート済み (デバイス ID: ${summary.deviceIdHex})',
@@ -219,6 +223,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
           ],
+          // Sharing stays available with the master switch off:
+          // the logs that matter are usually already recorded by
+          // the time the user comes here to send them (plan 45).
+          if (documentsDir != null)
+            Builder(
+              builder: (tileContext) => ListTile(
+                leading: const Icon(Icons.share),
+                title: const Text('デバッグログを共有'),
+                subtitle: const Text('保存済みの診断ログファイルを共有シートで送ります'),
+                enabled: !_sharingLogs,
+                onTap: _sharingLogs ? null : () => _shareDebugLogs(tileContext),
+              ),
+            ),
           const Divider(),
           const Padding(
             padding: EdgeInsets.all(16),
@@ -238,6 +255,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Text(text, style: Theme.of(context).textTheme.titleMedium),
     );
+  }
+
+  /// Shares the recorded debug logs via the OS share sheet
+  /// (plan 45). The tile's global rect anchors the iPad popover
+  /// presentation; Android ignores it.
+  Future<void> _shareDebugLogs(BuildContext tileContext) async {
+    final sharer = ref.read(debugLogSharerProvider);
+    if (sharer == null || _sharingLogs) return;
+    Rect? origin;
+    final renderObject = tileContext.findRenderObject();
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      origin = renderObject.localToGlobal(Offset.zero) & renderObject.size;
+    }
+    setState(() => _sharingLogs = true);
+    try {
+      final outcome = await sharer.share(origin: origin);
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'debug log share: outcome=${outcome.name}',
+      );
+      if (!mounted) return;
+      final message = switch (outcome) {
+        DebugLogShareOutcome.noLogs => '共有できるログがありません',
+        DebugLogShareOutcome.unsupported => 'このプラットフォームではログを共有できません',
+        DebugLogShareOutcome.shared => null,
+      };
+      if (message != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('ログの共有に失敗しました')));
+    } finally {
+      if (mounted) setState(() => _sharingLogs = false);
+    }
   }
 
   Future<void> _discover() async {

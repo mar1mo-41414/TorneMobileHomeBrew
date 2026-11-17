@@ -24,6 +24,12 @@ import UIKit
     {
       WakelockHub.shared.register(messenger: wakelockRegistrar.messenger())
     }
+    // Native share sheet channel (plan 45).
+    if let shareRegistrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "ShareChannels")
+    {
+      ShareHub.shared.register(messenger: shareRegistrar.messenger())
+    }
   }
 }
 
@@ -58,5 +64,73 @@ final class WakelockHub {
         result(FlutterMethodNotImplemented)
       }
     }
+  }
+}
+
+/// Native share sheet channel (plan 45): presents
+/// UIActivityViewController for the staged debug log copies, so
+/// logs recorded on a directly sideloaded install — whose app
+/// container cannot be pulled off the device the way a
+/// LiveContainer container can — still leave the device.
+///
+/// The Dart side stages copies under the temporary directory and
+/// passes their paths. On iPad the sheet is a popover and
+/// presentation crashes without an anchor, so the Dart side also
+/// passes the tapped tile's rect (in the Flutter view's
+/// coordinates, which are the presenter's view coordinates).
+final class ShareHub {
+  static let shared = ShareHub()
+
+  func register(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "com.markun.tmhb/share_files", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "shareFiles":
+        let args = call.arguments as? [String: Any] ?? [:]
+        let paths = args["paths"] as? [String] ?? []
+        guard !paths.isEmpty else {
+          result(
+            FlutterError(
+              code: "no_files", message: "no files to share", details: nil))
+          return
+        }
+        guard let presenter = ShareHub.topViewController() else {
+          result(
+            FlutterError(
+              code: "no_presenter",
+              message: "no view controller to present from", details: nil))
+          return
+        }
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        let activity = UIActivityViewController(
+          activityItems: urls, applicationActivities: nil)
+        if let popover = activity.popoverPresentationController {
+          popover.sourceView = presenter.view
+          let x = args["originX"] as? Double ?? Double(presenter.view.bounds.midX)
+          let y = args["originY"] as? Double ?? Double(presenter.view.bounds.midY)
+          let width = args["originWidth"] as? Double ?? 0
+          let height = args["originHeight"] as? Double ?? 0
+          popover.sourceRect = CGRect(
+            x: x, y: y, width: width, height: height)
+        }
+        presenter.present(activity, animated: true)
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private static func topViewController() -> UIViewController? {
+    let window = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }
+      .first { $0.isKeyWindow }
+    var controller = window?.rootViewController
+    while let presented = controller?.presentedViewController {
+      controller = presented
+    }
+    return controller
   }
 }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider roots for the debug log share sheet (plan 45).
+     Only the share staging subdirectory of the cache dir is
+     exposed; the documents directory (registrations, key-value
+     store) is deliberately NOT reachable through this provider. -->
+<paths>
+    <cache-path name="debug_log_share" path="tmhb_log_share/" />
+</paths>

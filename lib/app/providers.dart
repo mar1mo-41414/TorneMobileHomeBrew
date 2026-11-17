@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 import '../core/core.dart';
 import 'ake_socket.dart';
 import 'debug_log.dart';
+import 'log_share.dart';
 import 'multicast_lock.dart';
 import 'wakelock.dart';
 
@@ -74,8 +75,9 @@ final channelCacheProvider = Provider<ChannelCache>(
 /// The DTCP-IP credential vault (Phase 5, plan 26.4). The pair
 /// itself is read only by the playback engine; the UI uses the
 /// summary provider below.
-final credentialStoreProvider =
-    Provider<CredentialStore>((ref) => SecureCredentialStore());
+final credentialStoreProvider = Provider<CredentialStore>(
+  (ref) => SecureCredentialStore(),
+);
 
 /// SRM persistence: signed public data in the regular key-value
 /// store (plan 26.4).
@@ -86,8 +88,9 @@ final srmStoreProvider = Provider<KeyValueSrmStore>(
 /// Non-sensitive facts about the imported pair for the settings UI
 /// (presence, device ID, certificate fingerprint). Invalidated
 /// after import / delete.
-final credentialSummaryProvider =
-    FutureProvider<CredentialSummary?>((ref) async {
+final credentialSummaryProvider = FutureProvider<CredentialSummary?>((
+  ref,
+) async {
   final credentials = await ref.watch(credentialStoreProvider).load();
   return credentials == null ? null : CredentialSummary.of(credentials);
 });
@@ -109,15 +112,13 @@ class ShowSubchannelsNotifier extends Notifier<bool> {
 
   Future<void> set(bool value) async {
     state = value;
-    await ref
-        .read(keyValueStoreProvider)
-        .write(_key, value ? 'true' : 'false');
+    await ref.read(keyValueStoreProvider).write(_key, value ? 'true' : 'false');
   }
 }
 
-final showSubchannelsProvider =
-    NotifierProvider<ShowSubchannelsNotifier, bool>(
-        ShowSubchannelsNotifier.new);
+final showSubchannelsProvider = NotifierProvider<ShowSubchannelsNotifier, bool>(
+  ShowSubchannelsNotifier.new,
+);
 
 /// The app documents directory (debug log destination, plan 28).
 /// The bootstrap overrides this with the real directory; null in
@@ -165,7 +166,8 @@ class DebugSettingsNotifier extends Notifier<DebugSettings> {
 
 final debugSettingsProvider =
     NotifierProvider<DebugSettingsNotifier, DebugSettings>(
-        DebugSettingsNotifier.new);
+      DebugSettingsNotifier.new,
+    );
 
 /// The app-wide diagnostics logger (plan 28). Reflects the current
 /// debug settings on every record: master off, the category off,
@@ -174,13 +176,22 @@ final diagLogProvider = Provider<DiagLog>((ref) {
   final dir = ref.watch(documentsDirectoryProvider);
   if (dir == null) return const DiagLog.none();
   final sink = FileDebugLogSink(dir);
-  return DiagLog(
-    (category, message) => sink.write(category, message),
-    (category) {
-      final settings = ref.read(debugSettingsProvider);
-      return settings.master && settings.categories.contains(category);
-    },
-  );
+  return DiagLog((category, message) => sink.write(category, message), (
+    category,
+  ) {
+    final settings = ref.read(debugSettingsProvider);
+    return settings.master && settings.categories.contains(category);
+  });
+});
+
+/// Shares the recorded debug logs through the OS share sheet
+/// (plan 45). Null when there is no documents directory (tests /
+/// headless contexts) — the settings screen then hides the share
+/// action, like the log destination display.
+final debugLogSharerProvider = Provider<DebugLogSharer?>((ref) {
+  final dir = ref.watch(documentsDirectoryProvider);
+  if (dir == null) return null;
+  return DebugLogSharer(documentsDirectory: dir);
 });
 
 final playbackEngineProvider = Provider<PlaybackEngine>(
@@ -227,14 +238,19 @@ DeviceServices assembleDeviceServices(
 }) {
   final device = describedDevice ?? NasneDevice.direct(reg.host);
   final plain = WebApiTransport(reg.host, client: client);
-  final authed = WebApiTransport(reg.host,
-      client: client, tokenProvider: reg.tokenProvider);
+  final authed = WebApiTransport(
+    reg.host,
+    client: client,
+    tokenProvider: reg.tokenProvider,
+  );
   final soap = SoapTransport(client: client);
   final xsrs = device.controlUrl(SoapServices.scheduledRecording.serviceType);
   final cds = device.controlUrl(SoapServices.contentDirectory.serviceType);
   if (xsrs == null || cds == null) {
     throw NasneError.validation(
-        'providers', 'device exposes no XSRS/ContentDirectory control URL');
+      'providers',
+      'device exposes no XSRS/ContentDirectory control URL',
+    );
   }
   final metadata = CompositeMetadataService(
     dlna: DlnaMetadataService(soap: soap, controlUrl: cds),
@@ -244,8 +260,7 @@ DeviceServices assembleDeviceServices(
       diag: diagLog ?? const DiagLog.none(),
       // Persistent guide accumulation (plan 23), backed by the
       // app's key-value store when one is wired.
-      guideCache:
-          keyValueStore == null ? null : EpgGuideCache(keyValueStore),
+      guideCache: keyValueStore == null ? null : EpgGuideCache(keyValueStore),
       cacheHost: reg.host,
     ),
   );
@@ -263,7 +278,8 @@ DeviceServices assembleDeviceServices(
     live: DlnaLiveCatalogService(metadata: metadata),
     playback: DtcpPlaybackEngine(
       credentialStore: credentialStore ?? SecureCredentialStore(),
-      srmStore: srmStore ??
+      srmStore:
+          srmStore ??
           KeyValueSrmStore(keyValueStore ?? InMemoryKeyValueStore()),
       diag: diagLog ?? const DiagLog.none(),
       akeConnectionFactory: (host, port) => nativeAkeConnectionFactory(

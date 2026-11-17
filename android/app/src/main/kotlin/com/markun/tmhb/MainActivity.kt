@@ -1,6 +1,9 @@
 package com.markun.tmhb
 
+import android.content.ClipData
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
@@ -9,10 +12,12 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.system.StructPollfd
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -97,6 +102,21 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE_FILES_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "shareFiles" -> {
+                        val paths = call.argument<List<String>>("paths") ?: emptyList()
+                        try {
+                            shareLogFiles(paths)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("share_failed", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, AKE_SOCKET_EVENTS_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -142,9 +162,36 @@ class MainActivity : FlutterActivity() {
         window.attributes.flags and
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
 
+    // Debug log sharing (plan 45): hands the staged log copies in
+    // the cache dir to the system share sheet. Raw file:// URIs
+    // are rejected since API 24, so the files go out as
+    // FileProvider content URIs; the provider's paths file exposes
+    // only the staging subdirectory of the cache dir. The ClipData
+    // carries the read grants through the chooser to the target
+    // app.
+    private fun shareLogFiles(paths: List<String>) {
+        require(paths.isNotEmpty()) { "no files to share" }
+        val uris = ArrayList<Uri>()
+        for (path in paths) {
+            uris.add(FileProvider.getUriForFile(this, "$packageName.fileprovider", File(path)))
+        }
+        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "text/plain"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            clipData = ClipData.newUri(contentResolver, "debug logs", uris[0]).apply {
+                for (i in 1 until uris.size) {
+                    addItem(ClipData.Item(uris[i]))
+                }
+            }
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, "デバッグログを共有"))
+    }
+
     companion object {
         private const val MULTICAST_LOCK_CHANNEL = "com.markun.tmhb/multicast_lock"
         private const val WAKELOCK_CHANNEL = "com.markun.tmhb/wakelock"
+        private const val SHARE_FILES_CHANNEL = "com.markun.tmhb/share_files"
         private const val AKE_SOCKET_CHANNEL = "com.markun.tmhb/ake_socket"
         private const val AKE_SOCKET_EVENTS_CHANNEL = "com.markun.tmhb/ake_socket_events"
     }
