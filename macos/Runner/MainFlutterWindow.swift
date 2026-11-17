@@ -18,11 +18,9 @@ class MainFlutterWindow: NSWindow {
     // nasne refuses AKE connections whose IP TTL exceeds 3, and
     // dart:io cannot set the TTL, so macOS uses the same native
     // socket as iOS.
-    if let akeRegistrar = flutterViewController.registrar(
+    let akeRegistrar = flutterViewController.registrar(
       forPlugin: "AkeSocketChannels")
-    {
-      AkeSocketHub.shared.register(messenger: akeRegistrar.messenger())
-    }
+    AkeSocketHub.shared.register(messenger: akeRegistrar.messenger)
 
     super.awakeFromNib()
   }
