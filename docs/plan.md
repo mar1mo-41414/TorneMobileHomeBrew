@@ -3701,3 +3701,14 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 
 - `_pickFile()` の例外が画面に出ない問題 (69.2) は、今回は entitlement 側で根本修正したため残置した。ピッカー例外をエラー表示にする Dart 側の防御はモバイル成果物の作り直しを伴うので、入れるかどうかは別途判断する。
 - 版数上げは引き続き実機確認の後 (従来ルール)。
+
+### 69.6 署名と Desktop 配置の完了 (2026-11-18)
+
+- 本人が `--entitlements` 付きの署名コマンドを実行し `SIGNED-OK` (署名時刻 2026-11-18 08:41 JST)。クローン側の署名済み .app を検証した:
+  - 版数 **1.4.0 / ビルド 29**、Identifier `com.markun.tmhb`、**Authority = `torne-mobile-hb-signing`**。
+  - Designated Requirement は `identifier "com.markun.tmhb" and certificate root = H"cc2085f94c17c347e069fe7716d0375eb33f694c"` で、**§66.6 と完全に同一** (証明書に紐づくためビルドを跨いで安定)。
+  - 埋め込まれた entitlement は **`com.apple.security.files.user-selected.read-only` の1件のみ** (keychain-access-groups の混入なし) — §69 の修正が署名済み実物でも成立していることを確認。
+  - `codesign --verify --deep --strict` **合格** (valid on disk / satisfies its Designated Requirement)。
+- Desktop の `torne mobile HB 1.4.0.app` を署名済みビルド29へ差し替え (差し替え前は §67 の署名済みビルド28であることを確認。旧版の退避は本人の新ルールにより行わず)。差し替え後の Desktop コピーでも、版数 1.4.0/29・Authority・同一 DR・entitlement 1件のみ・verify 合格を再確認済み。
+- スモークテスト合格: Desktop コピーを起動し、10 秒後もプロセス生存 (Desktop パスからの起動、PID 38484) を確認して終了 (osascript の quit が -128 を返すのは §67 と同じ既知の挙動で、プロセスの終了自体は確認できている)。
+- これで本人が資格情報画面のピッカー3種 (env / 証明書 / 秘密鍵) を実機テストできる状態になった。その確認結果は別途記録する。
