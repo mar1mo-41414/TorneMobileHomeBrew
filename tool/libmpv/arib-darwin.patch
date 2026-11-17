@@ -1,0 +1,258 @@
+diff --git a/nix/packages/mk-pkg-aribb24/default.nix b/nix/packages/mk-pkg-aribb24/default.nix
+new file mode 100644
+index 0000000..9d87423
+--- /dev/null
++++ b/nix/packages/mk-pkg-aribb24/default.nix
+@@ -0,0 +1,138 @@
++{
++  pkgs ? import ../../utils/default/pkgs.nix,
++  os ? import ../../utils/default/os.nix,
++  arch ? pkgs.callPackage ../../utils/default/arch.nix { },
++}:
++
++let
++  name = "aribb24";
++  packageLock = (import ../../../packages.lock.nix).${name};
++  inherit (packageLock) version;
++
++  callPackage = pkgs.lib.callPackageWith { inherit pkgs os arch; };
++
++  libpng = callPackage ../mk-pkg-libpng/default.nix { };
++
++  pname = import ../../utils/name/package.nix name;
++  src = callPackage ../../utils/fetch-tarball/default.nix {
++    name = "${pname}-source-${version}";
++    inherit (packageLock) url sha256;
++  };
++  patchedSource = pkgs.runCommand "${pname}-patched-source-${version}" { } ''
++    cp -r ${src} src
++    export src=$PWD/src
++    chmod -R 777 $src
++
++    cd $src
++    # Same two source adjustments as the Android build
++    # (tool/libmpv/arib-android.patch):
++    #
++    # 1. Label the master snapshot 1.0.4. Upstream master still says
++    #    1.0.3 in AC_INIT, but FFmpeg 6.0's non-GPL configuration
++    #    requires pkg-config "aribb24 > 1.0.3": the check exists
++    #    because the 1.0.3 tag was GPLv3 while master relicensed to
++    #    LGPLv3 (commit ed79dab) and carries further fixes. The code
++    #    is otherwise unmodified upstream master.
++    sed -i 's/AC_INIT(\[aribb24\], \[1.0.3\]/AC_INIT([aribb24], [1.0.4]/' configure.ac
++    # 2. Make libpng genuinely optional: the stock PKG_CHECK_MODULES
++    #    call has an empty not-found action, which recent pkg.m4
++    #    treats as a fatal error. libpng only backs DRCS glyph
++    #    rendering; when it is present (it is, via mk-pkg-libpng)
++    #    this branch never runs.
++    sed -i 's/^], \[\])$/], [PNG_CFLAGS=""; PNG_LIBS=""])/' configure.ac
++    cd -
++
++    cp -r $src $out
++  '';
++
++  oses = import ../../utils/constants/oses.nix;
++  archs = import ../../utils/constants/archs.nix;
++
++  # Autotools needs the cross values in shell form. These mirror
++  # cross-files/<os>-<arch>.ini, which remains the source of truth
++  # for the meson-based packages.
++  platform =
++    if os == oses.ios then
++      "iPhoneOS"
++    else if os == oses.iossimulator then
++      "iPhoneSimulator"
++    else if os == oses.macos then
++      "MacOSX"
++    else
++      abort "Os ${os} is not supported";
++  clangArch = if arch == archs.amd64 then "x86_64" else "arm64";
++  minVersion =
++    if os == oses.macos then
++      "-mmacosx-version-min=10.9"
++    else if os == oses.iossimulator && arch == archs.arm64 then
++      "-miphoneos-version-min=12.0"
++    else
++      "-miphoneos-version-min=9.0";
++  targetFlag =
++    if os == oses.iossimulator && arch == archs.arm64 then
++      "-target arm64-apple-ios-simulator"
++    else
++      "";
++  hostTriple = "${clangArch}-apple-darwin";
++
++  xcode = pkgs.darwin.xcode;
++  toolchain = "${xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin";
++  sdk = "${xcode}/Contents/Developer/Platforms/${platform}.platform/Developer/SDKs/${platform}.sdk";
++  commonFlags = "-arch ${clangArch} -isysroot ${sdk} ${minVersion} ${targetFlag}";
++in
++
++pkgs.stdenvNoCC.mkDerivation {
++  name = "${pname}-${os}-${arch}-${version}";
++  pname = pname;
++  inherit version;
++  src = patchedSource;
++  dontUnpack = true;
++  enableParallelBuilding = true;
++  nativeBuildInputs = [
++    # Not autoreconfHook: its autoreconfPhase would run at the build
++    # root before configurePhase copies the source into place (this
++    # derivation uses dontUnpack with a manual copy). ./bootstrap in
++    # configurePhase runs autoreconf itself, so it only needs the
++    # tools on PATH.
++    pkgs.autoconf
++    pkgs.automake
++    pkgs.libtool
++    pkgs.pkg-config
++    pkgs.gnumake
++  ];
++  buildInputs = [
++    # Present in the darwin stack, so DRCS glyph rendering via
++    # libpng stays enabled (unlike the Android build).
++    libpng
++  ];
++  configurePhase = ''
++    cp -r $src src
++    chmod -R u+w src
++    cd src
++
++    ./bootstrap
++
++    mkdir -p _build
++    cd _build
++    ../configure \
++      --host=${hostTriple} \
++      --prefix=$out \
++      --enable-static \
++      --disable-shared \
++      CC="${toolchain}/clang ${commonFlags}" \
++      CXX="${toolchain}/clang++ ${commonFlags}" \
++      AR="${toolchain}/ar" \
++      RANLIB="${toolchain}/ranlib" \
++      NM="${toolchain}/nm" \
++      STRIP="${toolchain}/strip"
++  '';
++  # stdenv runs all phases in one shell, so the working directory
++  # persists: configurePhase ends inside src/_build, which is exactly
++  # where these phases need to run.
++  buildPhase = ''
++    make
++  '';
++  installPhase = ''
++    make install
++  '';
++}
+diff --git a/nix/packages/mk-pkg-aribb24/targets.nix b/nix/packages/mk-pkg-aribb24/targets.nix
+new file mode 100644
+index 0000000..501961b
+--- /dev/null
++++ b/nix/packages/mk-pkg-aribb24/targets.nix
+@@ -0,0 +1 @@
++import ../../utils/targets/pkgs.nix
+diff --git a/nix/packages/mk-pkg-ffmpeg/default.nix b/nix/packages/mk-pkg-ffmpeg/default.nix
+index 060869c..f9b80b9 100644
+--- a/nix/packages/mk-pkg-ffmpeg/default.nix
++++ b/nix/packages/mk-pkg-ffmpeg/default.nix
+@@ -27,6 +27,8 @@ let
+   mbedtls = callPackage ../mk-pkg-mbedtls/default.nix { };
+   dav1d = callPackage ../mk-pkg-dav1d/default.nix { };
+   libxml2 = callPackage ../mk-pkg-libxml2/default.nix { };
++  aribb24 = callPackage ../mk-pkg-aribb24/default.nix { };
++  libpng = callPackage ../mk-pkg-libpng/default.nix { };
+   libvorbis = callPackage ../mk-pkg-libvorbis/default.nix { };
+   libvpx = callPackage ../mk-pkg-libvpx/default.nix { };
+   libx264 = callPackage ../mk-pkg-libx264/default.nix { };
+@@ -75,6 +77,11 @@ pkgs.stdenvNoCC.mkDerivation {
+     ++ pkgs.lib.optionals (variant == variants.video) [
+       dav1d
+       libxml2
++      aribb24
++      # aribb24's .pc has "Requires: libpng" (DRCS is enabled in
++      # this stack), so libpng must be visible to ffmpeg's
++      # pkg-config checks and to the static link.
++      libpng
+     ]
+     ++ pkgs.lib.optionals (variant == variants.video && flavor == flavors.encodersgpl) [
+       libvpx
+diff --git a/nix/packages/mk-pkg-ffmpeg/meson.build b/nix/packages/mk-pkg-ffmpeg/meson.build
+index 35457c2..b78049e 100644
+--- a/nix/packages/mk-pkg-ffmpeg/meson.build
++++ b/nix/packages/mk-pkg-ffmpeg/meson.build
+@@ -70,6 +70,7 @@ video_common_options = [
+     '--enable-libxml2', # dash support
+     '--enable-videotoolbox',
+     '--enable-libdav1d', # av1 support
++    '--enable-libaribb24', # arib caption support
+ ]
+ 
+ # https://github.com/media-kit/libmpv-android-audio-build/blob/260666c0fef8c154971b5faf3f78da27c2bf2c40/buildscripts/flavors/default.sh
+@@ -187,6 +188,7 @@ video_default_options = [
+     '--enable-decoder=hevc', # hevc*
+     '--enable-decoder=av1', # av1*
+     '--enable-decoder=libdav1d',
++    '--enable-decoder=libaribb24',
+     '--enable-decoder=theora',
+     '--enable-decoder=msmpeg4v1', # msmpeg*
+     '--enable-decoder=msmpeg4v2', # msmpeg*
+diff --git a/nix/packages/mk-pkg-harfbuzz/default.nix b/nix/packages/mk-pkg-harfbuzz/default.nix
+index ec1d6bd..8031f61 100644
+--- a/nix/packages/mk-pkg-harfbuzz/default.nix
++++ b/nix/packages/mk-pkg-harfbuzz/default.nix
+@@ -25,11 +25,23 @@ let
+     name = "${pname}-source-${version}";
+     inherit (packageLock) url sha256;
+   };
+-  patchedSource = callPackage ../../utils/patch-shebangs/default.nix {
++  shebangPatchedSource = callPackage ../../utils/patch-shebangs/default.nix {
+     name = "${pname}-patched-source-${version}";
+     inherit src;
+     inherit nativeBuildInputs;
+   };
++  patchedSource = pkgs.runCommand "${pname}-patched-source-${version}-sincosf" { } ''
++    cp -r ${shebangPatchedSource} $out
++    chmod -R u+w $out
++
++    # Current Apple SDKs no longer declare plain sincosf in <math.h>
++    # (only the always-inline __sincosf remains), but harfbuzz's
++    # meson check still defines HAVE_SINCOSF because the symbol
++    # itself links. Point the single call site at __sincosf, which
++    # every supported SDK declares.
++    sed -i "s|sincosf (rotation|__sincosf (rotation|" $out/src/OT/glyf/VarCompositeGlyph.hh
++    grep -n "__sincosf" $out/src/OT/glyf/VarCompositeGlyph.hh
++  '';
+ in
+ 
+ pkgs.stdenvNoCC.mkDerivation {
+diff --git a/nix/packages/mk-pkg-libpng/default.nix b/nix/packages/mk-pkg-libpng/default.nix
+index 9a5fafd..0e50fca 100644
+--- a/nix/packages/mk-pkg-libpng/default.nix
++++ b/nix/packages/mk-pkg-libpng/default.nix
+@@ -39,6 +39,14 @@ let
+         unzip ${libpngPatch} -d libpng-patch
+         rsync -a libpng-patch/libpng-*/ $src/
+ 
++        # pngpriv.h includes the long-removed Classic Mac OS header
++        # <fp.h> when TARGET_OS_MAC is defined (clang defines it for
++        # every Apple target) and <math.h> has not been included yet.
++        # No current Apple SDK ships fp.h; math.h is the correct
++        # replacement on all modern Apple platforms.
++        sed -i "s|#      include <fp.h>|#      include <math.h>|" $src/pngpriv.h
++        grep -n "include <math.h>" $src/pngpriv.h | head -3
++
+         cp -r $src $out
+       '';
+ in
+diff --git a/packages.lock.nix b/packages.lock.nix
+index aed6a72..fbcbd6b 100644
+--- a/packages.lock.nix
++++ b/packages.lock.nix
+@@ -1,4 +1,9 @@
+ {
++  aribb24 = {
++    version = "1.0.4";
++    url = "https://github.com/nkoriyama/aribb24/archive/5e9be272f96e00f15a2f3c5f8ba7e124862aec38.tar.gz";
++    sha256 = "651e88af3c8189d4faed538bee3affde360eb4698a70505765fc7e5653f5eb23";
++  };
+   dav1d = {
+     version = "1.2.1";
+     url = "https://code.videolan.org/videolan/dav1d/-/archive/1.2.1/dav1d-1.2.1.tar.bz2";

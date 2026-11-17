@@ -19,6 +19,7 @@ ARIB 字幕デコーダを含んでいないため、字幕トラックを選択
   とラベルして使う (コード自体は無改変)。
 - libaribb24 の libpng 連携 (DRCS 外字の描画) は Android では
   無効 (NDK sysroot に libpng が無い)。テキスト字幕は影響しない。
+  iOS では darwin スタックに libpng があるため有効 (後述)。
 
 ## Android (実施済み、plan §55)
 
@@ -115,29 +116,108 @@ md5sum default-*.jar
   media_kit_libs_android_video の版数が上がったら、vendored
   コピーも新しい版で取り直す。
 
-## iOS (未実施、経路のみ確定)
+## iOS (実施済み、plan §57)
 
-上流: `media-kit/libmpv-darwin-build` (nix flake、成果物は
+上流: `media-kit/libmpv-darwin-build` commit `aadae8c`
+(nix flake、成果物は
 `libmpv-xcframeworks_v0.6.0_ios-universal-video-default.tar.gz`)。
-pub パッケージ `media_kit_libs_ios_video` の Makefile が
-版数と SHA-256 を固定して取得する。
+FFmpeg は Android と同じ 6.0。
 
-確認済みの構造:
+差分は `arib-darwin.patch` (7ファイル):
 
-- darwin 側の FFmpeg も 6.0 で、nix の
-  `nix/packages/mk-pkg-ffmpeg/meson.build` が External Project
-  として FFmpeg の configure を叩く。オプションリストは
-  Android の flavor と並行に管理されており、ここに
-  `--enable-libaribb24` と `--enable-decoder=libaribb24` を
-  足すのが本筋。
-- 依存は `nix/packages/mk-pkg-*` 単位で管理されるため、
-  `mk-pkg-aribb24` の新規作成 (autotools のクロスビルド) と
-  mk-pkg-ffmpeg の buildInputs への追加が必要。
-- iOS スタックには libpng (Png16.framework) が既にあるため、
-  DRCS の PNG 連携まで含められる可能性がある。
-- ビルド実行には Mac + nix (Determinate installer 推奨) +
-  Xcode のパス設定が要る。
+- `nix/packages/mk-pkg-aribb24/` (新規): aribb24 の autotools
+  クロスビルド。Android と同じ固定コミット・同じ2つの sed
+  (版数 1.0.4 ラベル、libpng チェックの真のオプション化)。
+  libpng は `mk-pkg-libpng` を buildInputs に入れたため
+  **DRCS も有効** (成果物の .pc に `Requires: libpng`、
+  アーカイブ内に png 書き込み系シンボル参照を確認)。
+  実装上の注意2点: (1) autoreconfHook は使わない。使うと
+  configurePhase のコピー前に build ルートで autoreconfPhase が
+  走って失敗する。`./bootstrap` が autoreconf を回すので、
+  autoconf/automake/libtool を nativeBuildInputs に並べる。
+  (2) stdenv の phase は同一シェルで cwd が引き継がれる。
+  configurePhase が `src/_build` に入ったまま終わる前提で
+  buildPhase/installPhase は素の `make` / `make install`。
+- `nix/packages/mk-pkg-ffmpeg/default.nix`: video バリアントの
+  buildInputs に aribb24 と libpng を追加。libpng は、aribb24 の
+  .pc の `Requires: libpng` を ffmpeg の configure の
+  pkg-config チェック (`--libs`/`--cflags` 展開) が解決する
+  ためにも必須 (無いと版数チェックを通過しても
+  "requires version higher than 1.0.3" で落ちる)。
+- `nix/packages/mk-pkg-ffmpeg/meson.build`:
+  `--enable-libaribb24` (video_common_options) と
+  `--enable-decoder=libaribb24` (video_default_options) を追加。
+- `packages.lock.nix`: aribb24 エントリ (版数 1.0.4、固定
+  コミットのアーカイブ URL と sha256 は実測値)。
+- 現在の Xcode/SDK 向け互換修正2件 (上流スタック側の問題で、
+  字幕とは無関係だが踏まないとビルドが通らない):
+  - `mk-pkg-libpng`: pngpriv.h の `#include <fp.h>` を
+    `<math.h>` に置換。fp.h は古典 Mac OS のヘッダで現行 SDK
+    には無く、TARGET_OS_MAC 定義時に踏む。libpng は従来
+    スタック内の誰にも使われていなかったため未露見だった。
+  - `mk-pkg-harfbuzz`: VarCompositeGlyph.hh の唯一の
+    `sincosf` 呼び出しを `__sincosf` に置換。現行 SDK の
+    math.h は素の sincosf を宣言しない (シンボル自体は
+    リンクできるため meson チェックは HAVE_SINCOSF を定義
+    してしまう)。
 
-実施時は Android と同様に、vendored した
-media_kit_libs_ios_video の Makefile の版数・URL・SHA-256 を
-自前リリースへ差し替える形にする。
+### 手順
+
+前提: Mac + Xcode + nix。nix は Determinate installer で導入
+(flakes がデフォルト有効)。導入直後はデーモンが起動して
+いないことがあり、その場合は
+`sudo launchctl bootstrap system /Library/LaunchDaemons/systems.determinate.nix-daemon.plist`
+で起動し、`nix store ping` が `Store URL: daemon` を返す
+ことを確認する。
+
+```sh
+git clone https://github.com/media-kit/libmpv-darwin-build
+cd libmpv-darwin-build
+git checkout aadae8c
+git apply /path/to/arib-darwin.patch
+
+# まず aribb24 単体で早期検証
+make XCODE_PATH=/Applications/Xcode.app TARGET=mk-pkg-aribb24-ios-arm64
+
+# 本体 (ios universal video default のアーカイブ一式)
+make XCODE_PATH=/Applications/Xcode.app TARGET=mk-out-archive-xcframeworks-ios-universal-video-default
+```
+
+成果物は `result/libmpv-xcframeworks_develop_ios-universal-video-default.tar.gz`
+(VERSION を指定しないと版数表記は develop になる。配布時は
+下記のとおり上流のファイル名に揃えてリネームする)。
+
+### 配布と取り込み
+
+- tar.gz は本リポの GitHub リリースに置く (現行: タグ
+  `libmpv-ios-v0.6.0-arib1`、ファイル名は上流と同じ
+  `libmpv-xcframeworks_v0.6.0_ios-universal-video-default.tar.gz`、
+  SHA-256 は `12cc6eda4596aa14921cddedcf6e062cbd792e6f571309c755e6dd4387e5069e`)。
+- アプリ側は `third_party/media_kit_libs_ios_video`
+  (pub の 1.1.4 を vendored したもの) の `ios/Makefile` が、
+  そのリリースの URL と SHA-256 を指す。`pubspec.yaml` の
+  `dependency_overrides` で vendored 版が優先される。
+- tar.gz を更新したら: 新しいリリースタグを切り、vendored
+  Makefile の URL と SHA-256 を差し替える。ビルド時に
+  Makefile が SHA-256 を検証するので、不一致はビルド
+  エラーとして現れる。
+
+### 検証方法
+
+- 成果物の Libavcodec (dylib) の configuration 文字列に
+  `--enable-libaribb24` / `--enable-decoder=libaribb24` が
+  含まれ、`libaribb24 decoder` 等のデコーダ文字列があること。
+  `otool -L` で libpng16 へのリンクも確認できる。
+- 機能実証: 同じパッチ済みソースと macOS 用 aribb24
+  パッケージでホスト用 FFmpeg 6.0 CLI を組み、字幕付き TS
+  からキューが抽出できること (§57 では x3 録画のキャプチャ
+  で実施。Android §55 の 46 キューと照合)。
+
+### 上流 media_kit が版数を上げたら
+
+Android の節と同じ手順 (新しい libmpv-darwin-build の
+commit と xcframeworks 版数の確認、FFmpeg の版数確認、
+パッチ再適用の試行、7 以降なら libaribcaption の再検討、
+新リリースタグでの公開と vendored Makefile の差し替え)。
+互換修正2件 (fp.h / sincosf) は上流や SDK の状況で
+不要になる可能性があるため、再適用時に要否を確認する。
