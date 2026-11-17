@@ -2110,3 +2110,16 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   - **`kSecAttrSynchronizable=true` を付けた SecItemDelete / SecItemAdd は、対象の有無によらず -34018** になる (entitlement の無いアドホック署名では、synchronizable 側の書き込み系操作そのものが entitlement エラー)。Read は -25300 (通常の未発見)。
 - 真因: プラグインの `performDelete` は synchronizable=true のパスを先に試す。アイテムが存在すれば次の false パスが実物を消して全体は成功するが、**何も保存されていないと true パスの -34018 が「未発見」と誤判定されずにそのまま delete 全体の失敗として伝播する**。アプリの `save()` は書き込み前に `delete()` を呼ぶため、初回インポートは必ずここで死ぬ。DP フラグとは無関係な経路であり、`fba5417` の前後で症状が同一だったことと一致する。
 - 採用した修正: `SecureCredentialStore.delete()` は、各キーを「保存されている場合にだけ」プラグイン delete で消す (存在確認の read は影響を受けない)。空のときは no-op になり、`save()` の事前 delete もそのまま成立する。テスト 207 件全合格。再ビルドした .app をデスクトップへ差し替え済み。最終確認は本人のインポート再試行。
+
+### 39.5 補正: デスクトップ版の AKE には TTL 3 が必須だった (2026-11-17)
+
+§37 の「デスクトップの AKE は dart:io 経路に自動で落ち、pydtcpip の前例がある」という前提が誤っていた。Mac 版で録画再生が開始できない件で確定した。
+
+- 症状: Mac 版で録画タイトルの再生を開始すると、再生画面にすら進まず「再生を開始できませんでした」。同機では SSDP 発見・登録・資格情報の保存は成功済みだった。
+- ログ (Mac の `debug_logs/tmhb-debug-20261117-153223-091.log`、15:38:51 の試行): `start: res quality=dr` → HEAD は 200 (113 ms、endpoint は 192.168.11.129:57343) → transport は `dart socket (not a mobile platform)` → **AKE の TCP 接続そのものが `SocketException: Connection refused (errno 61)` で失敗**。AKE メッセージは1つも流れておらず、ソース側の AKE 応答コード等も存在しない (接続段階の拒否)。
+- 同時セッション上限説は棄却: 本人が iPad・iPhone の再生を両方止めた状態で再試行しても失敗した。また marnux から素の TCP 接続を試すと、セッションが何も無い状態でも refused だった。なお同時ストリーム上限 2 の記録 (SonyNasne-DTCP docs/47) は Buffalo LS210D (DiXiM) のもので、**nasne 自体の同時上限は未確認**のままである。
+- 切り分け (実測): marnux から 192.168.11.129:57343 へ IP TTL を変えて接続試行したところ、**TTL 64 と 4 は Connection refused、TTL 3・2・1 は接続成功**。nasne の AKE リスナは TTL が 4 以上の SYN を RST で拒否する (DTCP-IP の近接性要件 TTL≦3 を、AKE 以前・TCP 接続の段階で検査している)。閾値はちょうど 3。
+- pydtcpip が「前例」にならなかった理由: pydtcpip は `pydtcpip/dtcp/ake.py` で `AKE_IP_TTL = 3` を定数に持ち、接続前に setsockopt で TTL 3 を設定している (コメントには「レコーダによっては TTL が高いと CHALLENGE の直後に切断する」とあるが、nasne は接続自体を拒否する点が異なる)。2026-11-17 朝の救出パイプラインが marnux / Windows / Mac から AKE を完走できたのはこの設定のためであり、「素の dart:io で通る」根拠にはならなかった。dart:io には TTL を設定する API が無い。
+- 採用した修正 (`a543ce6`、`bca3b56`): macOS もモバイルと同じネイティブソケット経路を使う。`macos/Runner/AkeSocket.swift` (iOS 版と同一実装、import のみ FlutterMacOS に変更) を追加し、`MainFlutterWindow` でチャンネル (`com.markun.tmhb/ake_socket`) を登録、Dart 側の振り分け (`lib/app/ake_socket.dart`) に macOS を追加した。FlutterMacOS では registrar が非 Optional で `messenger` がプロパティである点が iOS と異なり、その差分は `bca3b56` で吸収した。チャンネルが登録されていない環境では従来どおり dart:io に落ちてログに残る (その場合は nasne 相手では上記の理由で接続できない)。テスト 207 件全合格・analyze クリーン。
+- ビルドと配置: 39.3 の手順 (tool/build_macos_desktop.sh) で再ビルドし、実行ファイルに AkeSocketHub が含まれることと署名検証を確認して、本人のデスクトップの .app を差し替えて起動済み (新規クラッシュレポートなし)。配布 zip も更新: `TorneMobileHomeBrew-macos-1.2.1.zip`、SHA-256 `8ea435dc5b85a9b5959172bfa342761306ae3f2c46a388bd4397c1cdd978639d` (marnux の ~/ダウンロード と作業領域に配置)。再生の実成否は本人の再試行で確認する (ログに `ake transport: native socket, ip ttl 3` が出れば経路は確定する)。
+- Linux 版は未修正: 同じ理由で AKE の接続が refused になるはずであり、直すには Linux 側のネイティブチャンネル実装が別途必要。本節で直したのは macOS のみ。
