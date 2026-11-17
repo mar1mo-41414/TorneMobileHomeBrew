@@ -58,3 +58,5 @@ dependency_overrides:
     path: third_party/media_kit_libs_android_video
   media_kit_libs_ios_video:
     path: third_party/media_kit_libs_ios_video
+  media_kit_libs_windows_video:
+    path: third_party/media_kit_libs_windows_video

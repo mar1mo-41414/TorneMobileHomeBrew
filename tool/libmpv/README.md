@@ -255,3 +255,67 @@ commit と xcframeworks 版数の確認、FFmpeg の版数確認、
 新リリースタグでの公開と vendored Makefile の差し替え)。
 互換修正2件 (fp.h / sincosf) は上流や SDK の状況で
 不要になる可能性があるため、再適用時に要否を確認する。
+
+## Windows (実施済み、plan §61)
+
+上流は `media-kit/libmpv-win32-video-cmake` (CMake superbuild、
+自前の GCC/MinGW クロスツールチェーンを構築する方式)。
+ビルドは Linux (marnux) で完結する。公式配布の libmpv
+(2023-09-24、FFmpeg 6.0) には ARIB 字幕デコーダが無いため、
+字幕はこの自前ビルドが前提になる。Android/iOS の aribb24 と
+違い、Windows では FFmpeg 7 世代の **libaribcaption** 経路を
+使う (libaribcaption 本体は MIT ライセンス)。
+
+確定した版数の組み合わせ (arib1):
+
+- FFmpeg **n7.1.5** に固定 (release/7.1 追随では superbuild の
+  dash/hls パッチと両立するタグが無いため。dash パッチは再生成)
+- mpv v0.39.0、libaribcaption master `d59c9d6`
+- クロス GCC は固定スナップショットが消滅していたため
+  **14.3.0 リリース版**に substitution
+
+### 手順
+
+1. `libmpv-win32-video-cmake` をフォークし、`tool/libmpv/arib-win32.patch`
+   を適用する。配線の要点は3点: `packages/CMakeLists.txt` の
+   ep 一覧に `libaribcaption` を追加、`packages/ffmpeg.cmake` の
+   DEPENDS に追加、ffmpeg の configure 引数に
+   `--enable-libaribcaption` と `--enable-decoder=libaribcaption`
+   を追加 (ffmpeg.cmake は `--disable-decoders` を全体に掛ける
+   ため、デコーダ側の明示有効化が必須)。
+2. パッチには配線以外の互換修正も含まれる (libaribcaption の
+   `-DHAVE_OPENSSL=1` 除去、mpv の新ヘッダ不整合の修正と
+   osd_libass 代替実装、死リンクの差し替え、fontconfig /
+   vulkan の版数固定 等)。詳細は作業記録
+   (`tmhb.work/2026-11-17-windows-survey/libmpv-build-record.md`)。
+3. superbuild を実行し (`ninja mpv`)、得られた `libmpv-2.dll` /
+   `libmpv.dll.a` / `include/mpv/*.h` を公式 7z と同じ
+   レイアウトで 7z 化する。
+
+### 配布と取り込み
+
+- GitHub リリース `libmpv-windows-v1.0.11-arib1` に 7z を置く
+  (MD5 は vendored パッケージ側の検証に使われる)。
+- `third_party/media_kit_libs_windows_video` (pub 1.0.11 の
+  vendored コピー) の `windows/CMakeLists.txt` が、公式の
+  2023-09-24 アーカイブではなくこの 7z を取得する
+  (ファイル名・URL・MD5 を差し替え済み)。
+
+### 検証方法
+
+- DLL の FFmpeg configuration 文字列に
+  `--enable-libaribcaption` と `--enable-decoder=libaribcaption`
+  が含まれること、デコーダ名 `libaribcaption` の文字列が
+  DLL 内に存在すること、ffmpeg の configure ログで
+  Enabled external libraries / Enabled decoders の両方に
+  掲載されていること。
+- 実機 (Windows) での字幕描画の確認はアプリ組み込み後の
+  段で行う (ビルド単体では未実施)。
+
+### 上流 media_kit が版数を上げたら
+
+新しい `media_kit_libs_windows_video` が新しい公式アーカイブを
+固定してきたら、その FFmpeg 版数と字幕デコーダの有無を
+再検査する。公式に libaribcaption 入りのビルドが出れば
+自前ビルドは不要になるが、公式リリースは 2023-09-24 で
+止まっているため、当面は本手順が正になる。

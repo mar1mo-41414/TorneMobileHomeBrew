@@ -3106,3 +3106,11 @@ Windows 調査 (§ 調査レポート `tmhb.work/2026-11-17-windows-survey/repor
 
 - marnux で `flutter analyze` は無警告、`flutter test` は全 250 件合格。
 - **未検証: Windows コードのコンパイルと実機動作。** marnux には Windows ツールチェーンが無く、marog には Visual Studio が無いため、`ake_socket.cpp` を含む Windows ランナーはまだ一度もコンパイルされていない。VS 導入後に marog で `flutter build windows` を通し、AKE の実接続 (nasne への TTL 3 接続) まで確認して初めて成立とする。
+
+### 61.5 libmpv の自前ビルドと vendored 統合 (字幕)
+
+- Windows の配布 libmpv (media_kit_libs_windows_video 1.0.11 が固定する 2023-09-24 ビルド) は FFmpeg 6.0 で libaribb24 / libaribcaption のいずれも無効であり、ARIB 字幕デコーダが無いことを実物 DLL の文字列・configuration で確認した (調査レポートは作業領域 `tmhb.work/2026-11-17-windows-survey/report.md`)。
+- ビルドシステム `media-kit/libmpv-win32-video-cmake` (現行 master は FFmpeg release/7.1 系) の `packages/libaribcaption.cmake` は存在するが未配線だったため、ep 一覧への追加・ffmpeg の DEPENDS 追加・`--enable-libaribcaption` と `--enable-decoder=libaribcaption` の追加の3点を配線し、marnux 上で自前ビルドした (superbuild は自前の MinGW クロスツールチェーンを構築するため、ビルドは Linux で完結)。確定した組み合わせは FFmpeg **n7.1.5** 固定 (dash パッチ再生成)、mpv v0.39.0、libaribcaption master `d59c9d6`、クロス GCC 14.3.0。libaribcaption は MIT ライセンスで阻害要因なし。累積差分は `tool/libmpv/arib-win32.patch` (15 ファイル)、詳細記録は作業領域の `libmpv-build-record.md`、手順は `tool/libmpv/README.md` の Windows の節。
+- 成果物 `libmpv-2.dll` (38,306,830 B) の configuration に両フラグが入り、デコーダ名文字列と configure ログ (Enabled external libraries / decoders) でも同梱を確認。公式 7z と同一レイアウトで 7z 化し (11,075,579 B、MD5 `2bef55eb97b61c78cb12c68bc0e8da66`)、GitHub リリース **`libmpv-windows-v1.0.11-arib1`** に公開した (未認証再ダウンロードで MD5 一致を確認)。
+- 統合は Android/iOS と同型: `third_party/media_kit_libs_windows_video` (pub 1.0.11 の vendored コピー) の `windows/CMakeLists.txt` の取得先を自前 7z に差し替え、`pubspec.yaml` の `dependency_overrides` に追加。`flutter pub get` / `analyze` / `test` (250 件) は marnux で通過。
+- **未検証のまま残るもの**: Windows 実機でのアプリのビルドと字幕描画。marog に Visual Studio (「C++ によるデスクトップ開発」ワークロード) が無く、アプリ本体のビルド自体がまだ実行できない。本人の VS 導入後に `flutter build windows` → 起動・発見・登録・再生・字幕の実機確認をもって Windows 対応の成立とする。
