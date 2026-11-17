@@ -1864,3 +1864,26 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - IPA (署名なし、CFBundleShortVersionString 1.2.0 / CFBundleVersion 11 を実物で確認): 16,944,031 バイト、SHA-256 `33ed1307ee0126e8992c3b9a8a9d2310f4c6e9e324626370cb52e090647ceb71`。marnux `~/tmp/Decrypted-ipa/` に配置。
 - APK (配布用署名、versionCode 11、署名証明書 `e60cfeda…`): 101,587,445 バイト、SHA-256 `cd960439884e68e8235861182c144697331504d40ecb35dbc6b839ff85e7ace8`。marnux `~/ダウンロード/` に配置。
 - 残件: 実機 (iPad / iPhone) で再生中にスリープしなくなったことの確認は本人の次回再生テスト待ち。
+
+## 33. モバイル画質の選択 (再生時オプション) (2026-11-17、ビルド +12)
+
+### 33.1 仕様 (本人の決定)
+
+- 録画の詳細画面で、再生画質をオプションとして選択できるようにする。デフォルトは常に元画質。
+- 選択肢は 2 つ: **元画質** (そのタイトルの原本リソース、DR / 3倍) と **モバイル** (nasne 側の `quality=mobile` リソース、低ビットレート版)。
+- そのタイトルにモバイルリソースが存在しない場合は、モバイルを選択肢に出さない。
+- 選択は再生ごとのオプションで、グローバル設定にはしない (保存しない)。
+
+### 33.2 実装
+
+- リソース判定 (`lib/core/models/title.dart`): `RecordedTitle` に `originalRes` / `mobileRes` ゲッターを追加した。原本 = DIDL の res 一覧から `quality` が `mobile` でない最初のもの (全て mobile の場合は先頭へフォールバック)、モバイル = `quality == 'mobile'` の最初のもの。リソースの有無は DIDL 由来の情報だけで判定でき、追加の問い合わせはしない (フェーズ 0 の実測: DR タイトルは dr + mobile、3 倍タイトルは x3 + mobile が併存)。
+- 選択 UI (`lib/ui/titles_screen.dart`): 詳細画面を `ConsumerStatefulWidget` 化し、再生ボタン直前に「再生画質」の SegmentedButton を追加した (モバイルリソースがある場合のみ表示)。選択肢のラベルは「元画質 (DR)」「元画質 (3倍)」のように原本の画質名を併記する (`resQualityLabel` を `lib/ui/format.dart` に追加: dr → DR、x3 → 3倍、mobile → モバイル、未知値は原文字列)。状態は画面内のメモリだけに持ち、画面を開くたびに元画質から始まる。
+- 再生経路: エンジン境界 `startPlayback(title, res)` は元々 res を引数に取るため、UI が選択した res を渡すだけでよい。モバイル選択時はコンテンツ GET 先が mobile リソースの URL になるだけで、AKE・復号・プロキシは既存のまま (リソースが違うだけ)。選択した画質は DTCP エンジンの開始ログに `start: res quality=<値>` として playback カテゴリへ残る。
+- テスト: `test/title_res_selection_test.dart` を新設 (8 件: dr/x3 + mobile の解決、mobile が先頭に来る場合、mobile 無し、res 無し、mobile のみのフォールバック、ラベル変換)。`test/ui_test.dart` にウィジェットテスト 2 件を追加 (モバイル有りタイトルで選択肢が出てデフォルトが原本・モバイル選択でエンジンへ mobile の res が渡ること、モバイル無しタイトルで選択肢が出ないこと。検証用の `RecordingPlaybackEngine` と Fixture の差し替え口も追加)。全体 **190 件全合格** (180 + 10)、`flutter analyze` 検出なし。
+- 版数: 実機での成立確認が済むまで上げないルールに従い **1.2.0 のまま、ビルド 12**。GitHub リリースはしない。コミット: 実装 `4e8c978`。
+
+### 33.3 ビルド (ビルド +12)
+
+- IPA (署名なし、CFBundleShortVersionString 1.2.0 / CFBundleVersion 12 を実物で確認): 16,963,007 バイト、SHA-256 `7d642921fe592395ae1e7f3d3bb77886914257c1d20c105d541635c30922a09f`。marnux `~/tmp/Decrypted-ipa/` に配置。
+- APK (配布用署名、versionCode 12、署名証明書 `e60cfeda…`): 101,636,637 バイト、SHA-256 `ce88dda2d04aa5066af65e1122eb4ac8231688c3174ebc7f3eb5921b419f4bcf`。marnux `~/ダウンロード/` に配置。
+- 残件: 実機でのモバイル再生の確認 (低速経路でモバイルを選ぶとバッファリングが収まるかを含む) は本人の次回再生テスト待ち。
