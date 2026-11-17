@@ -24,6 +24,7 @@
 /// the recipe with the real format; see `buildEpgGetBody`.
 library;
 
+import '../diagnostics.dart';
 import '../endpoints.dart';
 import '../errors.dart';
 import '../models/channel.dart';
@@ -38,10 +39,14 @@ class WebApiEpgService {
     required this._authed,
     this._guideCache,
     this._cacheHost,
+    this._diag = const DiagLog.none(),
   });
 
   final WebApiTransport _plain;
   final WebApiTransport _authed;
+
+  /// Diagnostics sink (plan 28), category epg.
+  final DiagLog _diag;
 
   /// Persistent accumulation cache (plan 23). A single fetch now
   /// returns the unit's complete stored dataset (plan 24), but that
@@ -60,6 +65,7 @@ class WebApiEpgService {
     int broadcastingType,
     List<Channel> channels,
   ) async {
+    final stopwatch = Stopwatch()..start();
     final versionTable = await _plain.getBytes(
       WebApiEndpoints.epgVersionInfoGet,
       params: {'broadcastingType': '$broadcastingType'},
@@ -84,6 +90,13 @@ class WebApiEpgService {
     final plain = inflateEpgResponse(raw);
     final fresh = parseEpgGuide(plain, channels,
         broadcastingType: broadcastingType);
+    _diag(
+      DiagCategory.epg,
+      'epg fetch type=$broadcastingType: ${fresh.services.length} '
+      'services, '
+      '${fresh.services.fold<int>(0, (sum, s) => sum + s.events.length)} '
+      'events in ${stopwatch.elapsedMilliseconds} ms',
+    );
     final cache = _guideCache;
     final host = _cacheHost;
     if (cache == null || host == null) return fresh;

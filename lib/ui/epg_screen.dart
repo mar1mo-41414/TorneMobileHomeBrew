@@ -17,6 +17,7 @@ import '../app/state.dart';
 import '../core/core.dart';
 import 'error_messages.dart';
 import 'format.dart';
+import 'schedule_form.dart';
 import 'widgets.dart';
 
 /// Vertical scale of the grid: pixels per broadcast minute.
@@ -164,6 +165,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
                   onRetry: () => ref.invalidate(epgGuideProvider(reg)),
                 ),
                 data: (guide) => _GuideView(
+                  reg: reg,
                   guide: _visibleGuide(
                       guide, ref.watch(showSubchannelsProvider)),
                   logos: ref.watch(channelLogosProvider(reg)).value ?? const {},
@@ -200,6 +202,7 @@ EpgGuide _visibleGuide(EpgGuide guide, bool showSubchannels) {
 
 class _GuideView extends StatelessWidget {
   const _GuideView({
+    required this.reg,
     required this.guide,
     required this.logos,
     required this.selectedDay,
@@ -210,6 +213,7 @@ class _GuideView extends StatelessWidget {
     required this.onScrolledToNow,
   });
 
+  final RegisteredNasne reg;
   final EpgGuide guide;
   final Map<int, List<int>> logos;
   final DateTime? selectedDay;
@@ -289,6 +293,7 @@ class _GuideView extends StatelessWidget {
                         _ChannelHeader(services: guide.services, logos: logos),
                         Expanded(
                           child: _DayGrid(
+                            reg: reg,
                             services: guide.services,
                             dayStart: dayStart,
                             dayEnd: dayEnd,
@@ -426,12 +431,14 @@ class _TimeRuler extends StatelessWidget {
 
 class _DayGrid extends StatelessWidget {
   const _DayGrid({
+    required this.reg,
     required this.services,
     required this.dayStart,
     required this.dayEnd,
     required this.controller,
   });
 
+  final RegisteredNasne reg;
   final List<EpgServiceGuide> services;
   final DateTime dayStart;
   final DateTime dayEnd;
@@ -477,7 +484,9 @@ class _DayGrid extends StatelessWidget {
                             key: ValueKey(
                                 '${services[i].channel.serviceId}-${event.eventId}-${event.start}'),
                             event: event,
+                            channel: services[i].channel,
                             channelName: services[i].channel.serviceName,
+                            reg: reg,
                             dayStart: dayStart,
                           ),
                       ],
@@ -503,12 +512,16 @@ class _EventTile extends StatelessWidget {
   const _EventTile({
     super.key,
     required this.event,
+    required this.channel,
     required this.channelName,
+    required this.reg,
     required this.dayStart,
   });
 
   final EpgEvent event;
+  final Channel channel;
   final String channelName;
+  final RegisteredNasne reg;
   final DateTime dayStart;
 
   @override
@@ -546,8 +559,28 @@ class _EventTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(3),
           onTap: () => showDialog<void>(
             context: context,
-            builder: (_) =>
-                _EventDetailDialog(event: event, channelName: channelName),
+            builder: (dialogContext) => _EventDetailDialog(
+              event: event,
+              channelName: channelName,
+              // Reserve from the guide (plan 28): opens the create
+              // form prefilled with this event, through the same
+              // XSRS create path as a manual reservation. Events
+              // that have already ended cannot be reserved.
+              onReserve: event.end.isAfter(DateTime.now())
+                  ? () {
+                      Navigator.of(dialogContext).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ScheduleFormPage.fromEpg(
+                            reg,
+                            channel: channel,
+                            event: event,
+                          ),
+                        ),
+                      );
+                    }
+                  : null,
+            ),
           ),
           child: maxTitleLines >= 1
               ? Padding(
@@ -602,10 +635,18 @@ class _EventTile extends StatelessWidget {
 }
 
 class _EventDetailDialog extends StatelessWidget {
-  const _EventDetailDialog({required this.event, required this.channelName});
+  const _EventDetailDialog({
+    required this.event,
+    required this.channelName,
+    this.onReserve,
+  });
 
   final EpgEvent event;
   final String channelName;
+
+  /// Opens the prefilled reservation form (plan 28); null when
+  /// the event has already ended.
+  final VoidCallback? onReserve;
 
   @override
   Widget build(BuildContext context) {
@@ -658,6 +699,12 @@ class _EventDetailDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),
+        if (onReserve != null)
+          FilledButton.icon(
+            onPressed: onReserve,
+            icon: const Icon(Icons.fiber_manual_record, size: 18),
+            label: const Text('録画予約'),
+          ),
       ],
     );
   }

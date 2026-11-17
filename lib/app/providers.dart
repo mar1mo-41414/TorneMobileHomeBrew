@@ -5,10 +5,14 @@
 /// discovered path) is an override here, never a UI change.
 library;
 
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/core.dart';
+import 'ake_socket.dart';
+import 'debug_log.dart';
 import 'multicast_lock.dart';
 
 final httpClientProvider = Provider<http.Client>((ref) => http.Client());
@@ -94,10 +98,77 @@ final showSubchannelsProvider =
     NotifierProvider<ShowSubchannelsNotifier, bool>(
         ShowSubchannelsNotifier.new);
 
+/// The app documents directory (debug log destination, plan 28).
+/// The bootstrap overrides this with the real directory; null in
+/// tests / headless contexts (debug logging then stays off).
+final documentsDirectoryProvider = Provider<Directory?>((ref) => null);
+
+/// Debug mode settings (plan 28): the master switch and the
+/// enabled category set, persisted in the key-value store.
+class DebugSettingsNotifier extends Notifier<DebugSettings> {
+  static const _masterKey = 'debug_mode_enabled';
+  static const _categoriesKey = 'debug_categories';
+
+  @override
+  DebugSettings build() {
+    final store = ref.watch(keyValueStoreProvider);
+    Future.microtask(() async {
+      final master = await store.read(_masterKey);
+      final categories = await store.read(_categoriesKey);
+      state = DebugSettings(
+        master: master == 'true',
+        categories: DebugSettings.decodeCategories(categories),
+      );
+    });
+    return const DebugSettings();
+  }
+
+  Future<void> setMaster(bool value) async {
+    state = state.copyWith(master: value);
+    await ref.read(keyValueStoreProvider).write(_masterKey, '$value');
+  }
+
+  Future<void> setCategory(DiagCategory category, bool enabled) async {
+    final next = {...state.categories};
+    if (enabled) {
+      next.add(category);
+    } else {
+      next.remove(category);
+    }
+    state = state.copyWith(categories: next);
+    await ref
+        .read(keyValueStoreProvider)
+        .write(_categoriesKey, state.encodeCategories());
+  }
+}
+
+final debugSettingsProvider =
+    NotifierProvider<DebugSettingsNotifier, DebugSettings>(
+        DebugSettingsNotifier.new);
+
+/// The app-wide diagnostics logger (plan 28). Reflects the current
+/// debug settings on every record: master off, the category off,
+/// or no documents directory records nothing.
+final diagLogProvider = Provider<DiagLog>((ref) {
+  final dir = ref.watch(documentsDirectoryProvider);
+  if (dir == null) return const DiagLog.none();
+  final sink = FileDebugLogSink(dir);
+  return DiagLog(
+    (category, message) => sink.write(category, message),
+    (category) {
+      final settings = ref.read(debugSettingsProvider);
+      return settings.master && settings.categories.contains(category);
+    },
+  );
+});
+
 final playbackEngineProvider = Provider<PlaybackEngine>(
   (ref) => DtcpPlaybackEngine(
     credentialStore: ref.watch(credentialStoreProvider),
     srmStore: ref.watch(srmStoreProvider),
+    diag: ref.watch(diagLogProvider),
+    akeConnectionFactory: (host, port) =>
+        nativeAkeConnectionFactory(host, port, diag: ref.read(diagLogProvider)),
   ),
 );
 
@@ -129,6 +200,7 @@ DeviceServices assembleDeviceServices(
   KeyValueStore? keyValueStore,
   CredentialStore? credentialStore,
   SrmStore? srmStore,
+  DiagLog? diagLog,
 }) {
   final device = describedDevice ?? NasneDevice.direct(reg.host);
   final plain = WebApiTransport(reg.host, client: client);
@@ -146,6 +218,7 @@ DeviceServices assembleDeviceServices(
     epg: WebApiEpgService(
       plain: plain,
       authed: authed,
+      diag: diagLog ?? const DiagLog.none(),
       // Persistent guide accumulation (plan 23), backed by the
       // app's key-value store when one is wired.
       guideCache:
@@ -168,6 +241,12 @@ DeviceServices assembleDeviceServices(
       credentialStore: credentialStore ?? SecureCredentialStore(),
       srmStore: srmStore ??
           KeyValueSrmStore(keyValueStore ?? InMemoryKeyValueStore()),
+      diag: diagLog ?? const DiagLog.none(),
+      akeConnectionFactory: (host, port) => nativeAkeConnectionFactory(
+        host,
+        port,
+        diag: diagLog ?? const DiagLog.none(),
+      ),
     ),
   );
 }
@@ -179,5 +258,6 @@ final deviceServicesProvider = Provider.family<DeviceServices, RegisteredNasne>(
     keyValueStore: ref.watch(keyValueStoreProvider),
     credentialStore: ref.watch(credentialStoreProvider),
     srmStore: ref.watch(srmStoreProvider),
+    diagLog: ref.watch(diagLogProvider),
   ),
 );

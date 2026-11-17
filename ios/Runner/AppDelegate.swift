@@ -12,5 +12,8 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // Native AKE socket channels (IP TTL 3, plan 28).
+    let akeRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "AkeSocketChannels")
+    AkeSocketHub.shared.register(messenger: akeRegistrar.messenger)
   }
 }

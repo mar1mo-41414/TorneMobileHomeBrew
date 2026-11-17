@@ -232,10 +232,18 @@ void main() {
   group('AKE against a fake source', () {
     test('full authentication, RTT, exchange key and SRM update', () async {
       final srmStore = _TestSrmStore(testAuthority);
+      final clientWire = <Uint8List>[];
+      final sourceWire = <Uint8List>[];
       late _FakeConnection clientConn;
       late _FakeConnection sourceConn;
-      clientConn = _FakeConnection((bytes) => sourceConn.deliver(bytes));
-      sourceConn = _FakeConnection((bytes) => clientConn.deliver(bytes));
+      clientConn = _FakeConnection(
+        (bytes) => sourceConn.deliver(bytes),
+        clientWire.add,
+      );
+      sourceConn = _FakeConnection(
+        (bytes) => clientConn.deliver(bytes),
+        sourceWire.add,
+      );
 
       final credentials = DeviceCredentials(
         certificate: sinkCert,
@@ -258,6 +266,14 @@ void main() {
         testAuthority: testAuthority,
       );
       final session = await client.connect('192.0.2.1', 58293);
+      // Playback start now waits for the first exchange key inside
+      // the start path (plan 28).
+      expect(
+        await session.waitFirstExchangeKey(
+          timeout: const Duration(seconds: 10),
+        ),
+        0x2A,
+      );
       final key = await session.waitExchangeKey(
         0x2A,
         timeout: const Duration(seconds: 10),
@@ -267,6 +283,110 @@ void main() {
       expect(srmStore.savedRaw, isNotNull);
       expect(bytesToHex(srmStore.savedRaw!), katSrmUpdateData);
       await session.close();
+
+      // Wire format (plan 28): the client's frames must match the
+      // reference implementation byte for byte in the header.
+      final clientFrames = _parseWireFrames(clientWire);
+      final sourceFrames = _parseWireFrames(sourceWire);
+      // Requests: role byte 0x01 (sink), status byte 0x0F.
+      for (final i in [0, 3, 5]) {
+        expect(clientFrames[i][8], 0x01, reason: 'client frame $i role byte');
+        expect(clientFrames[i][10], 0x0F, reason: 'client frame $i status');
+        expect(clientFrames[i][3], 0x00, reason: 'client frame $i ctype');
+      }
+      // Accepted responses copy the received frame's header
+      // (bytes 3..10 compared, length bytes excluded): ctype
+      // becomes 0x09 and the status nibble clears; procedure, key
+      // type, role byte and label are inherited. Client frame 1
+      // answers source frame 1 (the source CHALLENGE, role byte
+      // 0x00), client frame 9 answers source frame 9
+      // (EXCHANGE_KEY).
+      for (final (clientIdx, sourceIdx) in [(1, 1), (9, 9)]) {
+        final accepted = clientFrames[clientIdx];
+        final original = sourceFrames[sourceIdx];
+        expect(accepted[3], 0x09);
+        expect(accepted[10], 0x00);
+        for (final b in [4, 5, 6, 7, 8, 9]) {
+          expect(
+            accepted[b],
+            original[b],
+            reason: 'accepted header byte $b must be copied',
+          );
+        }
+      }
+    });
+
+    test('diagnostics record stages but never key material', () async {
+      final lines = <String>[];
+      final diag = DiagLog(
+        (category, message) => lines.add('[${category.name}] $message'),
+        (_) => true,
+      );
+      final srmStore = _TestSrmStore(testAuthority);
+      late _FakeConnection clientConn;
+      late _FakeConnection sourceConn;
+      clientConn = _FakeConnection((bytes) => sourceConn.deliver(bytes));
+      sourceConn = _FakeConnection((bytes) => clientConn.deliver(bytes));
+      final client = AkeClient(
+        credentials: DeviceCredentials(
+          certificate: sinkCert,
+          privateKey: sinkPriv,
+          authorityKeys: testAuthority,
+        ),
+        srmStore: srmStore,
+        connectionFactory: (host, port) async => clientConn,
+        randomBytes: (n) => hex(katSinkNonce),
+        ephemeralScalar: () => bytesToBigInt(hex(katEphA)),
+        authorityKeys: testAuthority,
+        diag: diag,
+      );
+      final fake = _runFakeSource(
+        sourceConn,
+        srcCert: srcCert,
+        srcPriv: srcPriv,
+        testAuthority: testAuthority,
+      );
+      final session = await client.connect('192.0.2.1', 58293);
+      await session.waitExchangeKey(
+        0x2A,
+        timeout: const Duration(seconds: 10),
+      );
+      await fake.timeout(const Duration(seconds: 10));
+      await session.close();
+
+      // Stage transitions and frame headers ARE recorded.
+      expect(lines.any((l) => l.contains('stage: challenge accepted')), isTrue);
+      expect(
+        lines.any((l) => l.contains('stage: response accepted')),
+        isTrue,
+      );
+      expect(
+        lines.any((l) => l.contains('exchange key received, label 42')),
+        isTrue,
+      );
+      expect(lines.any((l) => l.contains('rx cmd=0x01')), isTrue);
+      // Key material is NOT: not the auth key, the exchange key,
+      // the private key, either nonce, or the shared secret — in
+      // hex or base64.
+      final secrets = <String>[
+        katAuthKey,
+        katPcpExchangeKey,
+        katSinkPriv,
+        katSinkNonce,
+        katSrcNonce,
+        katSharedSecret,
+        base64Encode(hex(katAuthKey)),
+        base64Encode(hex(katPcpExchangeKey)),
+      ];
+      for (final line in lines) {
+        for (final secret in secrets) {
+          expect(
+            line.contains(secret),
+            isFalse,
+            reason: 'log line must not contain key material: $line',
+          );
+        }
+      }
     });
 
     test('a revoked source is rejected at CHALLENGE', () async {
@@ -462,9 +582,10 @@ class _TestSrmStore implements SrmStore {
 
 /// One end of an in-memory AKE transport pair.
 class _FakeConnection implements AkeConnection {
-  _FakeConnection(this._sendTo);
+  _FakeConnection(this._sendTo, [this._onSend]);
 
   final void Function(Uint8List) _sendTo;
+  final void Function(Uint8List)? _onSend;
   final StreamController<Uint8List> _controller = StreamController<Uint8List>();
 
   void deliver(Uint8List bytes) => _controller.add(bytes);
@@ -473,12 +594,31 @@ class _FakeConnection implements AkeConnection {
   Stream<Uint8List> get incoming => _controller.stream;
 
   @override
-  void send(Uint8List bytes) => _sendTo(bytes);
+  void send(Uint8List bytes) {
+    _onSend?.call(bytes);
+    _sendTo(bytes);
+  }
 
   @override
   Future<void> close() async {
     await _controller.close();
   }
+}
+
+/// Splits recorded wire chunks into raw frames (header + payload)
+/// for byte-level assertions.
+List<Uint8List> _parseWireFrames(List<Uint8List> chunks) {
+  final all = Uint8List.fromList([for (final c in chunks) ...c]);
+  final frames = <Uint8List>[];
+  var offset = 0;
+  while (offset < all.length) {
+    final parsed = ControlFrame.tryParse(all.sublist(offset));
+    if (parsed == null) break;
+    final (_, consumed) = parsed;
+    frames.add(Uint8List.fromList(all.sublist(offset, offset + consumed)));
+    offset += consumed;
+  }
+  return frames;
 }
 
 class _TestFrameReader {
@@ -535,20 +675,16 @@ Future<void> _runFakeSource(
     sinkCertBytes,
     authorityKeys: testAuthority,
   );
-  send(
-    ControlFrame(
-      command: AkeCommands.challenge,
-      payload: Uint8List(0),
-      isResponse: true,
-    ),
-  );
+  // ACCEPTED: a copy of the received header (reference behaviour).
+  send(frame.accepted());
 
-  // Source CHALLENGE.
+  // Source CHALLENGE (source frames carry role byte 0x00).
   final srcNonce = hex(katSrcNonce);
   send(
     ControlFrame(
       command: AkeCommands.challenge,
       payload: Uint8List.fromList([...srcNonce, ...srcCert]),
+      roleByte: 0,
     ),
   );
   frame = await reader.next();
@@ -566,6 +702,7 @@ Future<void> _runFakeSource(
     ControlFrame(
       command: AkeCommands.response,
       payload: Uint8List.fromList([...responseData, ...sig]),
+      roleByte: 0,
     ),
   );
   frame = await reader.next();
@@ -584,35 +721,26 @@ Future<void> _runFakeSource(
       clientSig,
     ),
   );
-  send(
-    ControlFrame(
-      command: AkeCommands.response,
-      payload: Uint8List(0),
-      isResponse: true,
-    ),
-  );
+  send(frame.accepted());
   final shared = ecdhSharedSecret(ephB, clientEph);
   final authKey = shared.sublist(8);
 
   // RTT: ready exchange, setup with the KAT counter, test, verify.
-  send(ControlFrame(command: AkeCommands.rttReady, payload: Uint8List(0)));
+  send(
+    ControlFrame(command: AkeCommands.rttReady, payload: Uint8List(0), roleByte: 0),
+  );
   frame = await reader.next();
   assert(frame.isResponse && frame.command == AkeCommands.rttReady);
   frame = await reader.next();
   assert(!frame.isResponse && frame.command == AkeCommands.rttReady);
-  send(
-    ControlFrame(
-      command: AkeCommands.rttReady,
-      payload: Uint8List(0),
-      isResponse: true,
-    ),
-  );
+  send(frame.accepted());
 
   const counter = 0x1234;
   send(
     ControlFrame(
       command: AkeCommands.rttSetup,
       payload: Uint8List.fromList([counter >> 8, counter & 0xFF]),
+      roleByte: 0,
     ),
   );
   frame = await reader.next();
@@ -631,12 +759,16 @@ Future<void> _runFakeSource(
   );
   final verifyMac = verifyDigest.sublist(0, 10);
 
-  send(ControlFrame(command: AkeCommands.rttTest, payload: expected));
+  send(
+    ControlFrame(command: AkeCommands.rttTest, payload: expected, roleByte: 0),
+  );
   frame = await reader.next();
   assert(frame.isResponse && frame.command == AkeCommands.rttTest);
   assert(bytesToHex(frame.payload) == bytesToHex(responseMac));
 
-  send(ControlFrame(command: AkeCommands.rttVerify, payload: verifyMac));
+  send(
+    ControlFrame(command: AkeCommands.rttVerify, payload: verifyMac, roleByte: 0),
+  );
   frame = await reader.next();
   assert(frame.isResponse && frame.command == AkeCommands.rttVerify);
   assert(bytesToHex(frame.payload) == bytesToHex(verifyMac));
@@ -651,11 +783,15 @@ Future<void> _runFakeSource(
     ControlFrame(
       command: AkeCommands.exchangeKey,
       payload: Uint8List.fromList([0x2A, 0, ...masked]),
+      roleByte: 0,
     ),
   );
   frame = await reader.next();
   assert(frame.isResponse && frame.command == AkeCommands.exchangeKey);
-  assert(frame.label == 0x2A);
+  // Copy semantics (plan 28): the accepted frame inherits the
+  // SOURCE frame's header, whose label byte is 0 — the key label
+  // lives in the request payload, not the header.
+  assert(frame.label == 0);
 
   // SRM_UPDATE with a newer SRM (version 10) that revokes neither
   // party. (The KAT SRM revokes this source; receiving it as an
@@ -664,6 +800,7 @@ Future<void> _runFakeSource(
     ControlFrame(
       command: AkeCommands.srmUpdate,
       payload: hex(katSrmUpdateData),
+      roleByte: 0,
     ),
   );
   frame = await reader.next();

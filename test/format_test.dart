@@ -8,8 +8,12 @@ import 'package:tmhb/ui/format.dart';
 
 void main() {
   test('qualityModeLabel uses the official names for known modes', () {
+    // XSRS value space (plan 28): 100 = DR, 230 = 3倍, from
+    // torne-created items. 101 belongs to the WebAPI JSON space
+    // and is not labelled here.
     expect(qualityModeLabel(100), 'DR');
-    expect(qualityModeLabel(101), '3倍');
+    expect(qualityModeLabel(230), '3倍');
+    expect(qualityModeLabel(101), '101');
   });
 
   test('qualityModeLabel falls back to the raw number, never invents', () {

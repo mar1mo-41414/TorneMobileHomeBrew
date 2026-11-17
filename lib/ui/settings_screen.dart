@@ -8,6 +8,7 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../app/debug_log.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
@@ -40,6 +41,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final registrations = ref.watch(registrationsProvider);
     final selected = ref.watch(selectedRegistrationProvider);
+    final debugSettings = ref.watch(debugSettingsProvider);
+    final documentsDir = ref.watch(documentsDirectoryProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
       body: ListView(
@@ -186,6 +189,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
+          const Divider(),
+          _sectionTitle(context, 'デバッグ'),
+          SwitchListTile(
+            title: const Text('デバッグモード'),
+            subtitle: const Text(
+              '診断ログを端末内のファイルに保存します (ステージ遷移・応答コード・所要時間のみ。'
+              '資格情報やセッション鍵は記録されません)',
+            ),
+            value: debugSettings.master,
+            onChanged: (value) =>
+                ref.read(debugSettingsProvider.notifier).setMaster(value),
+          ),
+          if (debugSettings.master) ...[
+            for (final category in DiagCategory.values)
+              SwitchListTile(
+                title: Text(diagCategoryLabel(category)),
+                value: debugSettings.categories.contains(category),
+                onChanged: (value) => ref
+                    .read(debugSettingsProvider.notifier)
+                    .setCategory(category, value),
+              ),
+            if (documentsDir != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Text(
+                  '保存先: ${documentsDir.path}/debug_logs/',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+          ],
           const Divider(),
           const Padding(
             padding: EdgeInsets.all(16),

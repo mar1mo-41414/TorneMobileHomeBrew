@@ -81,12 +81,20 @@ String formatBytes(int bytes) {
 /// Official label of a recording quality mode (`desiredQualityMode`).
 ///
 /// The nasne recording modes are named, not numbered, in the official
-/// apps (plan 5.0 principle 5): 100 = DR, 101 = 3倍. Values whose
-/// official label has not been confirmed fall back to the raw number;
-/// labels are never invented (plan 16.4).
+/// apps (plan 5.0 principle 5). In the XSRS value space — the space
+/// reservations and recorded titles are read and written in — the
+/// measured torne values are 100 = DR and 230 = 3倍 (plan 28:
+/// torne-created reservations sampled 2026-11-11 and 2026-11-17,
+/// the latter a 3倍 reservation carrying 230). The value 101 that
+/// earlier builds labelled 3倍 came from the WebAPI JSON surface
+/// (recNgList), a different value space; no XSRS item with 101 has
+/// been observed, and an update writing 101 was accepted yet not
+/// stored (plan 13.7), so 101 is NOT labelled here. Values whose
+/// official label has not been confirmed fall back to the raw
+/// number; labels are never invented (plan 16.4).
 String qualityModeLabel(int mode) => switch (mode) {
   100 => 'DR',
-  101 => '3倍',
+  230 => '3倍',
   _ => '$mode',
 };
 

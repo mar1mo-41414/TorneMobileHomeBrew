@@ -33,6 +33,7 @@ ProviderContainer fileStoreContainer(Directory documentsDirectory) {
           File('${documentsDirectory.path}/$keyValueFileName'),
         ),
       ),
+      documentsDirectoryProvider.overrideWithValue(documentsDirectory),
     ],
   );
 }

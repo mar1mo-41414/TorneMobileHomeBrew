@@ -25,16 +25,58 @@ import 'widgets.dart';
 
 enum ScheduleFormMode { create, edit, timeChange }
 
+/// Programme data prefilled into the create form from the EPG
+/// (plan 28): the event's service, start, duration and texts. The
+/// create itself goes through the same XSRS path as a manual
+/// reservation; the event id is carried into the candidate's
+/// desiredMatchingID, like torne's own EPG reservations.
+class SchedulePrefill {
+  const SchedulePrefill({
+    required this.channel,
+    required this.start,
+    required this.durationSeconds,
+    required this.eventId,
+    this.title,
+    this.description,
+  });
+
+  final Channel channel;
+  final DateTime start;
+  final int durationSeconds;
+  final int eventId;
+  final String? title;
+  final String? description;
+}
+
 class ScheduleFormPage extends ConsumerStatefulWidget {
   const ScheduleFormPage({
     super.key,
     required this.reg,
     required this.mode,
     this.original,
+    this.prefill,
   });
 
   factory ScheduleFormPage.create(RegisteredNasne reg) =>
       ScheduleFormPage(reg: reg, mode: ScheduleFormMode.create);
+
+  /// Create form prefilled from a programme-guide event (plan 28).
+  factory ScheduleFormPage.fromEpg(
+    RegisteredNasne reg, {
+    required Channel channel,
+    required EpgEvent event,
+  }) => ScheduleFormPage(
+    reg: reg,
+    mode: ScheduleFormMode.create,
+    prefill: SchedulePrefill(
+      channel: channel,
+      start: event.start,
+      durationSeconds: event.duration.inSeconds,
+      eventId: event.eventId,
+      title: event.title,
+      description: event.description ?? event.shortText,
+    ),
+  );
 
   factory ScheduleFormPage.edit(RegisteredNasne reg, RecordSchedule original) =>
       ScheduleFormPage(
@@ -55,6 +97,10 @@ class ScheduleFormPage extends ConsumerStatefulWidget {
   final RegisteredNasne reg;
   final ScheduleFormMode mode;
   final RecordSchedule? original;
+
+  /// EPG prefill for the create form (plan 28); null for the
+  /// manual create / edit / time-change forms.
+  final SchedulePrefill? prefill;
 
   @override
   ConsumerState<ScheduleFormPage> createState() => _ScheduleFormPageState();
@@ -94,9 +140,21 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
     } else {
       _quality = 100;
       _priority = false;
-      final wall = jstWallClock(DateTime.now().add(const Duration(hours: 1)));
-      _date = DateTime(wall.year, wall.month, wall.day);
-      _time = TimeOfDay(hour: wall.hour, minute: 0);
+      final prefill = widget.prefill;
+      if (prefill != null) {
+        // EPG prefill (plan 28): service, start and duration come
+        // from the event; the quality stays the user's choice.
+        _serviceId = prefill.channel.serviceId;
+        final wall = jstWallClock(prefill.start);
+        _date = DateTime(wall.year, wall.month, wall.day);
+        _time = TimeOfDay(hour: wall.hour, minute: wall.minute);
+        final minutes = (prefill.durationSeconds / 60).round();
+        _durationMinutes.text = '${minutes < 1 ? 1 : minutes}';
+      } else {
+        final wall = jstWallClock(DateTime.now().add(const Duration(hours: 1)));
+        _date = DateTime(wall.year, wall.month, wall.day);
+        _time = TimeOfDay(hour: wall.hour, minute: 0);
+      }
     }
   }
 
@@ -109,7 +167,8 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   }
 
   String get _title => switch (widget.mode) {
-    ScheduleFormMode.create => '新規予約',
+    ScheduleFormMode.create =>
+      widget.prefill != null ? '番組を予約' : '新規予約',
     ScheduleFormMode.edit => '予約の編集',
     ScheduleFormMode.timeChange => '予約時刻の変更',
   };
@@ -131,6 +190,27 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (widget.prefill != null) ...[
+          // The programme being reserved (plan 28): shown for
+          // confirmation; the fields below start from its values
+          // and stay editable.
+          Text(
+            widget.prefill!.title ?? '番組情報なし',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${widget.prefill!.channel.serviceName} / '
+            '${formatDateTimeWithWeekdayJst(widget.prefill!.start)} 〜 '
+            '${formatTimeJst(widget.prefill!.start.add(Duration(seconds: widget.prefill!.durationSeconds)))}',
+          ),
+          if (widget.prefill!.description != null &&
+              widget.prefill!.description!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(widget.prefill!.description!),
+          ],
+          const SizedBox(height: 16),
+        ],
         if (widget.mode == ScheduleFormMode.timeChange)
           const Padding(
             padding: EdgeInsets.only(bottom: 12),
@@ -218,8 +298,13 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   }
 
   Widget _qualityField() {
+    // The measured torne values in the XSRS space (plan 28):
+    // 100 = DR, 230 = 3倍. An existing reservation's own value is
+    // always offered as well, so editing never silently rewrites
+    // an unlisted value.
     final options = <int>{
       100,
+      230,
       if (widget.original != null) widget.original!.desiredQualityMode,
     }.toList()..sort();
     return DropdownButtonFormField<int>(
@@ -265,8 +350,15 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
         serviceId: channel.serviceId,
       ),
       networkId: channel.networkId,
+      eventId: widget.prefill?.eventId ?? 0,
       desiredQualityMode: _quality,
       priorityFlag: _priority ? 1 : 0,
+      // torne's create template pairs the destination with the
+      // quality profile (plan 28, torne-created samples): DR
+      // carries 'HDD', 3倍 carries 'USBHDD'. The value is the
+      // template's desired destination; the recording itself
+      // lands on the internal HDD either way.
+      recordDestinationId: _quality == 230 ? 'USBHDD' : 'HDD',
     );
 
     setState(() => _saving = true);

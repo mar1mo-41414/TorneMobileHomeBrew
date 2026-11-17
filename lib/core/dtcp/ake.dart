@@ -6,7 +6,11 @@
 /// reference implementation are listed in plan 26.5: the transport
 /// is an injectable [AkeConnection] (the IP TTL 3 requirement of the
 /// reference cannot be expressed with dart:io), and the SRM is
-/// persisted through a callback instead of a database.
+/// persisted through a callback instead of a database. Plan 28
+/// aligned the remaining wire differences with the reference
+/// (request status byte 0x0F, role byte, accepted frames copying
+/// the received header) after a step-by-step re-comparison, and
+/// the app now injects a native transport that sets the TTL.
 library;
 
 import 'dart:async';
@@ -14,6 +18,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import '../diagnostics.dart';
 import '../errors.dart';
 import 'dtcp_crypto.dart';
 import 'srm.dart';
@@ -34,8 +39,13 @@ const int _frameControl = 0x0;
 const int _frameAccepted = 0x9;
 const int _procedureFullAuth = 0x04;
 const int _keyTypeAes128 = 0x08;
-const int _roleSource = 0x01;
-const int _roleSink = 0x02;
+
+/// Header byte 8 values (plan 28). pydtcpip's ControlFrame
+/// identifies byte 8 as the most significant nibble of the
+/// sender's device ID and always sends 0x01 from the sink; its
+/// fake source sends 0x00. The first implementation sent 0x02
+/// from the sink, diverging from the verified reference.
+const int _roleByteSink = 0x01;
 
 /// An 11-byte-header AKE control frame.
 class ControlFrame {
@@ -45,7 +55,7 @@ class ControlFrame {
     this.isResponse = false,
     this.procedure = _procedureFullAuth,
     this.keyType = _keyTypeAes128,
-    this.isSource = false,
+    this.roleByte = _roleByteSink,
     this.label = 0,
     this.status = 0,
   });
@@ -55,9 +65,31 @@ class ControlFrame {
   final bool isResponse;
   final int procedure;
   final int keyType;
-  final bool isSource;
+
+  /// Header byte 8 (see [_roleByteSink]).
+  final int roleByte;
   final int label;
   final int status;
+
+  bool get isAccepted => isResponse && status == 0;
+
+  /// The ACCEPTED response to this frame, per the reference
+  /// implementation: the header is inherited verbatim (procedure,
+  /// key type, role byte and label), the ctype becomes ACCEPTED
+  /// and the status nibble is cleared. [payload] replaces the
+  /// payload (echo and response bodies); the default is empty.
+  /// The first implementation constructed fresh headers here,
+  /// diverging from the verified reference (plan 28).
+  ControlFrame accepted({Uint8List? payload}) => ControlFrame(
+        command: command,
+        payload: payload ?? Uint8List(0),
+        isResponse: true,
+        procedure: procedure,
+        keyType: keyType,
+        roleByte: roleByte,
+        label: label,
+        status: 0,
+      );
 
   Uint8List encode() {
     final totalLength = payload.length + 8;
@@ -70,9 +102,11 @@ class ControlFrame {
     out[5] = command;
     out[6] = procedure;
     out[7] = keyType;
-    out[8] = isSource ? _roleSource : _roleSink;
+    out[8] = roleByte;
     out[9] = label;
-    out[10] = status;
+    // Requests carry status byte 0x0F in the reference
+    // implementation; responses carry the status nibble.
+    out[10] = isResponse ? status & 0x0F : 0x0F;
     out.setRange(11, out.length, payload);
     return out;
   }
@@ -102,7 +136,7 @@ class ControlFrame {
         isResponse: frameType == _frameAccepted,
         procedure: data[6],
         keyType: data[7],
-        isSource: data[8] == _roleSource,
+        roleByte: data[8],
         label: data[9],
         status: data[10] & 0x0F,
       ),
@@ -149,6 +183,10 @@ Future<AkeConnection> socketAkeConnectionFactory(String host, int port) async {
     port,
     timeout: const Duration(seconds: 10),
   );
+  // TCP_NODELAY matches the reference client. The IP TTL of 3
+  // cannot be set from dart:io; the app injects the native
+  // transport (app/ake_socket.dart) which sets it (plan 28).
+  socket.setOption(SocketOption.tcpNoDelay, true);
   return _SocketAkeConnection(socket);
 }
 
@@ -175,6 +213,14 @@ class AkeSession {
   Future<Uint8List> waitExchangeKey(int label, {Duration? timeout}) =>
       _client.waitExchangeKey(label, timeout: timeout);
 
+  /// Waits for the FIRST exchange key of this session and returns
+  /// its label (plan 28: playback start waits for it, like the
+  /// reference client, instead of starting the proxy optimistically
+  /// and failing later inside the player).
+  Future<int> waitFirstExchangeKey({
+    Duration timeout = const Duration(seconds: 20),
+  }) => _client.waitFirstExchangeKey(timeout: timeout);
+
   Future<void> close() => _connection.close();
 }
 
@@ -186,6 +232,7 @@ class AkeClient {
     required this.srmStore,
     this.connectionFactory = socketAkeConnectionFactory,
     this.authorityKeys = const [],
+    this.diag = const DiagLog.none(),
     Uint8List Function(int length)? randomBytes,
     BigInt Function()? ephemeralScalar,
   }) : _randomBytes = randomBytes ?? _secureRandomBytes,
@@ -196,6 +243,10 @@ class AkeClient {
   final AkeConnectionFactory connectionFactory;
   final Uint8List Function(int length) _randomBytes;
   final BigInt Function() _ephemeralScalar;
+
+  /// Diagnostics sink (plan 28). Stage transitions and frame
+  /// headers only — never key material (see core/diagnostics.dart).
+  final DiagLog diag;
 
   /// DTLA authority keys for certificate / SRM verification;
   /// empty = the real DTLA keys. Non-empty only in tests.
@@ -211,6 +262,11 @@ class AkeClient {
   int? _exchangeKeyLabel;
   final Map<int, Completer<Uint8List>> _keyWaiters = {};
   final Map<int, Uint8List> _exchangeKeys = {};
+  final Completer<int> _firstKey = Completer<int>();
+
+  /// The handshake stage currently in progress, named in the
+  /// timeout error so a stall is attributable (plan 28).
+  String _authStage = 'connect';
 
   int? get exchangeKeyLabel => _exchangeKeyLabel;
 
@@ -225,18 +281,58 @@ class AkeClient {
     return timeout == null ? future : future.timeout(timeout);
   }
 
+  /// Completes with the label of the first exchange key received.
+  Future<int> waitFirstExchangeKey({
+    Duration timeout = const Duration(seconds: 20),
+  }) => _firstKey.future.timeout(
+    timeout,
+    onTimeout: () => throw NasneError.unreachable(
+      'dtcp:ake',
+      cause:
+          'the source sent no exchange key within '
+          '${timeout.inSeconds} seconds of authentication',
+    ),
+  );
+
   /// Runs the full handshake and returns the live session. The
   /// session's message loop keeps running until [AkeSession.close].
   Future<AkeSession> connect(String host, int port) async {
+    final stopwatch = Stopwatch()..start();
+    diag(DiagCategory.ake, 'connecting to $host:$port');
+    _authStage = 'connect';
     final connection = await connectionFactory(host, port);
-    final reader = _FrameReader(connection);
+    final reader = _FrameReader(connection, diag: diag);
     try {
-      final authKey = await _authenticate(reader);
+      // The reference client bounds the WHOLE authentication —
+      // exchange-key receipt included — by its timeout (plan 28).
+      // The exchange key itself is awaited by the caller through
+      // [AkeSession.waitFirstExchangeKey]; the handshake is
+      // bounded here so a stall names its stage.
+      final authFuture = _authenticate(reader);
+      // A timed-out handshake must not surface a second, orphaned
+      // error later.
+      unawaited(authFuture.then((_) {}, onError: (_) {}));
+      final authKey = await authFuture.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw NasneError.unreachable(
+          'dtcp:ake',
+          cause: 'AKE timed out during stage: $_authStage',
+        ),
+      );
       final session = AkeSession._(connection, this);
+      diag(
+        DiagCategory.ake,
+        'authenticated in ${stopwatch.elapsedMilliseconds} ms; '
+        'post-auth message loop running',
+      );
       // The post-authentication loop (RTT / EXCHANGE_KEY /
       // SRM_UPDATE) runs in the background; failures close the
       // session silently from the player's perspective.
-      unawaited(_messageLoop(reader, authKey).catchError((_) {}));
+      unawaited(
+        _messageLoop(reader, authKey).catchError((Object e) {
+          diag(DiagCategory.ake, 'message loop ended: $e');
+        }),
+      );
       return session;
     } catch (_) {
       await connection.close();
@@ -249,6 +345,7 @@ class AkeClient {
     final myNonce = _randomBytes(16);
 
     // CHALLENGE: nonce || my certificate.
+    _authStage = 'challenge';
     await reader.send(
       ControlFrame(
         command: AkeCommands.challenge,
@@ -257,8 +354,10 @@ class AkeClient {
     );
     var frame = await reader.next();
     _expectAccepted(frame, AkeCommands.challenge);
+    diag(DiagCategory.ake, 'stage: challenge accepted by source');
 
     // The source's CHALLENGE.
+    _authStage = 'source challenge';
     frame = await reader.next();
     if (frame.isResponse ||
         frame.command != AkeCommands.challenge ||
@@ -275,6 +374,7 @@ class AkeClient {
       authorityKeys: authorityKeys,
     );
     _peerCertificate = Uint8List.fromList(sourceCert);
+    diag(DiagCategory.ake, 'stage: source certificate verified');
     if (srm != null) {
       if (srm.isRevoked(deviceIdOf(sourceCert))) {
         throw NasneError.parse(
@@ -290,15 +390,12 @@ class AkeClient {
       }
     }
 
-    await reader.send(
-      ControlFrame(
-        command: AkeCommands.challenge,
-        payload: Uint8List(0),
-        isResponse: true,
-      ),
-    );
+    // ACCEPTED for the source's CHALLENGE: the header is copied
+    // from the received frame (reference behaviour, plan 28).
+    await reader.send(frame.accepted());
 
     // The source's RESPONSE.
+    _authStage = 'source response';
     frame = await reader.next();
     if (frame.isResponse ||
         frame.command != AkeCommands.response ||
@@ -336,6 +433,7 @@ class AkeClient {
         cause: 'the source signature verification failed',
       );
     }
+    diag(DiagCategory.ake, 'stage: source response signature verified');
 
     // ECDH: the authentication key is the last 12 bytes of the
     // shared point's x coordinate.
@@ -344,16 +442,12 @@ class AkeClient {
     final shared = ecdhSharedSecret(ephemeral, sourceEphemeralPoint);
     final authKey = Uint8List.fromList(shared.sublist(8));
 
-    await reader.send(
-      ControlFrame(
-        command: AkeCommands.response,
-        payload: Uint8List(0),
-        isResponse: true,
-      ),
-    );
+    // ACCEPTED for the source's RESPONSE (header copied).
+    await reader.send(frame.accepted());
 
     // My RESPONSE: ephemeral public key || SRM version/generation
     // || deterministic signature over (source nonce || payload).
+    _authStage = 'response';
     final mySrm = await srmStore.load();
     final responseData = Uint8List.fromList([
       ...ephemeralPublic.toBytes(),
@@ -371,8 +465,10 @@ class AkeClient {
         payload: Uint8List.fromList([...responseData, ...signature]),
       ),
     );
+    _authStage = 'response acceptance';
     frame = await reader.next();
     _expectAccepted(frame, AkeCommands.response);
+    diag(DiagCategory.ake, 'stage: response accepted by source');
     return authKey;
   }
 
@@ -413,13 +509,8 @@ class AkeClient {
             // request (reference behaviour).
             continue;
           }
-          await reader.send(
-            ControlFrame(
-              command: AkeCommands.rttReady,
-              payload: Uint8List(0),
-              isResponse: true,
-            ),
-          );
+          diag(DiagCategory.ake, 'rtt: ready round trip');
+          await reader.send(frame.accepted());
           await reader.send(
             ControlFrame(command: AkeCommands.rttReady, payload: Uint8List(0)),
           );
@@ -443,14 +534,10 @@ class AkeClient {
             ),
           );
           rttVerifyResponse = Uint8List.fromList(verifyDigest.sublist(0, 10));
-          // The reference echoes the counter as the acceptance.
-          await reader.send(
-            ControlFrame(
-              command: AkeCommands.rttSetup,
-              payload: frame.payload,
-              isResponse: true,
-            ),
-          );
+          diag(DiagCategory.ake, 'rtt: setup received, MACs precomputed');
+          // The reference echoes the counter as the acceptance
+          // (an ACCEPTED copy of the received frame).
+          await reader.send(frame.accepted(payload: frame.payload));
         case AkeCommands.rttTest:
           if (frame.isResponse ||
               rttExpectedTest == null ||
@@ -458,13 +545,8 @@ class AkeClient {
             throw NasneError.parse('dtcp:ake', cause: 'invalid RTT_TEST frame');
           }
           receivedRttTest = frame.payload;
-          await reader.send(
-            ControlFrame(
-              command: AkeCommands.rttTest,
-              payload: rttTestResponse!,
-              isResponse: true,
-            ),
-          );
+          diag(DiagCategory.ake, 'rtt: test received');
+          await reader.send(frame.accepted(payload: rttTestResponse!));
         case AkeCommands.rttVerify:
           if (frame.isResponse ||
               rttExpectedTest == null ||
@@ -475,13 +557,8 @@ class AkeClient {
               cause: 'RTT verification failed',
             );
           }
-          await reader.send(
-            ControlFrame(
-              command: AkeCommands.rttVerify,
-              payload: rttVerifyResponse!,
-              isResponse: true,
-            ),
-          );
+          diag(DiagCategory.ake, 'rtt: verified');
+          await reader.send(frame.accepted(payload: rttVerifyResponse!));
         case AkeCommands.exchangeKey:
           if (frame.isResponse || frame.payload.length != 14) {
             throw NasneError.parse(
@@ -498,14 +575,9 @@ class AkeClient {
           _exchangeKeys[label] = key;
           _exchangeKeyLabel = label;
           _keyWaiters.remove(label)?.complete(key);
-          await reader.send(
-            ControlFrame(
-              command: AkeCommands.exchangeKey,
-              payload: Uint8List(0),
-              isResponse: true,
-              label: label,
-            ),
-          );
+          if (!_firstKey.isCompleted) _firstKey.complete(label);
+          diag(DiagCategory.ake, 'exchange key received, label $label');
+          await reader.send(frame.accepted());
           await _forwardSrmIfNewer(reader);
         case AkeCommands.srmUpdate:
           if (frame.isResponse) {
@@ -514,7 +586,7 @@ class AkeClient {
               cause: 'unexpected SRM_UPDATE response frame',
             );
           }
-          await _handleSrmUpdate(reader, frame.payload);
+          await _handleSrmUpdate(reader, frame);
         default:
           throw NasneError.parse(
             'dtcp:ake',
@@ -526,8 +598,14 @@ class AkeClient {
     }
   }
 
-  Future<void> _handleSrmUpdate(_FrameReader reader, Uint8List payload) async {
+  Future<void> _handleSrmUpdate(_FrameReader reader, ControlFrame frame) async {
+    final payload = frame.payload;
     final newSrm = Srm.parse(payload, authorityKeys: authorityKeys);
+    diag(
+      DiagCategory.ake,
+      'srm update received (version ${newSrm.version}, '
+      'generation ${newSrm.generation})',
+    );
     final current = await srmStore.load();
     final Srm effective;
     if (current == null || newSrm.isNewerThan(current)) {
@@ -551,13 +629,7 @@ class AkeClient {
         cause: 'this device is revoked by the SRM',
       );
     }
-    await reader.send(
-      ControlFrame(
-        command: AkeCommands.srmUpdate,
-        payload: Uint8List(0),
-        isResponse: true,
-      ),
-    );
+    await reader.send(frame.accepted());
   }
 
   /// After an EXCHANGE_KEY, a newer local SRM is forwarded to the
@@ -572,6 +644,11 @@ class AkeClient {
             _peerSrmGeneration < _peerMaxSrmGeneration &&
             localSrm.generation > _peerSrmGeneration);
     if (!isLocalNewer) return;
+    diag(
+      DiagCategory.ake,
+      'forwarding newer local SRM (version ${localSrm.version}, '
+      'generation ${localSrm.generation})',
+    );
     var sendData = localSrm.data;
     if (localSrm.generation > _peerMaxSrmGeneration) {
       // Send only the first generation part, retaining the signed
@@ -610,7 +687,7 @@ class AkeClient {
 
 /// Buffers a connection's byte stream into control frames.
 class _FrameReader {
-  _FrameReader(this._connection) {
+  _FrameReader(this._connection, {this.diag = const DiagLog.none()}) {
     _connection.incoming.listen(
       (chunk) {
         _buffer.addAll(chunk);
@@ -624,16 +701,29 @@ class _FrameReader {
   }
 
   final AkeConnection _connection;
+
+  /// Frame-level diagnostics (plan 28): command, ctype, status
+  /// and payload length only — never payload contents.
+  final DiagLog diag;
   final List<int> _buffer = [];
   final List<Completer<ControlFrame>> _waiters = [];
   final List<ControlFrame> _frames = [];
   Object? _error;
+  bool _failLogged = false;
+
+  static String _hexByte(int value) =>
+      '0x${value.toRadixString(16).padLeft(2, '0')}';
 
   void _drain() {
     while (true) {
       final parsed = ControlFrame.tryParse(Uint8List.fromList(_buffer));
       if (parsed == null) return;
       final (frame, consumed) = parsed;
+      diag(
+        DiagCategory.ake,
+        'rx cmd=${_hexByte(frame.command)} ctype=${_hexByte(_buffer[3])} '
+        'status=${frame.status} payload=${frame.payload.length}B',
+      );
       _buffer.removeRange(0, consumed);
       if (_waiters.isNotEmpty) {
         _waiters.removeAt(0).complete(frame);
@@ -644,6 +734,10 @@ class _FrameReader {
   }
 
   void _fail(Object error) {
+    if (!_failLogged) {
+      _failLogged = true;
+      diag(DiagCategory.ake, 'ake connection failed: $error');
+    }
     _error ??= error;
     for (final waiter in _waiters) {
       if (!waiter.isCompleted) waiter.completeError(error);
@@ -652,6 +746,12 @@ class _FrameReader {
   }
 
   Future<void> send(ControlFrame frame) async {
+    diag(
+      DiagCategory.ake,
+      'tx cmd=${_hexByte(frame.command)} '
+      'ctype=${frame.isResponse ? 'accepted' : 'control'} '
+      'payload=${frame.payload.length}B',
+    );
     _connection.send(frame.encode());
   }
 

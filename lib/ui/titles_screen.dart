@@ -300,9 +300,45 @@ class TitleDetailView extends ConsumerWidget {
       } else if (e.category == NasneErrorCategory.validation) {
         await _showCredentialGuidance(context, userMessageForError(e));
       } else {
-        showSnack(context, '再生を開始できませんでした');
+        // Name the failing stage instead of collapsing everything
+        // into one opaque snack (plan 28): the dialog carries the
+        // classification (category / source / code / detail), and
+        // the failure is recorded under the ui category when debug
+        // mode is on. No credential or key material is included.
+        ref.read(diagLogProvider)(
+          DiagCategory.ui,
+          'playback start failed: $e',
+        );
+        await _showPlaybackError(context, e);
       }
+    } catch (e) {
+      if (!context.mounted) return;
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'playback start failed (unclassified): $e',
+      );
+      showSnack(context, '再生を開始できませんでした');
     }
+  }
+
+  Future<void> _showPlaybackError(BuildContext context, NasneError e) {
+    final detail = StringBuffer(userMessageForError(e));
+    detail.write('\n\n分類: ${e.category.name} / 発生元: ${e.source}');
+    if (e.code != null) detail.write(' / コード: ${e.code}');
+    if (e.detail != null) detail.write('\n詳細: ${e.detail}');
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('再生を開始できませんでした'),
+        content: Text(detail.toString()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showCredentialGuidance(

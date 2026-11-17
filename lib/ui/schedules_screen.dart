@@ -224,7 +224,14 @@ class ScheduleDetailView extends ConsumerWidget {
         FieldRow(label: '画質モード', value: qualityModeLabel(s.desiredQualityMode)),
         FieldRow(label: '優先フラグ', value: '${s.priorityFlag}'),
         FieldRow(label: '条件 ID', value: s.conditionId),
-        FieldRow(label: '録画先', value: s.recordDestinationId),
+        // recordDestinationId is deliberately not shown (plan 28):
+        // on a reservation it is the creator's desired/template
+        // value, not the physical destination — torne's 3倍
+        // template carries 'USBHDD' while the recording lands on
+        // the internal HDD (the resulting title reports 'HDD').
+        // Presenting it as 録画先 would state something the device
+        // itself contradicts. It stays editable in the edit form,
+        // which is a raw-field editor.
         const SizedBox(height: 24),
         Wrap(
           spacing: 8,
