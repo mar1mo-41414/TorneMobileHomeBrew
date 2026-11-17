@@ -3177,3 +3177,71 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   録画ストリームでも `seekable=no` を報告し、上記の
   ボタンは常時無効のままになる。プロキシ側のシーク
   対応は §61 で行う。
+
+## 62. デスクトップ字幕対応 (macOS / Linux) (2026-11-17)
+
+### 62.1 macOS
+
+- §57 のフォーク (libmpv-darwin-build @ aadae8c +
+  arib-darwin.patch) は、ffmpeg 側の変更がターゲット
+  非依存で、mk-pkg-aribb24 の targets に macOS
+  (arm64 / amd64) も含まれているため、追加パッチなしで
+  `mk-out-archive-xcframeworks-macos-universal-video-default`
+  がビルドできた (aribb24 単体の早期ビルドで先行確認)。
+- 検証: macOS 両スライスの Libavcodec の configuration
+  文字列に `--enable-libaribb24` /
+  `--enable-decoder=libaribb24` が含まれ、デコーダ文字列と
+  Png16 へのリンク (DRCS) を確認。依存集合は公式
+  v0.6.0 macOS アーカイブと、aribb24 由来の Png16 参照の
+  追加分を除いて一致し、SwiftCoreMedia のような実在しない
+  依存は無い。
+- 配布: GitHub リリース `libmpv-macos-v0.6.0-arib1`
+  (16,158,952 バイト、SHA-256
+  `71c070fffec2d0c33d7d57e284b5ddb5a38eb02e57b22e529a9576b07e3c05ea`、
+  未認証の再ダウンロードで一致を確認)。
+- 統合: media_kit_libs_macos_video (pub 1.1.4) を
+  third_party/ に vendored し、`macos/Makefile` の取得先を
+  上記リリースに差し替え、pubspec.yaml の
+  dependency_overrides に追加。作業はブランチ
+  `desktop-subtitle` で行い、本記録と一緒に Gitea 側へ
+  push 済み。main への合流は v1.4.0 リリース完了後に
+  行う (合流判断は本人側)。
+- 監査スクリプト (`tool/libmpv/audit_load_commands.py`)
+  を拡張: macOS のバージョン付きフレームワーク配置
+  (`@rpath/<Name>.framework/Versions/A/<Name>`) も同梱
+  フレームワークへの依存として受理する。公式 macOS
+  アーカイブと自前 arib アーカイブは通過し、iOS arib1 は
+  従来どおり12件の未解決依存で失敗することを確認
+  (§58 の事故検出は維持)。なお監査対象パスの指定を
+  誤ると「audited 0 binaries」のまま OK と出るため、
+  件数の確認が要る。
+
+### 62.2 Linux
+
+- Linux 版は libmpv を同梱しない。media_kit のローダが
+  システムの libmpv.so.2 を dlopen する設計で、アプリ
+  README にもその旨が明記されている。
+- 実測 (検証機 marnux、Ubuntu 系): システム libmpv
+  0.37.0 と ffmpeg 6.1.1 の libavcodec は
+  `--enable-libaribb24` を含み、字幕付き TS
+  (tmhb.work の rec_x3_fushigi.ts) からシステム ffmpeg
+  で日本語キューが抽出できた。libmpv.so.2 がリンクする
+  libavcodec も同一物。**結論: Ubuntu 系では現行の
+  Linux 版のまま字幕が出るため、対応は不要だった。**
+- Debian は別で、12 (ffmpeg 5.1) / 13 (ffmpeg 7.1)
+  とも公式 libavcodec の依存に libaribb24 が無く、
+  システム libmpv 経由では字幕はデコードできない
+  (packages.debian.org で確認)。対応経路は自前
+  libmpv の同梱: バンドルの RUNPATH は `$ORIGIN/lib`
+  (実測) で、ローダは素の名前で dlopen するため
+  `lib/` への配置が効く見込みで、`LIBMPV_LIBRARY_PATH`
+  でも差し替えできる。ただし配布形態が「システム
+  libmpv 前提」から変わるため、実施は本人の判断待ち。
+
+### 62.3 残件
+
+- ブランチ `desktop-subtitle` の main 合流と、合流後の
+  macOS 実機での字幕描画確認。
+- Debian 向け自前 libmpv 同梱の要否判断。
+- 詳細な調査記録は作業領域
+  tmhb.work/2026-11-17-desktop-subtitle/report.md。
