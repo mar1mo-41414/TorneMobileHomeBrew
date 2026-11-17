@@ -2836,3 +2836,113 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   配置先は marnux `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.3.0.ipa`。
 - 作業領域: marnux `~/GitTmp/myClaude/tmhb.work/2026-11-17-live-audio/`
   (DIDL・チャンネル一覧・キャプチャ 11 件・EPG 抽出を含む)。
+## 57. iOS 版 libmpv カスタムビルドによる ARIB 字幕対応 (2026-11-17、ビルド +24)
+
+§55 で Android のみ対応した ARIB 字幕デコーダを iOS にも
+広げた。本人承認済み (2026-11-17)。バージョンは 1.3.0 の
+ままビルド番号のみ +24。リリースはしない。
+
+併せて、§55 の Android 字幕は本人の実機確認が取れた:
+2026-11-17 19:50、Xperia Ace・NHK総合のライブ視聴で字幕が
+描画され、字幕トグルの切り替えにも即時に反応することを
+確認。これで §55 の実機確認待ちは解消した。
+
+### 57.1 経路と前提
+
+- 上流は `media-kit/libmpv-darwin-build` commit `aadae8c`
+  (nix flake 方式、成果物は xcframeworks の tar.gz 一式、
+  版数 v0.6.0)。FFmpeg は Android と同じ 6.0 で、デコーダの
+  選定理由 (libaribcaption は 6.0 に無い、libaribb24 の
+  ライセンス判定と 1.0.4 ラベル) は §55.1 と同一。aribb24 は
+  Android と同じ固定コミットを使う。
+- 前提として Mac に Determinate Nix を導入した (本人実施)。
+  導入直後はデーモンが未起動の状態で、本人が
+  `sudo launchctl bootstrap system /Library/LaunchDaemons/systems.determinate.nix-daemon.plist`
+  を実行して復旧。`nix store ping` が
+  `Store URL: daemon` / nix 2.35.3 を返すことを確認してから
+  進めた。再現手順は `tool/libmpv/README.md`。
+
+### 57.2 差分と、ビルド中に潰した問題
+
+差分は `tool/libmpv/arib-darwin.patch` (7ファイル):
+
+- `nix/packages/mk-pkg-aribb24/` (新規): autotools の
+  クロスビルド。Android 版との違いは libpng の扱いで、
+  darwin スタックには `mk-pkg-libpng` があるため buildInputs
+  に入れて **DRCS 外字の描画も有効**にした (Android は
+  NDK に libpng が無く無効)。成果物の aribb24.pc に
+  `Requires: libpng` が入り、ライブラリに png 書き込み系
+  シンボルへの未定義参照があることで確認。
+- `mk-pkg-ffmpeg`: video バリアントの buildInputs に
+  aribb24 と libpng を追加し、meson に
+  `--enable-libaribb24` / `--enable-decoder=libaribb24`。
+  libpng は DRCS のためだけでなく、aribb24.pc の
+  `Requires: libpng` を ffmpeg の configure の pkg-config
+  展開が解決するためにも必須。欠けると版数チェック
+  (`aribb24 > 1.0.3`) を通過した直後に
+  "requires version higher than 1.0.3" という誤誘導な
+  メッセージで落ちる。
+- 実装上の落とし穴2件: (1) autoreconfHook は使えない。
+  autoreconfPhase が configurePhase のソースコピーより前に
+  build ルートで走って失敗する。`./bootstrap` が autoreconf
+  を回すため、autoconf/automake/libtool を並べるだけで足りる。
+  (2) stdenv の phase は同一シェルで cwd が引き継がれる。
+  configurePhase が `src/_build` に入ったまま終わる前提で、
+  buildPhase / installPhase は素の `make` / `make install`。
+- 現在の Xcode/SDK 向けの互換修正2件 (字幕とは無関係だが
+  踏まないとスタック自体がビルドできない):
+  - libpng: pngpriv.h の `#include <fp.h>` を `<math.h>` に
+    置換。fp.h は古典 Mac OS のヘッダで現行 SDK には無い。
+    libpng は従来スタック内の誰にも使われていなかったため
+    未露見だった。
+  - harfbuzz: VarCompositeGlyph.hh の唯一の `sincosf`
+    呼び出しを `__sincosf` に置換。現行 SDK の math.h は
+    素の sincosf を宣言しない (シンボル自体はあるため
+    meson の検出は HAVE_SINCOSF を定義してしまう)。
+
+### 57.3 ビルドと検証
+
+- aribb24 単体を3ターゲット (ios-arm64 /
+  iossimulator-arm64 / iossimulator-amd64) で先に検証し、
+  全て成功。
+- 本体:
+  `make XCODE_PATH=/Applications/Xcode.app TARGET=mk-out-archive-xcframeworks-ios-universal-video-default`
+  が成功。tar.gz は 19,439,829 バイト、SHA-256
+  `12cc6eda4596aa14921cddedcf6e062cbd792e6f571309c755e6dd4387e5069e`。
+  構成は上流と同型で、Png16.xcframework が増えている。
+- 封入確認: Libavcodec の configuration 文字列に
+  `--enable-libaribb24` / `--enable-decoder=libaribb24` が
+  含まれ、デコーダの文字列も存在。`otool -L` で
+  libpng16 へのリンクを確認。
+- 機能実証 (ホスト): 同じパッチ済みソースと macOS 用
+  aribb24 パッケージでホスト用 FFmpeg 6.0 を組み、§54 の
+  x3 キャプチャ (rec_x3_fushigi.ts) から字幕キュー
+  **46 件**を抽出した。§55 (Android) の件数と一致し、
+  日本語テキストも正しく復号できた。
+- tar.gz は本リポの GitHub リリース
+  `libmpv-ios-v0.6.0-arib1` に公開した。未認証での
+  再ダウンロードで SHA-256 が一致することを確認済み。
+
+### 57.4 アプリへの統合と成果物
+
+- `third_party/media_kit_libs_ios_video` に pub 1.1.4 を
+  vendored し、`ios/Makefile` の取得先 URL と SHA-256 を
+  自前リリースへ差し替えた。`pubspec.yaml` の
+  `dependency_overrides` で vendored 版が優先される。
+- コード commit `a50a724` (Gitea main)。テスト 250 件
+  全合格、`flutter analyze` クリーン。版数は 1.3.0 のまま、
+  ビルド番号 24。
+- IPA (ビルド24): 16,789,190 バイト、SHA-256
+  `30eaacf4e5d707f0e25a591deecfd8c2913e670e463da0dfd89a3c259fd473a0`。
+  Runner.app 内の Avcodec の configuration 文字列と
+  Png16.framework の同梱で、自前 libmpv の封入を確認した。
+  配置先は marnux
+  `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.3.0.ipa`。
+- 作業領域: Mac
+  `~/GitTmp/MyClaude/tmhb.work/2026-11-17-libmpv-ios/`
+  (フォーク、STATUS.md、arib-darwin.patch)、marnux
+  `~/GitTmp/myClaude/tmhb.work/2026-11-17-libmpv-ios-app/repo`
+  (統合用クローン)。
+- 残件: iOS 実機での字幕描画の確認は本人待ち (字幕トグル
+  ON で ARIB 字幕が描画されること)。ホスト実証と封入確認
+  までは本節で完了している。
