@@ -1910,3 +1910,53 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 ### 34.3 残る事項
 
 - §31.4 の残件 (torne mobile HB 自体の LAN 再生の実機確認、交換鍵ローテーションの実地検証ほか) は不変。
+
+## 35. 版数表示の実値化と wakelock の作り直し (2026-11-17、ビルド +14)
+
+### 35.1 発端 (本人の実機報告、ビルド 13)
+
+- 本人の iPhone (LiveContainer) で、設定画面の版数が「1.0.0」のままだった。本人はこれを見て古いビルドだと判断し、更新し直した (実際には新ビルドが動いていた)。
+- 更新後も、モバイル画質で再生を続けると端末がスリープした。根拠は本人のデバッグログ `tmhb-debug-20261117-132441-162.log` (13:24:41–13:27:39 のセッション)。
+- §34.1 で「スリープ抑止 (§32) の残件は解消とみなす」とした判断は、このログで覆った (35.3)。解消していなかった。
+
+### 35.2 問題 1: 版数表示 — 根本原因と修正
+
+- **根本原因はハードコードのリテラル**だった。設定画面 (`lib/ui/settings_screen.dart`) 末尾のテキストが `torne mobile HB バージョン 1.0.0` という固定文字列で、v1.0.0 以来一度も更新されていなかった。package_info 等の実行時取得はそもそも存在せず、版数を上げるたびに表示だけが取り残される構造だった。
+- 実行時取得に切り替える直し方は採らなかった。LiveContainer のようなサイドロード環境では、プラグインが読むバンドルはホストアプリ側になり得て、答えを信用できないためである。**ビルド時に pubspec の版数をコードへ埋め込む**形にした。
+- 修正: `lib/core/app_version.dart` を新設し、版数を定数 (`appVersionName` / `appBuildNumber`) として一元化した。設定画面は `appVersionLabel` (= `バージョン 1.2.1 (ビルド 14)`) を表示する。ビルド番号も併記する形にした (今回の誤認は、版数だけではどのビルドか判別できないことも一因だったため)。
+- ずれ防止: `test/app_version_test.dart` が pubspec.yaml の `version:` と定数の一致を検査する。版数上げでどちらか一方だけを変更するとテストが落ちる。
+- Android: 設定画面は両 OS 共通の Dart コードなので、Android でも同じ「1.0.0」リテラルが表示されていた (同じ問題あり)。今回の修正は共通コードのため、両方同時に直った。
+
+### 35.3 問題 2: wakelock — ログからの切り分け
+
+本人のログ (13:24:41–13:27:39) から読み取れる事実:
+
+- 13:24:48.257 と 13:24:49.393 に再生開始 (`start:`) が **2 回**走った。開始には約 1.4 秒かかり、その間も再生ボタンは有効で、詳細画面の `_play` に再入ガードがなかった。二重タップ等で 2 セッションが並行した。
+- 各 PlayerScreen が自分の `PlaybackWakelock` を生成し、同じ OS スイッチを操作していた。先行セッションの終了 (13:25:08.041 の `wakelock: released`) が、まだ再生中だった後続セッション (〜13:25:15.510) のロックを解放した。**重なり時の設計上の穴**である。
+- 最後のセッション (13:25:16 開始) では `wakelock: enabled` (13:25:17.836) のまま解放されていない。それでも端末はスリープした (13:27:39.973 の `player: playing=false` は、スリープ→復帰時にプレイヤーが表面化した線が濃厚)。wakelock_plus は設定値の読み戻しをしないため、「有効化が成功した」という記録しか残らず、**OS 側で実効していたかは原理的に分からない**。LiveContainer が `isIdleTimerDisabled` を上書きしている疑いが濃いが、このログだけでは確定できない。確定できる形 (読み戻し) を入れるのが今回の修正の柱。
+
+### 35.4 修正
+
+1. **セッション参照カウント化** (`lib/core/wakelock.dart`): `PlaybackWakelock` をアプリ全体で 1 つのコーディネータ (`playbackWakelockProvider`) にし、各 PlayerScreen は `WakelockSession` を開く形にした。OS ロックは「いずれかのセッションが playing の間」保持され、セッションの重なりや終了順序に依存しない。
+2. **二重開始の防止** (`lib/ui/titles_screen.dart`): `_play` に再入ガード (`_starting`) を追加し、開始中は再生ボタンを無効化した。
+3. **ネイティブ実装への置換 + 読み戻し**: wakelock_plus を外し (依存からも削除)、自前チャネル `com.markun.tmhb/wakelock` に置き換えた。既存チャネル (multicast_lock / ake_socket) と同じ作法である。
+   - iOS (`ios/Runner/AppDelegate.swift` の `WakelockHub`): `UIApplication.shared.isIdleTimerDisabled` を設定し、**設定直後の値を読み戻して返す** (`setKeepAwake` / `getKeepAwake`)。
+   - Android (`MainActivity.kt`): 活動ウィンドウの `FLAG_KEEP_SCREEN_ON` を設定/解除し、フラグの読み戻しを返す。
+   - Dart 側 (`lib/app/wakelock.dart` の `NativeWakelockGuard`) は読み戻し値をそのまま返し、コーディネータが `wakelock: enabled (playing), os readback=true/false` の形でデバッグログに残す。チャネル不在などの失敗は握り潰さず、従来どおり失敗としてログに出る。
+4. **保持中の定期検証**: ロック保持中は 20 秒ごとに OS の現在値を読み直し (`verifyNow`)、外部から idle timer を戻されていたら `wakelock: os readback=false while the lock should be held ...` と記録して再設定する。次回の実機ログで「設定した瞬間から honoured されていない」のか「保持中に外部から戻される」のかが切り分けられる。
+
+### 35.5 テスト
+
+- `test/wakelock_test.dart` を新 API に合わせて全面改訂 (13 件): 単一セッションの有効化/解放、重なりの回帰 (先に終わったセッションが再生中のセッションのロックを落とさない — 35.3 の穴の再現テスト)、終了順序の非依存、release の冪等性と解放後セッションの不活性、読み戻し不一致 (`os readback=false`) のログ、verifyNow による外部上書きの検出と再設定、失敗時のログ。
+- `test/app_version_test.dart` を新設 (1 件): pubspec.yaml と埋め込み定数の一致。
+- `test/ui_test.dart` に 1 件追加: 開始が進行中の二度押しで `startPlayback` が 1 回だけ呼ばれること (ボタンの無効化も確認)。`RecordingPlaybackEngine` に開始ゲートと呼び出し回数の記録を追加した。
+- 全体 **198 件全合格** (従来 190 件 + 新規 8 件)、`flutter analyze` 検出なし。
+
+### 35.6 ビルド (ビルド +14)
+
+- 版数は **1.2.1 のまま、ビルド 14** (版数ルール: 実機での成立確認が済んでから上げる)。GitHub リリースはしない。
+- IPA (署名なし、CFBundleShortVersionString 1.2.1 / CFBundleVersion 14 を実物で確認): 16,966,269 バイト、SHA-256 `d304bb773dd62df1f07bac1a8313061c9292012df0107abdc4d47351b4e6516b`。marnux `~/tmp/Decrypted-ipa/` に配置。
+- APK (配布用署名、versionCode 14、署名証明書 `e60cfeda…`): 101,636,637 バイト、SHA-256 `03e63bfac59997b23c0a3c8d3542982b7a22418c68e8ffb0e3b4c4b921395b13`。marnux `~/ダウンロード/` に配置。
+- 作業領域: `tmhb.work/2026-11-17-build14/` に両バイナリを保管。
+- コミット: 実装 `6987174` (版数表示) / `f44e81f` (wakelock + 二重開始防止)。
+- 残件 (本人の実機確認待ち): (a) 設定画面に「バージョン 1.2.1 (ビルド 14)」と表示されること。(b) 再生中にスリープしないこと。再発した場合は、デバッグログの `os readback` の列で「設定時点で honoured されていない」のか「保持中に外部から戻される (verifyNow が検出して再設定を繰り返す)」のかが切り分けられる状態にしてある。その結果次第で次の一手 (LC 固有の回避策の検討) を判断する。
