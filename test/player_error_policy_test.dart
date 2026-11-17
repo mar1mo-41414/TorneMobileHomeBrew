@@ -1,7 +1,9 @@
 /// Tests for the player error policy (plan 43): mpv's
 /// "Cannot seek in this stream." complaint is non-fatal for
-/// live viewing (the stream is unseekable by design) and keeps
-/// its previous fatal treatment for recorded playback.
+/// live viewing (the stream is unseekable by design) and
+/// keeps its previous fatal treatment for recorded playback
+/// until playback has started; from then on it is non-fatal
+/// for recordings too (player UI follow-up after 1.4.0).
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -74,6 +76,45 @@ void main() {
 
     test('other errors stay fatal for recorded playback', () {
       expect(playerErrorIsFatal('Failed to open.', live: false), isTrue);
+    });
+
+    test('the seek complaint is non-fatal once recorded playback '
+        'has started', () {
+      expect(
+        playerErrorIsFatal(seekError, live: false, alreadyPlaying: true),
+        isFalse,
+      );
+    });
+
+    test('the companion hint is non-fatal once recorded playback '
+        'has started', () {
+      expect(
+        playerErrorIsFatal(
+          "You can force it with '--force-seekable=yes'.",
+          live: false,
+          alreadyPlaying: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('other errors stay fatal once recorded playback has started', () {
+      expect(
+        playerErrorIsFatal(
+          'Failed to open.',
+          live: false,
+          alreadyPlaying: true,
+        ),
+        isTrue,
+      );
+      expect(
+        playerErrorIsFatal(
+          'Error decoding audio.',
+          live: false,
+          alreadyPlaying: true,
+        ),
+        isTrue,
+      );
     });
   });
 }

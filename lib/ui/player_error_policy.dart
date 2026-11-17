@@ -37,6 +37,18 @@
 /// measured case, with playback already running), so the
 /// classification must not depend on timing either. Both events
 /// are classified here as the one complaint.
+///
+/// The same reasoning extends past the start (player UI
+/// follow-up after 1.4.0): once playback has started, the
+/// complaint can only be answering a seek — mpv's internal
+/// one arriving late, or the recorded screen's skip buttons
+/// on a stream whose seekability has lapsed — and mpv keeps
+/// playing through it either way. Failing a healthy playback
+/// over it would punish the user for a seek the player
+/// itself invited, so with playback under way the complaint
+/// is non-fatal for recordings too. Before the start it
+/// keeps the treatment above: fatal for recordings,
+/// non-fatal for live.
 library;
 
 /// True when [error] is one of the two events of mpv's refusal
@@ -47,8 +59,13 @@ bool isUnseekableStreamError(String error) =>
     error.contains('Cannot seek in this stream') ||
     error.contains('force-seekable');
 
-/// Whether a player [error] must fail the start. For live
-/// viewing the unseekable-stream complaint is non-fatal (see
-/// the library comment); everything else is fatal, as before.
-bool playerErrorIsFatal(String error, {required bool live}) =>
-    !(live && isUnseekableStreamError(error));
+/// Whether a player [error] must fail playback. The
+/// unseekable-stream complaint is non-fatal for live
+/// viewing and, once playback has started
+/// ([alreadyPlaying]), for recordings as well (see the
+/// library comment); everything else is fatal, as before.
+bool playerErrorIsFatal(
+  String error, {
+  required bool live,
+  bool alreadyPlaying = false,
+}) => !((live || alreadyPlaying) && isUnseekableStreamError(error));
