@@ -3538,3 +3538,10 @@ Mac 版は ad-hoc 署名のため、ビルド毎にアプリの cdhash が変わ
 
 - 並行作業中の Windows 再生失敗 (Failed to recognize file format) の切り分け修正が main に入ったら、その版で Windows の Desktop 配置を更新すること (本節の配置はビルド28)。
 - 版数上げは本節の実機確認の後 (従来ルール)。
+
+### 67.6 macOS 版 (ビルド28) の配置完了
+
+- 本人がローカル Terminal で署名コマンドを実行し `SIGNED-OK` (§67.3 で Mac クローンに残置した未署名 .app への署名)。署名後の .app を検証した: 版数 1.4.0 / ビルド 28、Identifier `com.markun.tmhb`、Authority = `torne-mobile-hb-signing` (ad-hoc ではない)、designated requirement は `identifier "com.markun.tmhb" and certificate root = H"cc2085f94c17c347e069fe7716d0375eb33f694c"` で §66.6 と同一の形 (証明書に紐づくためビルドを跨いで安定)、`codesign --verify --deep --strict` 合格 (valid on disk / satisfies its Designated Requirement)。
+- Desktop の `torne mobile HB 1.4.0.app` を、この署名済みビルド 28 で差し替えた (差し替え前は §66 の署名済みビルド 27)。旧版の退避は、本人の新ルール (旧版は削除可) に従い行っていない。差し替え後の Desktop コピーでも版数・署名 ID・DR・verify を再確認済み。
+- 起動スモークテスト合格: Desktop のコピーを起動し、10 秒後もプロセス生存 (Desktop パスからの起動) を確認した。終了操作では osascript の quit が -128 を返したが、プロセスの終了は確認できている。
+- 署名の身元が §66 と同一のため、§66.6 の初回起動で「常に許可」を押していれば、ビルド 28 でも資格情報ダイアログは再表示されない想定。
