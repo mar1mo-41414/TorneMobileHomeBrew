@@ -1841,3 +1841,26 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 
 - torne mobile HB 自体の LAN 再生の実機確認 (経路要因の最終切り分けを含む)。
 - §28.8・§30.6 の継続残件 (1 タイトル再生中の交換鍵ローテーションの実地検証、EPG からの予約作成の実機確認、クライアント登録の要否) は不変。
+
+## 32. 再生中のスリープ抑止 (2026-11-17、ビルド +11)
+
+### 32.1 実機セッションの観測と問題 (ビルド +10、iPad)
+
+- 日時・環境: 2026-11-17 12:36:02–12:42:46 JST、本人の iPad から VPN 経由で DR 録画を約 5 分再生。証拠: デバッグログ `tmhb-debug-20261117-123529-310.log`。
+- 数値: AKE 864 ms、初回平文はコンテンツ GET の 284 ms 後。758 MB / 722 パケットを約 403 秒で供給 (実効 約 1.9 MB/s)。DR のビットレートに届かずバッファリングを反復したが、これは経路帯域側の話で再生基盤側に異常なし。終了は本人の停止による正常終了。
+- 問題: 再生中に端末がスリープに入ろうとした。再生まわりのどこにも OS のアイドルタイマー無効化が無かった (iOS `isIdleTimerDisabled` 相当を誰も切り替えていない)。
+
+### 32.2 実装
+
+- 方式: `wakelock_plus` (^1.5.2) を採用した。iOS では `UIApplication.isIdleTimerDisabled`、Android では `FLAG_KEEP_SCREEN_ON` を切り替えるもので、プラットフォームチャネル自作で叩く対象と正確に一致する。追加依存はこの 1 本のみ。
+- 構造 (MulticastLock と同じ分離): core に `WakelockGuard` インターフェースと状態追従コントローラ `PlaybackWakelock` (`lib/core/wakelock.dart`)、app 層に `WakelockPlusGuard` (`lib/app/wakelock.dart`)、`wakelockGuardProvider` で配線。プレイヤー画面 (`lib/ui/player_screen.dart`) はコントローラを playing ストリームで駆動する。
+- 有効化/解放の条件: プレイヤーの playing 状態に追従する。playing=true で有効化、false (一時停止・停止・再生終了) で解放。mpv エラー時も解放し、画面の dispose でも解放する。バッファリング中は playing が維持されるためロックも維持される (§32.1 のように低速経路で止まっては再開する再生でも画面が落ちない)。
+- コントローラの作法: 遷移の重複排除 (同じ値の繰り返しは no-op) とプラットフォーム呼び出しの直列化 (高速な再生/一時停止の反転でも順序が崩れない)。プラットフォーム呼び出しの失敗は playback カテゴリにログして握り潰し、再生自体を壊さない。有効化/解放はデバッグログ (playback カテゴリ) に `wakelock: enabled (playing)` / `wakelock: released (not playing)` として残る。
+- テスト: `test/wakelock_test.dart` を新設 (7 件: 有効化の重複排除、一時停止で解放、初期状態での no-op、高速な反転の直列化、release の冪等性、有効化/解放の失敗時のログ)。全体 **180 件全合格** (173 + 7)、`flutter analyze` 検出なし。
+- 版数: 実機での成立確認が済むまで上げないルールに従い **1.2.0 のまま、ビルド 11**。GitHub リリースはしない。コミット: 実装 `ad5a790`。
+
+### 32.3 ビルド (ビルド +11)
+
+- IPA (署名なし、CFBundleShortVersionString 1.2.0 / CFBundleVersion 11 を実物で確認): 16,944,031 バイト、SHA-256 `33ed1307ee0126e8992c3b9a8a9d2310f4c6e9e324626370cb52e090647ceb71`。marnux `~/tmp/Decrypted-ipa/` に配置。
+- APK (配布用署名、versionCode 11、署名証明書 `e60cfeda…`): 101,587,445 バイト、SHA-256 `cd960439884e68e8235861182c144697331504d40ecb35dbc6b839ff85e7ace8`。marnux `~/ダウンロード/` に配置。
+- 残件: 実機 (iPad / iPhone) で再生中にスリープしなくなったことの確認は本人の次回再生テスト待ち。
