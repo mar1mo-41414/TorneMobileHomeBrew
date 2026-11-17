@@ -59,6 +59,16 @@ APK を直接インストールしてください (提供元不明アプリの�
 
 録画再生 (DTCP-IP) の AKE 実装は、tsukumijima 氏の [pydtcpip](https://github.com/tsukumijima/pydtcpip) を Dart へ移植したものです。本アプリの DTCP-IP 再生は pydtcpip の知見の上に成り立っています。記して感謝します。
 
+## 支援について
+
+torne mobile HB は個人の趣味で開発しているフリーソフトです。
+もし「応援したい」と思っていただけたら、PayPay で寄付を受け付けています。
+
+- PayPay ID: markunr_m
+
+特典などは特に出せませんし、寄付の有無で機能や対応に差がつくこともありません。
+開発の励みになりますので、気が向いたらどうぞ。
+
 ## ライセンス
 
 MIT License
