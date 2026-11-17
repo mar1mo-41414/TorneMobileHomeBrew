@@ -14,8 +14,16 @@ import '../core/core.dart';
 import 'ake_socket.dart';
 import 'debug_log.dart';
 import 'multicast_lock.dart';
+import 'wakelock.dart';
 
 final httpClientProvider = Provider<http.Client>((ref) => http.Client());
+
+/// Sleep suppression for the player screen (plan 32): the lock is
+/// held while the player reports playing, so the device does not
+/// idle-sleep mid-playback.
+final wakelockGuardProvider = Provider<WakelockGuard>(
+  (ref) => const WakelockPlusGuard(),
+);
 
 /// Discovery chain (plan 16.3): SSDP first; when it finds nothing
 /// (multicast-restricted environments such as iOS sideloading), the

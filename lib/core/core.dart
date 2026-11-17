@@ -12,6 +12,7 @@ export 'broadcast_text.dart';
 export 'json_util.dart';
 export 'time_util.dart';
 export 'token.dart';
+export 'wakelock.dart';
 export 'models/channel.dart';
 export 'models/device.dart';
 export 'models/didl.dart';
