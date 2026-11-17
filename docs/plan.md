@@ -3490,3 +3490,13 @@ Mac 版は ad-hoc 署名のため、ビルド毎にアプリの cdhash が変わ
 - (b) 再ビルド: Mac クローンを `4fe9602` へ更新し、改修済み `tool/build_macos_desktop.sh` を実行した。xcodebuild は **BUILD SUCCEEDED** で、スクリプトも ID を検出して署名段へ進んだが、`codesign` が Dav1d.framework の処理中に `errSecInternalComponent` で失敗した。
 - 切り分け (実測): SSH セッションからは `security show-keychain-info` 自体が `User interaction is not allowed.` を返し、`/bin/echo` のコピーへの単体署名テストも同じ `errSecInternalComponent` で失敗した。つまり原因はアプリ・スクリプト・特定フレームワークではなく、**SSH セッションからはログインキーチェーンの秘密鍵にアクセスできない**こと (§66.2 の import 不可と同じセッション分離の壁)。署名だけは本人の GUI セッション内で実行する必要がある。
 - 残件: 本人が Mac のローカル Terminal で、ビルド済みの .app への署名と検証の1コマンドを実行する (コマンドは本セッションの最終報告に記載)。実行後にエージェント側で続行する: 署名の検証 (`codesign -dv` で署名 ID と designated requirement の安定確認)、Desktop の `torne mobile HB 1.4.0.app` の差し替え、起動スモークテスト。Desktop の .app は現時点では従来の ad-hoc 署名ビルドのまま (未署名の新ビルドは配置していない)。
+
+### 66.6 最終段: 署名検証・Desktop 差し替え・スモークテスト完了 (2026-11-18)
+
+本人が §66.5 の残件コマンド (ローカル Terminal での署名 + 検証) を実行し、`SIGNED-OK` が出た後の最終確認。
+
+- 署名検証 (Mac クローン側の署名済み .app): `codesign -dv --verbose=4` で `Authority=torne-mobile-hb-signing` (ad-hoc ではない)。designated requirement は `identifier "com.markun.tmhb" and certificate root = H"cc2085f94c17c347e069fe7716d0375eb33f694c"` で、証明書の SHA-1 (§66.5) と一致する。cdhash ではなく証明書に紐づく形のため、ビルド毎に変わらず安定する。`codesign --verify --deep --strict` も合格 (valid on disk / satisfies its Designated Requirement)。entitlements は付いておらず、keychain-access-groups の混入もない。版数は 1.4.0 / ビルド 27。
+- Desktop 差し替え: 旧 ad-hoc 版は削除せず、Mac の `~/GitTmp/MyClaude/tmhb.work/2026-11-18-signing/desktop-140-adhoc.app` へステージング退避した (復旧可能)。署名済みビルドを `ditto` で `~/Desktop/torne mobile HB 1.4.0.app` に配置し、Desktop コピーでも `--verify --deep --strict` 合格と `Authority=torne-mobile-hb-signing`・同一の designated requirement を確認した。
+- スモークテスト: Desktop コピーを起動し、10 秒後もプロセス生存 (Desktop パスからの起動) を確認して正常に quit した。
+- これで §66.4 の残件は全て完了し、§66 の対策は完結した。以後の Mac 版ビルドは `tool/build_macos_desktop.sh` が `torne-mobile-hb-signing` で署名する (署名の実行だけは §66.5 の制約により本人の GUI セッション内で行う必要がある)。
+- 本人側の残り: 新しい身元で署名された版の初回起動時に、既存の資格情報項目へのアクセス許可ダイアログが1回だけ出る想定。そこで「常に許可」を押せば、身元 (designated requirement) が固定されたため、以後はビルドし直してもダイアログは出なくなる。
