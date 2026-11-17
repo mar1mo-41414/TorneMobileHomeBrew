@@ -71,12 +71,21 @@ class CredentialSummary {
 /// first-unlock, this-device-only (Keychain), which also excludes
 /// them from iCloud Keychain sync; on Android they are encrypted
 /// with a Keystore-held key.
+///
+/// On macOS the items go to the legacy login keychain
+/// (usesDataProtectionKeychain: false, plan 39). The plugin's
+/// default — the data protection keychain — requires a
+/// keychain-access-groups entitlement, and an ad-hoc signed app
+/// (how the desktop build is distributed) cannot carry one:
+/// launchd refuses to spawn it at all. The legacy keychain is
+/// still the OS vault, so the "OS vault only" rule holds.
 class SecureCredentialStore implements CredentialStore {
   SecureCredentialStore({this.authorityKeys = const []})
     : _storage = const FlutterSecureStorage(
         iOptions: IOSOptions(
           accessibility: KeychainAccessibility.first_unlock_this_device,
         ),
+        mOptions: MacOsOptions(usesDataProtectionKeychain: false),
       );
 
   final FlutterSecureStorage _storage;
