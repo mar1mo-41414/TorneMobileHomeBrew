@@ -45,3 +45,12 @@
 - 正本は開発用リポジトリ。公開側への反映はその後に行う(順序を逆にしない)。
 - コミットメッセージは日本語、要点を 1 行目に。作業の節目ごとに小さくコミットする。
 - 変更したらテストを通し、静的解析(flutter analyze)がクリーンなことを確認してからコミットする。
+
+## 9. デバッグビルド (GitHub Actions)
+
+- main への push と手動実行で、GitHub Actions の `dev-build` ワークフロー (`.github/workflows/dev-build.yml`) が Android APK と署名なし IPA をビルドする。
+- 成果物は Actions の artifact のほか、ローリングな prerelease (タグ `dev`、Releases の「開発版 (dev)」) にも載る。利用者は Actions 画面を開かずにそこから取得できる。テスト用ビルドの案内はそちらへ誘導する。
+- Android の署名は、以下の Secrets が登録されていれば配布用キーストア、なければデバッグ鍵にフォールバックする (ビルド自体は常に通る)。
+  - `TMHB_KEYSTORE_BASE64`: 配布用キーストア (release.keystore) を base64 化したもの
+  - `TMHB_STORE_PASSWORD` / `TMHB_KEY_ALIAS` / `TMHB_KEY_PASSWORD`: key.properties の同名項目
+- Secrets の登録はオーナーが行う。値そのものをコミット・Issue・ログに残さない (§5 と同じ)。
