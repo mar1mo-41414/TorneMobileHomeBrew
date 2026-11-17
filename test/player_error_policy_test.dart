@@ -1,4 +1,4 @@
-/// Tests for the player error policy (plan 42): mpv's
+/// Tests for the player error policy (plan 43): mpv's
 /// "Cannot seek in this stream." complaint is non-fatal for
 /// live viewing (the stream is unseekable by design) and keeps
 /// its previous fatal treatment for recorded playback.

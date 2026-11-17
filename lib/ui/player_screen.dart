@@ -69,7 +69,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
   final String title;
   final PlaybackSession session;
 
-  /// Whether the session is a live broadcast (plan 42). A live
+  /// Whether the session is a live broadcast (plan 43). A live
   /// stream is unseekable by design, so mpv's seek complaint is
   /// non-fatal there (see player_error_policy).
   final bool live;
@@ -126,7 +126,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _player.stream.error.listen((error) {
         _diag(DiagCategory.playback, 'player: error: $error');
         if (!playerErrorIsFatal(error, live: widget.live)) {
-          // A seek complaint against a live stream (plan 42):
+          // A seek complaint against a live stream (plan 43):
           // the stream is unseekable by design and mpv keeps
           // playing, so leave the watchdog running as the
           // arbiter of a start that never reaches playback.
@@ -181,7 +181,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _diag(DiagCategory.playback, 'player: open failed: $e');
       if (!playerErrorIsFatal('$e', live: widget.live)) {
         // Same seek complaint as the error-stream path, thrown
-        // through open() instead (plan 42): not a failed start.
+        // through open() instead (plan 43): not a failed start.
         _diag(
           DiagCategory.playback,
           'player: ignoring the seek complaint for live viewing',

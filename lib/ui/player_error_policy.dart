@@ -1,4 +1,4 @@
-/// Player error policy (plan 42).
+/// Player error policy (plan 43).
 ///
 /// mpv can report "Cannot seek in this stream." while a stream
 /// is being opened. The demuxer queues an initial seek for
