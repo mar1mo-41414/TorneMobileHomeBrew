@@ -3424,3 +3424,32 @@ Windows 調査 (§ 調査レポート `tmhb.work/2026-11-17-windows-survey/repor
 - 成果物 `libmpv-2.dll` (38,306,830 B) の configuration に両フラグが入り、デコーダ名文字列と configure ログ (Enabled external libraries / decoders) でも同梱を確認。公式 7z と同一レイアウトで 7z 化し (11,075,579 B、MD5 `2bef55eb97b61c78cb12c68bc0e8da66`)、GitHub リリース **`libmpv-windows-v1.0.11-arib1`** に公開した (未認証再ダウンロードで MD5 一致を確認)。
 - 統合は Android/iOS と同型: `third_party/media_kit_libs_windows_video` (pub 1.0.11 の vendored コピー) の `windows/CMakeLists.txt` の取得先を自前 7z に差し替え、`pubspec.yaml` の `dependency_overrides` に追加。`flutter pub get` / `analyze` / `test` (250 件) は marnux で通過。
 - **未検証のまま残るもの**: Windows 実機でのアプリのビルドと字幕描画。marog に Visual Studio (「C++ によるデスクトップ開発」ワークロード) が無く、アプリ本体のビルド自体がまだ実行できない。本人の VS 導入後に `flutter build windows` → 起動・発見・登録・再生・字幕の実機確認をもって Windows 対応の成立とする。
+## 65. Windows 初回ビルド (marog、2026-11-18)
+
+§64 の残件 (marog での実機ビルド) を実施した。本人が Visual Studio を導入済みで、Windows コードの初回コンパイルが通った。
+
+### 65.1 環境確認 (marog)
+
+- Visual Studio Community 2026 18.12.1 (`C:\Program Files\Microsoft Visual Studio\18\Community`)。「C++ によるデスクトップ開発」ワークロード入りで、MSVC 14.52.37025 (cl.exe)、Windows SDK 10.0.26100.0、VS 同梱 CMake の実在を確認。`flutter doctor` の Visual Studio 項目も合格。
+  - なお `vswhere -requires Microsoft.VisualStudio.Workload.VCTools` は空を返したが、コンポーネント `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` 指定ではインストールパスが返り、実物も揃っていた (VS 2026 世代の vswhere の挙動として記録)。
+- リポは marog に無かったため GitHub から clone した (`C:\Users\markun\GitTmp\MyClaude\TorneMobileHomeBrew`、main `65f94b7`)。Flutter SDK は §64.1 で導入済みの `C:\Users\markun\GitTmp\flutter` (3.50.0) を使用。
+
+### 65.2 初回ビルドのエラーと修正 (3 件、いずれも windows/runner 内)
+
+1. **C4819 → C2220 (文字コード)**: `ake_socket.cpp` / `ake_socket.h` の日本語コメント (UTF-8) を MSVC がシステムコードページ 932 で読み、警告 C4819 が /WX でエラー化した。→ `windows/runner/CMakeLists.txt` に `target_compile_options(${BINARY_NAME} PRIVATE /utf-8)` を追加。
+2. **C2664 (registrar の型)**: `flutter_window.cpp` が `GetRegistrarForPlugin` の返す C ハンドル (`FlutterDesktopPluginRegistrarRef`) を、`flutter::PluginRegistrar*` を取る `AkeSocketRegister` へ直接渡していた。→ `flutter::PluginRegistrarManager::GetInstance()->GetRegistrar<flutter::PluginRegistrarWindows>(...)` で C++ ラッパーに変換 (`<flutter/plugin_registrar_windows.h>` を include 追加)。ラッパーの所有権は PluginRegistrarManager 側にあり、ハンドルの生存期間中は有効。
+3. **LNK2019 (未解決シンボル 5 件)**: `flutter::PluginRegistrar` / `PluginRegistrarManager` の実装は `flutter_wrapper_plugin` 側にあるが、ランナーは `flutter_wrapper_app` しかリンクしていなかった。→ `windows/runner/CMakeLists.txt` の `target_link_libraries` に `flutter_wrapper_plugin` を追加。
+
+修正は 2 ファイル (`windows/runner/flutter_window.cpp`、`windows/runner/CMakeLists.txt`) のみで、AKE ソケット本体 (`ake_socket.cpp` / `.h`) は無修正でコンパイルが通った。
+
+### 65.3 ビルド結果と検証
+
+- `flutter build windows --release` 成功 (3 回目)。生成物は `build\windows\x64\runner\Release\tmhb.exe`。
+- 同梱 `libmpv-2.dll` (38,306,830 B、§64.5 の成果物と同サイズ) の文字列で `--enable-libaribcaption` と `--enable-decoder=libaribcaption` を確認し、自前ビルド `libmpv-windows-v1.0.11-arib1` の同梱が確定した。
+- 起動スモークテスト: SSH 経由で `tmhb.exe` を起動し、10 秒後もプロセスが生存 (ワーキングセット 83 MB) することを確認して停止した。セッション 0 で起動しているため画面表示の確認はここでは行っていない。
+- 本人試用用に Release フォルダ一式を zip 化し、marog の Desktop に `TorneMobileHomeBrew-windows-1.4.0.zip` (36,673,242 B) を配置した。
+- Dart 側の変更は無い。合流時点で `flutter analyze` クリーン、`flutter test` 271 件全合格を再確認した。
+
+### 65.4 残件
+
+- 本人の実機確認: 起動 (画面表示)、nasne の発見、登録、AKE 再生、字幕描画。これらが成立するまで版数は上げない (現行 1.4.0+27)。
