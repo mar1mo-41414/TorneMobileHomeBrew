@@ -2098,3 +2098,15 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   - macOS: `TorneMobileHomeBrew-macos-1.2.1.zip`、SHA-256 `10ece337bac069584535fbff5e95ddee9609d1e93eefb87951f9ee1cb6aa2559`。.app は本人のデスクトップへ差し替え済みで、起動 (プロセス生存)・新規クラッシュレポートなし・Documents に新規ファイルなしを確認し、起動したままにしてある (資格情報保存の再試行待ち)。
   - Linux: `TorneMobileHomeBrew-linux-1.2.1.tar.gz`、SHA-256 `d6023f8c9a8afcd86077e2aa900b9604b1b6dc6164c219cd082ab511780bb79a`。Xvfb 起動と media_kit 登録を確認済み。
 - コミット (いずれも開発側のみ): `1d7070f` (保存先)、`fba5417` (Keychain)、本節とビルドスクリプトのコミット。
+
+### 39.4 補正: -34018 の真因は synchronizable 側の delete プローブだった (2026-11-17)
+
+§39.1 の修正 (`fba5417`) を入れたビルドで本人が再試行したところ、同じ -34018 が再現した。再調査を実測で行い、真因を確定した。§39.1 の「アドホック署名のまま起動と保存が両立する」という結論は誤りだった (当時の検証は起動確認までで、資格情報の操作自体は一度も実行していなかった)。
+
+- 実行実体の照合: 実行中プロセスはデスクトップ配置の .app (15:20:40 起動) で、その App.framework は配布 zip (SHA-256 `10ece337…`) とバイト一致。さらに A/B ビルドで確認した: 修正前ソースのスナップショットは `597978b1…`、配置済みは `51ed5622…` で修正後ソースのビルドと一致する。**「古いビルドが残っていた」説は棄却**。`fba5417` は確かに出荷ビルドに入っていたが、それでも直らなかった。
+- コード監査: `FlutterSecureStorage` の生成は `SecureCredentialStore` の1箇所のみで mOptions を指定し、全 read/write/delete はコンストラクタの options を継承する (プラグイン 10.3.4 / darwin 0.3.2 / platform_interface 2.1.1 のソースで受け渡しまで確認)。デフォルト options のままの呼び出しは無い。
+- プローブ実測 (アドホック署名の使い捨てアプリを GUI セッションで実行し、プラグインと同一のクエリを再現):
+  - 従来型キーチェーンへの Add / Read (DP 指定なし、`kSecAttrSynchronizable=false`) は成功する。DP=true は対照どおり -34018。
+  - **`kSecAttrSynchronizable=true` を付けた SecItemDelete / SecItemAdd は、対象の有無によらず -34018** になる (entitlement の無いアドホック署名では、synchronizable 側の書き込み系操作そのものが entitlement エラー)。Read は -25300 (通常の未発見)。
+- 真因: プラグインの `performDelete` は synchronizable=true のパスを先に試す。アイテムが存在すれば次の false パスが実物を消して全体は成功するが、**何も保存されていないと true パスの -34018 が「未発見」と誤判定されずにそのまま delete 全体の失敗として伝播する**。アプリの `save()` は書き込み前に `delete()` を呼ぶため、初回インポートは必ずここで死ぬ。DP フラグとは無関係な経路であり、`fba5417` の前後で症状が同一だったことと一致する。
+- 採用した修正: `SecureCredentialStore.delete()` は、各キーを「保存されている場合にだけ」プラグイン delete で消す (存在確認の read は影響を受けない)。空のときは no-op になり、`save()` の事前 delete もそのまま成立する。テスト 207 件全合格。再ビルドした .app をデスクトップへ差し替え済み。最終確認は本人のインポート再試行。
