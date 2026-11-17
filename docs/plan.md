@@ -3500,3 +3500,41 @@ Mac 版は ad-hoc 署名のため、ビルド毎にアプリの cdhash が変わ
 - スモークテスト: Desktop コピーを起動し、10 秒後もプロセス生存 (Desktop パスからの起動) を確認して正常に quit した。
 - これで §66.4 の残件は全て完了し、§66 の対策は完結した。以後の Mac 版ビルドは `tool/build_macos_desktop.sh` が `torne-mobile-hb-signing` で署名する (署名の実行だけは §66.5 の制約により本人の GUI セッション内で行う必要がある)。
 - 本人側の残り: 新しい身元で署名された版の初回起動時に、既存の資格情報項目へのアクセス許可ダイアログが1回だけ出る想定。そこで「常に許可」を押せば、身元 (designated requirement) が固定されたため、以後はビルドし直してもダイアログは出なくなる。
+
+## 67. 資格情報インポートへの credentials.env ファイル対応 (2026-11-18、ビルド28)
+
+### 67.1 要望と方針
+
+- 本人要望: 設定の資格情報インポートで、証明書と秘密鍵を2回コピペするのが面倒。pydtcpip 形式の credentials.env ファイルを選ぶだけでインポートが完了するようにしたい。
+- 本人の追加指示: 従来の2回打ち込み (証明書・秘密鍵の直接入力と個別ファイル読み込み) も残す。env ファイルは追加の選択肢として併設し、既存の入力欄と検証・保存の流れはそのまま維持する。
+
+### 67.2 実装
+
+- パーサ `lib/core/dtcp/credentials_env.dart` の `parseCredentialsEnv` (core から export)。`PYDTCPIP_CERTIFICATE` / `PYDTCPIP_PRIVATE_KEY` の2変数を抽出して hex デコードするだけの形式レベル処理で、ペアの真贋判定は担わない。寛容な点: コメント行 (`#` / `;`)、空白行、CRLF、`=` 前後の空白、引用符 (単一・二重、後続のインラインコメント可)、`export ` 接頭辞、値の中の空白、無関係な変数 (無視)、先頭の UTF-8 BOM。欠落・非 hex・奇数長・代入でない行は `NasneError` (source `dtcp:import`)。エラーメッセージには変数名と形式の問題しか入れず、値を一切含めない (テストで担保)。
+- 画面 `lib/ui/dtcp_credential_screen.dart`: 状態表示の下に「credentials.env から読み込む」節を追加し、その下に従来の直接入力 (見出し「証明書・秘密鍵を直接入力」付き) をそのまま残した。ファイル選択は既存依存の `file_picker` ^10.3.10 (新規依存なし。各プラットフォーム標準のピッカー、`withData: true` でバイト取得)。env を選ぶと即インポートが走る: パース結果を従来と共有の `_import()` に渡し、検証 (`DeviceCredentials` による長さ・証明書種別・DTLA 署名・鍵範囲・ペア一致) と OS 保管庫への保存はコピペ経路と完全に同一。値はログに出ない (従来ルール通り)。
+- テスト `test/credentials_env_test.dart` 10件: 形式レベル (素の2行、コメント/空白/CRLF/引用符/export/インラインコメント、BOM、値内空白、欠落、非 hex、奇数長、代入でない行、エラー文に値が含まれないこと) と、KAT ダミーペアでの検証経路への受け渡し (正常ペアは `InMemoryCredentialStore` に保存できる、不一致ペアは同じ検証で拒否される)。全テスト 281 件合格、`flutter analyze` クリーン。
+- コミット: feat `746f1ba`、ビルド番号 `47568ee`、マージ `0466497`、BOM 対応 `98b771d`。版数は 1.4.0 据え置き、ビルド番号のみ 27 → 28 (pubspec と `lib/core/app_version.dart` の両方)。
+
+### 67.3 成果物 (ビルド28、main `98b771d`)
+
+| ファイル | サイズ | SHA-256 |
+|---|---|---|
+| TorneMobileHomeBrew-1.4.0.ipa (署名なし、ビルド28) | 16,523,062 バイト | `8513c44e0f285b7b424d1b383cab36d7312ce3ddeb1892028447f7459a49ce43` |
+| TorneMobileHomeBrew-1.4.0.apk (配布用署名、ビルド28) | 102,180,393 バイト | `00992140778bd4f88c09af1e681d449f7ed99b9d25277d9047863d364d6f6636` |
+
+- IPA: Mac クローンで `flutter build ipa --no-codesign` し、xcarchive 内の .app (Info.plist で 1.4.0 / 28 を確認) から Payload を組んで作成。`tool/libmpv/audit_load_commands.py` の監査合格 (24 Mach-O バイナリ / 261 load commands)。配置は marnux `~/tmp/Decrypted-ipa/` (最新として差し替え)。なお `build/ios/iphoneos/Runner.app` には 1.2.1/15 の古い残骸が残っており、一度それで組みかけてから xcarchive 側で組み直した (残骸の混入なしは版数確認で担保)。
+- APK: marnux で `TMHB_KEY_PROPERTIES` 指定のリリースビルド。配布署名 (証明書 SHA-256 `e60cfeda…`)、versionCode 28 / versionName 1.4.0、libmpv.so (arm64) の `--enable-libaribb24` と `ff_libaribb24_decoder` を確認。配置は marnux `~/ダウンロード/`。
+- Windows: marog の専用ビルドクローン `GitTmp\MyClaude\TorneMobileHomeBrew-build28` (診断作業中の既存クローンと分離) で `flutter build windows --release`。配置は新ルール通り **Desktop にフォルダのまま**: `C:\Users\markun\Desktop\TorneMobileHomeBrew\` (tmhb.exe 160,256 バイト、libmpv-2.dll 38,306,830 バイト = カスタム aribbcaption 版と同一サイズ)。旧 zip は Desktop から除去した。旧展開フォルダ `TorneMobileHomeBrew-windows-1.4.0` (ビルド27) は、並行中の Windows 再生切り分け作業が使っている可能性があるため残置した (切り分け完了後に削除可)。
+- macOS: `tool/build_macos_desktop.sh` を実行し、xcodebuild は **BUILD SUCCEEDED** (Info.plist で 1.4.0 / 28 を確認)。署名段は §66.5 と同じ SSH セッション制約で `errSecInternalComponent` となり停止したため、未署名の .app を Mac クローンの `build/macos/Build/Products/Release/torne mobile HB.app` に残置した。Desktop の署名済み版への差し替えは、本人がローカル Terminal で署名コマンドを実行した後に行う。
+
+### 67.4 本人の実機確認手順
+
+1. iPhone / iPad は LiveContainer で最新 IPA (ビルド28) に更新、Android は最新 APK に更新する。
+2. 設定 → DTCP-IP 資格情報 → 「credentials.env を選択」から、pydtcpip 形式の credentials.env を選ぶ。「資格情報を保存しました」が出て、状態が「インポート済み」になれば完了。
+3. そのまま録画再生が従来通りできることを確認する。従来の貼り付け入力でも同じ保存ができることも併せて確認する。
+4. Windows は `Desktop\TorneMobileHomeBrew\tmhb.exe` から起動して同様に確認する (旧フォルダと間違えないこと)。
+
+### 67.5 申し送り
+
+- 並行作業中の Windows 再生失敗 (Failed to recognize file format) の切り分け修正が main に入ったら、その版で Windows の Desktop 配置を更新すること (本節の配置はビルド28)。
+- 版数上げは本節の実機確認の後 (従来ルール)。
