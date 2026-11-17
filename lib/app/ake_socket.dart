@@ -4,11 +4,14 @@
 /// (the DTCP proximity requirement; its comment notes some
 /// recorders drop the connection right after CHALLENGE when the
 /// TTL is higher) and enables TCP_NODELAY. dart:io can do the
-/// latter but not the former, so on iOS/Android the AKE socket is
-/// a platform-channel native socket that sets both via
+/// latter but not the former, so on iOS/Android/macOS the AKE
+/// socket is a platform-channel native socket that sets both via
 /// setsockopt. On other platforms — and if the native channel is
 /// unavailable — this falls back to the dart:io transport (which
-/// sets TCP_NODELAY only).
+/// sets TCP_NODELAY only). Beware: the nasne refuses the AKE TCP
+/// connection itself (RST) when the TTL is above 3 (plan 39.5),
+/// so the dart:io fallback cannot authenticate against it; it
+/// exists for graceful degradation and shows up in the log.
 library;
 
 import 'dart:async';
@@ -22,16 +25,16 @@ const _methodChannel = MethodChannel('com.markun.tmhb/ake_socket');
 const _eventChannel = EventChannel('com.markun.tmhb/ake_socket_events');
 
 /// An [AkeConnectionFactory] that prefers the native TTL-3 socket
-/// on mobile platforms.
+/// on the platforms that have one (iOS / Android / macOS).
 Future<AkeConnection> nativeAkeConnectionFactory(
   String host,
   int port, {
   DiagLog diag = const DiagLog.none(),
 }) async {
-  if (!Platform.isAndroid && !Platform.isIOS) {
+  if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) {
     diag(
       DiagCategory.ake,
-      'ake transport: dart socket (not a mobile platform)',
+      'ake transport: dart socket (no native socket on this platform)',
     );
     return socketAkeConnectionFactory(host, port);
   }
