@@ -5,6 +5,7 @@
 /// implementations and are replaceable.
 library;
 
+export 'app_version.dart';
 export 'endpoints.dart';
 export 'errors.dart';
 export 'diagnostics.dart';
