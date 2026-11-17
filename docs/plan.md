@@ -2123,3 +2123,21 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - 採用した修正 (`a543ce6`、`bca3b56`): macOS もモバイルと同じネイティブソケット経路を使う。`macos/Runner/AkeSocket.swift` (iOS 版と同一実装、import のみ FlutterMacOS に変更) を追加し、`MainFlutterWindow` でチャンネル (`com.markun.tmhb/ake_socket`) を登録、Dart 側の振り分け (`lib/app/ake_socket.dart`) に macOS を追加した。FlutterMacOS では registrar が非 Optional で `messenger` がプロパティである点が iOS と異なり、その差分は `bca3b56` で吸収した。チャンネルが登録されていない環境では従来どおり dart:io に落ちてログに残る (その場合は nasne 相手では上記の理由で接続できない)。テスト 207 件全合格・analyze クリーン。
 - ビルドと配置: 39.3 の手順 (tool/build_macos_desktop.sh) で再ビルドし、実行ファイルに AkeSocketHub が含まれることと署名検証を確認して、本人のデスクトップの .app を差し替えて起動済み (新規クラッシュレポートなし)。配布 zip も更新: `TorneMobileHomeBrew-macos-1.2.1.zip`、SHA-256 `8ea435dc5b85a9b5959172bfa342761306ae3f2c46a388bd4397c1cdd978639d` (marnux の ~/ダウンロード と作業領域に配置)。再生の実成否は本人の再試行で確認する (ログに `ake transport: native socket, ip ttl 3` が出れば経路は確定する)。
 - Linux 版は未修正: 同じ理由で AKE の接続が refused になるはずであり、直すには Linux 側のネイティブチャンネル実装が別途必要。本節で直したのは macOS のみ。
+
+### 39.6 Linux 版の AKE もネイティブソケット (TTL 3) へ (2026-11-17)
+
+§39.5 で「Linux 版は未修正」とした分の実施。macOS と同じ理由 (dart:io には TTL を設定する API が無く、nasne の AKE リスナは TTL≧4 の接続を RST で拒否する) で、Linux 版も AKE の TCP 接続自体が成立しなかった。
+
+- 実装 (`d185d1b`):
+  - `linux/runner/ake_socket.cc` / `ake_socket.h` を新設し、iOS/macOS の `AkeSocket.swift` と同じ契約を Flutter Linux の C API で実装した。チャンネル名 (`com.markun.tmhb/ake_socket` / `com.markun.tmhb/ake_socket_events`)、メソッド (connect / send / close)、イベント形式 ({id, kind, data/message})、エラーコード (`connect_failed` / `bad_args`) とメッセージの形まで Swift 版に一致させてある。接続は IP_TTL=3 と TCP_NODELAY を setsockopt してから非ブロッキング connect + poll (10 秒) で行い、受信は専用スレッドの recv ループから GLib メインループ経由でイベントを送る。
+  - 登録は `my_application.cc` の activate で `fl_register_plugins` の直後。`linux/runner/CMakeLists.txt` にソースを追加。
+  - Dart 側の振り分け (`lib/app/ake_socket.dart`) に Linux を追加。これで「ネイティブが無いプラットフォーム」だけが dart:io に落ちる。
+  - テスト側の追随: フォールバック検証テストは、テストホストが Linux (= ネイティブ対象プラットフォーム) になったため、そのままでは実チャンネルを触りに行く。チャンネル不在 (MissingPluginException) をモックして「ネイティブが使えない場合は dart ソケットへ落ちる」検証に直した。
+  - §39.3 の Linux ビルド手順を `tool/build_linux_desktop.sh` にスクリプト化し、配布 tar にだけ存在した `torne-mobile-hb.desktop` を `linux/` 配下のリポ管理に移した。
+- テスト 207 件全合格、`flutter analyze` 検出なし。
+- 検証 (実測):
+  - 前提の再確認: marnux から 192.168.11.129:57343 へ、TTL 64 は Connection refused、TTL 3 は接続成功 (本作業の開始時点でも不変)。
+  - プローブ (作業領域 `tmhb.work/2026-11-17-desktop-fix/probe/`、リポのネイティブ実装と同一ソース・同一チャンネル手順を組み込んだ使い捨てアプリ): 対照の dart:io 接続は refused (errno 111)、ネイティブ経由の connect は成功。接続後にソースから自発的なデータが来ないのは AKE の仕様どおり (最初に話すのはシンク側) で、異常ではない。
+  - 実アプリ: ビルド成功、Xvfb 上で起動してプロセス生存と media_kit 登録を確認。実行バイナリ内に両チャンネル名が存在することも確認した。
+  - 成果物: `TorneMobileHomeBrew-linux-1.2.1.tar.gz`、SHA-256 `02315db28211bfef75a57c10e6b57470314a6bb22e961525e8611d5392f88e5d`。marnux の ~/ダウンロード と `tmhb.work/2026-11-17-desktop/` に配置。
+- 未確認 (境界の明記): Linux アプリ内での AKE 認証の完走 (交換鍵の受領まで) は未確認。marnux 上の Linux アプリには資格情報が未登録で、値の投入は本人の領域のためこちらでは行わない。§39.5 の macOS が本人の再試行で成立したのと同じ状態であり、プラットフォーム固有層 (ソケット) は上記のとおり実測で確認済み、それより上はプラットフォーム非依存の Dart 実装で iOS / Android / macOS で成立済みのものを使う。本人が Linux 版に資格情報を取り込んだ後の初回再生で完走確認が取れる。
