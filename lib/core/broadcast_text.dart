@@ -22,9 +22,14 @@ library;
 ///
 /// Evidence: glyph images of the AFS ARIB font map (ARIB STD-B24
 /// based), cross-checked against an independent recorder-firmware
-/// conversion table (plan 16.1). Points 64/65/71/83 of the same group
-/// map to regular Unicode (U+2B1B / U+2B24 / U+26BF / U+3299), so the
+/// conversion table (plan 16.1). Points 64/65/71 of the same group
+/// map to regular Unicode (U+2B1B / U+2B24 / U+26BF), so the
 /// firmware sends those directly and they need no entry here.
+/// Point 83 was believed to behave the same (U+3299), but a
+/// measured DIDL payload (plan 56) shows the firmware sending it
+/// as PUA 0xE19B after all, so it is listed below with the regular
+/// code point as its replacement — the form the EPG path produces
+/// and system fonts carry.
 const Map<int, String> aribProgrammeMarkReplacements = {
   0xE0F8: '[HV]', // 90/48 HV
   0xE0F9: '[SD]', // 90/49 SD
@@ -58,7 +63,12 @@ const Map<int, String> aribProgrammeMarkReplacements = {
   0xE198: '[声]', // 90/80 声
   0xE199: '[吹]', // 90/81 吹 (dubbed)
   0xE19A: '[PPV]', // 90/82 PPV
+  0xE19B: '㊙', // 90/83 ㊙ (U+3299; sent as PUA, plan 56)
   0xE19C: '[ほか]', // 90/84 ほか
+  // Outside the row-90 block: U+2049 ⁉, identified by a measured
+  // DIDL↔EIT positional match (plan 56). The EPG path produces
+  // U+2049 itself and fonts carry it, so it is its own replacement.
+  0xE2F0: '⁉', // ⁉ (U+2049; plan 56)
 };
 
 /// The same programme-mark group as delivered by the ARIB STD-B24

@@ -154,7 +154,8 @@ class DtcpPlaybackEngine implements PlaybackEngine {
   ) {
     diag(
       DiagCategory.playback,
-      'start: res quality=${res.quality ?? '(none)'}; '
+      'start: title=${title.title}; '
+      'res quality=${res.quality ?? '(none)'}; '
       'credentials -> HEAD -> AKE -> proxy',
     );
     return _start(res);
@@ -171,7 +172,9 @@ class DtcpPlaybackEngine implements PlaybackEngine {
   ) {
     diag(
       DiagCategory.playback,
-      'start (live): res quality=${res.quality ?? '(none)'}; '
+      'start (live): channel=${channel.channelName ?? '(no name)'}; '
+      'program=${channel.programTitle}; '
+      'res quality=${res.quality ?? '(none)'}; '
       'credentials -> HEAD -> AKE -> proxy',
     );
     return _start(res);

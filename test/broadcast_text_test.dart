@@ -67,7 +67,9 @@ void main() {
         0xE198: '[声]',
         0xE199: '[吹]',
         0xE19A: '[PPV]',
+        0xE19B: '㊙',
         0xE19C: '[ほか]',
+        0xE2F0: '⁉',
       };
       expect(aribProgrammeMarkReplacements, expected);
       for (final entry in expected.entries) {
@@ -77,6 +79,22 @@ void main() {
           reason: 'U+${entry.key.toRadixString(16).toUpperCase()}',
         );
       }
+    });
+
+    test('converts the plan-56 measured DIDL strings', () {
+      // FBS live detail (2026-11-17): the firmware sent U+E2F0 for
+      // ⁉ and U+E19B for ㊙; identified by positional match against
+      // the same programme's EIT text decoded with the B24 decoder.
+      expect(
+        normalizeBroadcastText('オモウマい店\uE0FE【北海道】謎解き食堂の'
+            'ギョウザが見当たらないギョウザ定食\uE2F0'),
+        'オモウマい店[字]【北海道】謎解き食堂の'
+            'ギョウザが見当たらないギョウザ定食⁉',
+      );
+      expect(
+        normalizeBroadcastText('肉汁ジュワーッ\uE19Bギョウザ'),
+        '肉汁ジュワーッ㊙ギョウザ',
+      );
     });
 
     test('passes plain text and unknown PUA through unchanged', () {

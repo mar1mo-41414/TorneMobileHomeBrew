@@ -25,12 +25,27 @@
 /// arbiter of a start that never reaches playback. Recorded
 /// playback keeps the previous behaviour — every player error
 /// fails the start — so this changes nothing for recordings.
+///
+/// The complaint arrives as TWO separate error events (measured
+/// on a real device, plan 56): the refusal itself and, right
+/// after it, the hint "You can force it with
+/// '--force-seekable=yes'.", which mpv emits as its own error.
+/// The hint alone does not contain the refusal text, so it used
+/// to fall through this classification and fail the start —
+/// that is what the user hit even after the plan-43 fix. The
+/// pair can also arrive late (25 s after the start in the
+/// measured case, with playback already running), so the
+/// classification must not depend on timing either. Both events
+/// are classified here as the one complaint.
 library;
 
-/// True when [error] is mpv's refusal to seek in an unseekable
-/// stream ("Cannot seek in this stream.").
+/// True when [error] is one of the two events of mpv's refusal
+/// to seek in an unseekable stream: the refusal itself
+/// ("Cannot seek in this stream.") or its companion hint
+/// ("You can force it with '--force-seekable=yes'.").
 bool isUnseekableStreamError(String error) =>
-    error.contains('Cannot seek in this stream');
+    error.contains('Cannot seek in this stream') ||
+    error.contains('force-seekable');
 
 /// Whether a player [error] must fail the start. For live
 /// viewing the unseekable-stream complaint is non-fatal (see

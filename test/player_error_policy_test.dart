@@ -20,6 +20,15 @@ void main() {
       );
     });
 
+    test('matches the companion force-seekable hint (plan 56)', () {
+      expect(
+        isUnseekableStreamError(
+          "You can force it with '--force-seekable=yes'.",
+        ),
+        isTrue,
+      );
+    });
+
     test('does not match other player errors', () {
       expect(isUnseekableStreamError('Failed to open.'), isFalse);
       expect(isUnseekableStreamError('Cannot open stream.'), isFalse);
@@ -36,6 +45,26 @@ void main() {
 
     test('the seek complaint stays fatal for recorded playback', () {
       expect(playerErrorIsFatal(seekError, live: false), isTrue);
+    });
+
+    test('the companion hint is non-fatal for live viewing (plan 56)', () {
+      expect(
+        playerErrorIsFatal(
+          "You can force it with '--force-seekable=yes'.",
+          live: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('the companion hint stays fatal for recorded playback', () {
+      expect(
+        playerErrorIsFatal(
+          "You can force it with '--force-seekable=yes'.",
+          live: false,
+        ),
+        isTrue,
+      );
     });
 
     test('other errors stay fatal for live viewing', () {
