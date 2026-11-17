@@ -3453,3 +3453,30 @@ Windows 調査 (§ 調査レポート `tmhb.work/2026-11-17-windows-survey/repor
 ### 65.4 残件
 
 - 本人の実機確認: 起動 (画面表示)、nasne の発見、登録、AKE 再生、字幕描画。これらが成立するまで版数は上げない (現行 1.4.0+27)。
+
+## 66. macOS 版キーチェーン要求の恒久対策: 自己署名 ID による署名 (2026-11-18)
+
+Mac 版は ad-hoc 署名のため、ビルド毎にアプリの cdhash が変わり、ログインキーチェーンに保存した DTCP 資格情報への「常に許可」が引き継がれない。新しいビルドを起動するたびにキーチェーンのパスワードを聞かれる状態で、本人が「毎回パス入力出るの流石にうざい」と指摘した (2026-11-18)。恒久対策として、自己署名のコード署名 ID を1つ作り、以後のビルドは全部それで署名して designated requirement を固定する。本人が対策の実施を承認済み。
+
+### 66.1 証明書の作成
+
+- 名前は `torne-mobile-hb-signing` (CN、O=torne mobile HB)。
+- Mac 上で openssl により作成: RSA 2048、自己署名、有効期間 3650 日、basicConstraints=CA:FALSE (critical)、keyUsage=digitalSignature (critical)、extendedKeyUsage=codeSigning (critical)。PKCS#12 (.p12) にまとめ、素材は Mac の `/tmp/tmhb-signing/` に置いた (import 完了後に削除する)。
+
+### 66.2 SSH セッションからの import 不可 — 本人の1コマンドが必要
+
+- `security import` でログインキーチェーンへ秘密鍵を import する操作は、SSH セッションからは `SecKeychainItemImport: User interaction is not allowed.` で失敗した (`security show-keychain-info` も同エラー)。ログインキーチェーンが SSH セッションではロック扱いになる macOS の仕様による。sudo はパスワード必須で Touch ID も SSH 越しでは使えないため、`launchctl asuser` で GUI セッション側に寄せる経路も取れない。
+- そのため import・信頼設定・partition list 設定は、本人が Mac のローカル Terminal で実行する1ブロックのコマンドとして用意した (内容は本セッションの最終報告に記載)。含まれる操作:
+  1. `security import /tmp/tmhb-signing/cert.p12 -k ~/Library/Keychains/login.keychain-db -P "$(cat /tmp/tmhb-signing/.p12pass)" -T /usr/bin/codesign` — 秘密鍵を import し、codesign からの利用を ACL で許可。
+  2. `security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/Keychains/login.keychain-db /tmp/tmhb-signing/cert.pem` — コード署名用途で自己署名証明書を信頼 (ユーザー信頼ドメイン)。
+  3. `security set-key-partition-list -S apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db` — codesign (apple-tool) がダイアログなしで鍵を使えるよう partition list を設定。キーチェーンのパスワード入力は対話で本人が行う。
+- 既存のキーチェーン項目 (資格情報) には一切触れていない (削除・変更なし)。
+
+### 66.3 ビルドスクリプトの改修
+
+- `tool/build_macos_desktop.sh` を改修した (commit `24e39d2`): `security find-identity -v -p codesigning` で `torne-mobile-hb-signing` が見つかればその ID で署名し (`--timestamp=none` を付け、タイムスタンプサーバへの依存を排除)、見つからなければ警告を出して従来の ad-hoc 署名にフォールバックする。entitlements を署名に付けない方針 (§47) と keychain-access-groups 混入ガードは従来どおり。
+
+### 66.4 残件 (本人のコマンド実行後に続行)
+
+- 本人が §66.2 のコマンドを実行したら、次を続行する: (a) `security find-identity -v -p codesigning` で `torne-mobile-hb-signing` が valid な ID として並ぶことの確認、(b) 改修済みスクリプトで再ビルドして Desktop の `torne mobile HB 1.4.0.app` を差し替え、`codesign -dv` で署名 ID と designated requirement が安定していることの確認、(c) 起動スモークテスト。
+- 新しい身元での初回起動時は、既存の資格情報項目へのアクセス許可ダイアログが1回だけ出る想定。その場で「常に許可」を押せば、以後はビルドし直しても出なくなる。
