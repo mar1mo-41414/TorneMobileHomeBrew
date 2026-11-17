@@ -55,10 +55,7 @@ class PlaybackKeySource {
   Future<Uint8List> keyForLabel(int label) async {
     final known = _session.keyOrNull(label);
     if (known != null) return known;
-    diag(
-      DiagCategory.playback,
-      'waiting for exchange key, label $label',
-    );
+    diag(DiagCategory.playback, 'waiting for exchange key, label $label');
     try {
       return await _session.waitExchangeKey(
         label,
@@ -130,8 +127,7 @@ class DtcpPlaybackEngine implements PlaybackEngine {
                    diag: diag,
                    connectionFactory: akeConnectionFactory,
                  )),
-       _fetcherFactory =
-           fetcherFactory ?? (() => DtcpMediaFetcher(diag: diag));
+       _fetcherFactory = fetcherFactory ?? (() => DtcpMediaFetcher(diag: diag));
 
   final CredentialStore credentialStore;
 
@@ -148,17 +144,21 @@ class DtcpPlaybackEngine implements PlaybackEngine {
   Future<bool> get hasCredentials => credentialStore.hasCredentials;
 
   @override
-  Future<PlaybackSession> startPlayback(
-    RecordedTitle title,
-    TitleRes res,
-  ) {
+  Future<PlaybackSession> startPlayback(RecordedTitle title, TitleRes res) {
     diag(
       DiagCategory.playback,
       'start: title=${title.title}; '
       'res quality=${res.quality ?? '(none)'}; '
       'credentials -> HEAD -> AKE -> proxy',
     );
-    return _start(res);
+    // Recorded content is seekable when the res carries both the
+    // plaintext size and the duration (plan 61); the proxy falls
+    // back to the unseekable stream when either is missing.
+    return _start(
+      res,
+      seekTotalBytes: res.cleartextSize,
+      seekTotalDuration: res.duration,
+    );
   }
 
   /// Live viewing (plan 39): the identical path against the
@@ -166,10 +166,7 @@ class DtcpPlaybackEngine implements PlaybackEngine {
   /// proxy already serves as-is (chunked, no content length);
   /// the session runs until the caller stops it.
   @override
-  Future<PlaybackSession> startLivePlayback(
-    LiveChannel channel,
-    TitleRes res,
-  ) {
+  Future<PlaybackSession> startLivePlayback(LiveChannel channel, TitleRes res) {
     diag(
       DiagCategory.playback,
       'start (live): channel=${channel.channelName ?? '(no name)'}; '
@@ -180,7 +177,11 @@ class DtcpPlaybackEngine implements PlaybackEngine {
     return _start(res);
   }
 
-  Future<PlaybackSession> _start(TitleRes res) async {
+  Future<PlaybackSession> _start(
+    TitleRes res, {
+    int? seekTotalBytes,
+    Duration? seekTotalDuration,
+  }) async {
     final stopwatch = Stopwatch()..start();
     var stage = 'credentials';
     AkeSession? session;
@@ -237,6 +238,8 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         keyForLabel: keySource.keyForLabel,
         fetcher: fetcher,
         diag: diag,
+        totalBytes: seekTotalBytes,
+        totalDuration: seekTotalDuration,
       );
       diag(
         DiagCategory.playback,

@@ -8,15 +8,63 @@
 /// file, which is also the licensing-appropriate handling. The
 /// proxy accepts only loopback connections and serves one playback
 /// session at a time.
+///
+/// Plan 61 adds a SEEKABLE mode for recorded content whose total
+/// plaintext size (DIDL `dlna:cleartextSize`) and duration are
+/// known. The nasne content endpoint refuses byte ranges outright
+/// (HTTP 406, measured 2026-11-17), but it implements the DLNA
+/// time seek: a GET with `TimeSeekRange.dlna.org: npt=<t>-` starts
+/// the PCP stream at the source's own byte position for time t,
+/// declared in the response's TimeSeekRange header (the start byte
+/// is MPEG-TTS aligned, and PCP framing restarts there, so
+/// decryption always begins at a packet boundary). The proxy
+/// therefore advertises byte ranges to the player and translates
+/// each requested byte offset into a time seek upstream: it asks
+/// for a slightly earlier time, learns the source's time<->byte
+/// map from every response, decrypts from the returned start byte
+/// and discards forward to the exact requested offset. Live
+/// content (no known end) keeps the original unseekable behaviour.
 library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import '../diagnostics.dart';
 import '../errors.dart';
 import 'pcp.dart';
+
+/// The source's answer to a time-seek content request (plan 61):
+/// the open response plus the mapping the source declared in its
+/// `TimeSeekRange.dlna.org` response header.
+class TimeSeekResponse {
+  const TimeSeekResponse({
+    required this.response,
+    required this.startByte,
+    this.startSeconds,
+    this.totalBytes,
+    this.totalSeconds,
+  });
+
+  /// The response body: PCP ciphertext whose plaintext begins at
+  /// [startByte].
+  final HttpClientResponse response;
+
+  /// Plaintext offset of the first byte of [response] (the `bytes=`
+  /// start of the source's TimeSeekRange header). 0 when the source
+  /// sent no mapping header (it ignored the seek).
+  final int startByte;
+
+  /// The npt start the source reports, when it sent one.
+  final double? startSeconds;
+
+  /// The source-reported total plaintext size, when sent.
+  final int? totalBytes;
+
+  /// The source-reported total duration, when sent.
+  final double? totalSeconds;
+}
 
 /// Supplies the media response: HEAD/GET against the content URL
 /// with the DLNA/DTCP headers the source expects (pydtcpip client).
@@ -146,6 +194,85 @@ class DtcpMediaFetcher {
     }
   }
 
+  static final RegExp _timeSeekNptPattern = RegExp(
+    r'npt=([0-9.]+)-([0-9.]+)/([0-9.]+)',
+  );
+  static final RegExp _timeSeekBytesPattern = RegExp(
+    r'bytes=(\d+)-(\d+)/(\d+)',
+  );
+
+  /// Opens the GET response for a DLNA time seek (plan 61): the
+  /// source starts the PCP stream at its own byte position for
+  /// [seconds] and declares the mapping in the response's
+  /// TimeSeekRange header, e.g.
+  /// `npt=600.000-1818.000/1818.000 bytes=1080013440-3246817151/3246817152`.
+  ///
+  /// A source that does not implement the time seek answers 406
+  /// (measured on the nasne for byte Range and for res URLs that
+  /// do not exist); that surfaces as a [NasneError] with category
+  /// http and code '406', and the caller decides the fallback.
+  Future<TimeSeekResponse> openContentAtTime(
+    Uri contentUrl,
+    double seconds,
+  ) async {
+    final stopwatch = Stopwatch()..start();
+    try {
+      final request = await _http.getUrl(contentUrl);
+      _applyHeaders(request);
+      request.headers.set(
+        'TimeSeekRange.dlna.org',
+        'npt=${seconds.toStringAsFixed(3)}-',
+        preserveHeaderCase: true,
+      );
+      final response = await request.close();
+      diag(
+        DiagCategory.network,
+        'GET (time seek npt=${seconds.toStringAsFixed(3)}) '
+        '${contentUrl.host}:${contentUrl.port} -> '
+        '${response.statusCode} in ${stopwatch.elapsedMilliseconds} ms',
+      );
+      if (response.statusCode != HttpStatus.ok) {
+        await response.drain<void>();
+        throw NasneError.http(response.statusCode, 'dtcp:http');
+      }
+      final header = response.headers.value('timeseekrange.dlna.org');
+      final npt = header == null
+          ? null
+          : _timeSeekNptPattern.firstMatch(header);
+      final bytes = header == null
+          ? null
+          : _timeSeekBytesPattern.firstMatch(header);
+      if (npt == null || bytes == null) {
+        // The source ignored the seek and is streaming from 0.
+        diag(
+          DiagCategory.network,
+          'time seek: no mapping header in the response; '
+          'assuming a stream from byte 0',
+        );
+        return TimeSeekResponse(response: response, startByte: 0);
+      }
+      final startByte = int.parse(bytes.group(1)!);
+      final startSeconds = double.parse(npt.group(1)!);
+      diag(
+        DiagCategory.network,
+        'time seek: source maps npt $startSeconds to byte '
+        '$startByte (total ${bytes.group(3)} bytes / '
+        '${npt.group(3)} s)',
+      );
+      return TimeSeekResponse(
+        response: response,
+        startByte: startByte,
+        startSeconds: startSeconds,
+        totalBytes: int.parse(bytes.group(3)!),
+        totalSeconds: double.parse(npt.group(3)!),
+      );
+    } on NasneError {
+      rethrow;
+    } catch (e) {
+      throw NasneError.unreachable('dtcp:http', cause: '$e');
+    }
+  }
+
   void _applyHeaders(HttpClientRequest request) {
     request.headers.set(
       'transferMode.dlna.org',
@@ -175,6 +302,13 @@ class DtcpMediaFetcher {
 /// packet. In build 8 the GET waited for the player and the first
 /// plaintext waited for a whole packet; over a VPN path the
 /// player's ~5 s open timeout fired first.
+///
+/// Plan 61: with [totalBytes] and [totalDuration] supplied the
+/// proxy runs in seekable mode instead (see the library comment);
+/// the prefetch then fills a plaintext window cache that ranged
+/// requests read from, and seeks are produced by time-seek
+/// pipelines. Without them the original single-stream behaviour
+/// above is kept exactly (live content).
 class DtcpProxy {
   DtcpProxy._(
     this._server,
@@ -183,10 +317,14 @@ class DtcpProxy {
     required Future<Uint8List> Function(int label) keyForLabel,
     required DtcpMediaFetcher fetcher,
     required DiagLog diag,
+    int? totalBytes,
+    Duration? totalDuration,
   }) : _contentUrl = contentUrl, // ignore: prefer_initializing_formals
        _keyForLabel = keyForLabel, // ignore: prefer_initializing_formals
        _fetcher = fetcher, // ignore: prefer_initializing_formals
-       _diag = diag; // ignore: prefer_initializing_formals
+       _diag = diag, // ignore: prefer_initializing_formals
+       _totalBytes = totalBytes, // ignore: prefer_initializing_formals
+       _totalDuration = totalDuration; // ignore: prefer_initializing_formals
 
   final HttpServer _server;
 
@@ -198,6 +336,21 @@ class DtcpProxy {
   final DtcpMediaFetcher _fetcher;
   final DiagLog _diag;
 
+  /// Total plaintext size in bytes (recorded content only).
+  final int? _totalBytes;
+
+  /// Total content duration (recorded content only).
+  final Duration? _totalDuration;
+
+  /// Seekable mode (plan 61) requires both the size and the
+  /// duration: the size is the advertised content length, the
+  /// duration drives the byte->time conversion.
+  bool get _seekable =>
+      _totalBytes != null &&
+      _totalBytes > 0 &&
+      _totalDuration != null &&
+      _totalDuration > Duration.zero;
+
   final _PlaintextQueue _queue = _PlaintextQueue();
   int _cipherBytes = 0;
   int _servedBytes = 0;
@@ -207,6 +360,13 @@ class DtcpProxy {
   bool _downstreamGone = false;
   StreamIterator<List<int>>? _iterator;
   Future<void>? _pumpFuture;
+
+  // Seekable-mode state (plan 61).
+  final _WindowCache _window = _WindowCache();
+  _SeekMap? _seekMap;
+  _Producer? _producer;
+  int _serveGeneration = 0;
+  int _pinGeneration = -1;
 
   /// How long the content stream may go without a single byte
   /// before the proxy gives up (plan 29). The reference client
@@ -220,11 +380,33 @@ class DtcpProxy {
   /// (plan 30).
   static const int prefetchCapBytes = 16 * 1024 * 1024;
 
+  /// Plaintext window bound in seekable mode (plan 61): how much
+  /// decrypted plaintext is retained behind/ahead of the reader,
+  /// which is what makes short backward seeks instant.
+  static const int windowCapBytes = 32 * 1024 * 1024;
+
+  /// How far before the estimated time a seek request aims, so
+  /// the source's start byte lands at or before the target and
+  /// the difference is discarded after decryption (plan 61). The
+  /// learned map keeps the overshoot small; the retry loop covers
+  /// the rest.
+  static const double seekMarginSeconds = 2.0;
+
+  /// Time-seek attempts per producer before serving from the
+  /// source's start byte as a last resort (plan 61).
+  static const int maxSeekAttempts = 4;
+
+  /// How long a ranged request waits for its seek pipeline to
+  /// establish before failing (plan 61).
+  static const Duration seekEstablishTimeout = Duration(seconds: 30);
+
   static Future<DtcpProxy> start({
     required Uri contentUrl,
     required Future<Uint8List> Function(int label) keyForLabel,
     required DtcpMediaFetcher fetcher,
     DiagLog diag = const DiagLog.none(),
+    int? totalBytes,
+    Duration? totalDuration,
   }) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final proxy = DtcpProxy._(
@@ -234,11 +416,26 @@ class DtcpProxy {
       keyForLabel: keyForLabel,
       fetcher: fetcher,
       diag: diag,
+      totalBytes: totalBytes,
+      totalDuration: totalDuration,
     );
     server.listen(proxy._handle);
-    // Prefetch: the content GET and decryption begin now, while
-    // the caller is still handing the URL to the player.
-    proxy._pumpFuture = proxy._pump();
+    if (proxy._seekable) {
+      proxy._seekMap = _SeekMap(
+        totalBytes: totalBytes!,
+        totalSeconds: totalDuration!.inMicroseconds / 1e6,
+      );
+      diag(
+        DiagCategory.playback,
+        'proxy: seekable mode, $totalBytes bytes / $totalDuration',
+      );
+      // Prefetch from byte 0, as in the original design.
+      proxy._startProducer(0);
+    } else {
+      // Prefetch: the content GET and decryption begin now, while
+      // the caller is still handing the URL to the player.
+      proxy._pumpFuture = proxy._pump();
+    }
     return proxy;
   }
 
@@ -352,6 +549,14 @@ class DtcpProxy {
       await request.response.close();
       return;
     }
+    if (_seekable) {
+      await _handleSeekable(request);
+    } else {
+      await _handleLegacy(request);
+    }
+  }
+
+  Future<void> _handleLegacy(HttpRequest request) async {
     _requestCount++;
     final requestNo = _requestCount;
     if (_claimed) {
@@ -418,6 +623,9 @@ class DtcpProxy {
   Future<void> stop() async {
     _stopRequested = true;
     _queue.close();
+    final producer = _producer;
+    _cancelProducer();
+    _window.close();
     await _iterator?.cancel();
     await _server.close(force: true);
     final pump = _pumpFuture;
@@ -426,6 +634,667 @@ class DtcpProxy {
       // not let teardown hang on it.
       await pump.timeout(const Duration(seconds: 5), onTimeout: () {});
     }
+    if (producer != null) {
+      await producer.runFuture?.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {},
+      );
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Seekable mode (plan 61)
+  // ----------------------------------------------------------------
+
+  /// Starts the (single) producer pipeline that decrypts into the
+  /// window starting exactly at [anchor]. Any previous producer
+  /// must already be cancelled.
+  _Producer _startProducer(int anchor) {
+    final producer = _Producer(anchor);
+    _producer = producer;
+    // The primer's establishment may never be awaited; keep an
+    // error completion from surfacing as an unhandled error.
+    unawaited(producer.established.future.then((_) {}, onError: (_) {}));
+    _window.anchor(anchor);
+    producer.runFuture = _runProducer(producer);
+    return producer;
+  }
+
+  void _cancelProducer() {
+    final producer = _producer;
+    if (producer == null) return;
+    _producer = null;
+    producer.cancelled = true;
+    producer.failEstablish(StateError('the producer was superseded'));
+    final iterator = producer.iterator;
+    if (iterator != null) unawaited(iterator.cancel());
+    _window.notify();
+  }
+
+  static Future<void> _discardResponse(HttpClientResponse response) async {
+    try {
+      await response.drain<void>();
+    } catch (_) {
+      // The stream is being thrown away either way.
+    }
+  }
+
+  /// A producer's life: establish where its plaintext starts
+  /// (time seek with corrections, or a plain GET for offset 0),
+  /// then decrypt into the window until the upstream ends, the
+  /// producer is cancelled, or the session stops.
+  Future<void> _runProducer(_Producer producer) async {
+    final target = producer.anchor;
+    final stopwatch = Stopwatch()..start();
+    try {
+      var attempts = 0;
+      var fellBackToPlain = false;
+      while (!producer.cancelled && !_stopRequested) {
+        attempts++;
+        final HttpClientResponse response;
+        final int startByte;
+        if (target == 0 || fellBackToPlain) {
+          response = await _fetcher.openContent(_contentUrl);
+          startByte = 0;
+        } else {
+          final map = _seekMap!;
+          final estimated = map.timeForByte(target);
+          var requested = estimated - seekMarginSeconds;
+          if (requested < 0) requested = 0;
+          final TimeSeekResponse tsr;
+          try {
+            tsr = await _fetcher.openContentAtTime(_contentUrl, requested);
+          } on NasneError catch (e) {
+            // A source that refuses the time seek still serves
+            // the plain stream; fetch-and-discard from 0 is slow
+            // but correct, and keeps playback working.
+            _diag(
+              DiagCategory.playback,
+              'proxy: time seek refused ($e); falling back to a '
+              'plain GET for byte $target',
+            );
+            fellBackToPlain = true;
+            continue;
+          }
+          startByte = tsr.startByte;
+          final startSeconds = tsr.startSeconds;
+          if (startSeconds != null) {
+            map.learn(startSeconds, startByte);
+          }
+          _diag(
+            DiagCategory.playback,
+            'proxy: seek target byte $target -> npt '
+            '${requested.toStringAsFixed(3)} s; the source starts '
+            'at byte $startByte (attempt $attempts)',
+          );
+          if (startByte > target && attempts < maxSeekAttempts) {
+            unawaited(_discardResponse(tsr.response));
+            continue;
+          }
+          response = tsr.response;
+        }
+        if (producer.cancelled || _stopRequested) {
+          unawaited(_discardResponse(response));
+          return;
+        }
+        // The stream start is now fixed: normally the target
+        // itself (the difference is discarded after decryption);
+        // as a last resort, after repeated overshoots, the
+        // source's own start byte.
+        final serveStart = startByte > target ? startByte : target;
+        if (serveStart != target) {
+          _diag(
+            DiagCategory.playback,
+            'proxy: seek could not land at or before byte $target; '
+            'serving from the source start byte $serveStart',
+          );
+          _window.anchor(serveStart);
+        }
+        producer.finishEstablish(serveStart);
+        await _pumpIntoWindow(
+          producer,
+          response,
+          skipPlaintext: serveStart - startByte,
+          stopwatch: stopwatch,
+        );
+        return;
+      }
+    } catch (e) {
+      producer.error = e;
+      producer.failEstablish(e);
+      _diag(
+        DiagCategory.playback,
+        'proxy: producer for byte $target failed: $e',
+      );
+    } finally {
+      producer.finished = true;
+      _window.notify();
+    }
+  }
+
+  /// Decrypts [response] into the window, dropping the first
+  /// [skipPlaintext] plaintext bytes (the difference between the
+  /// source's start byte and the serve start).
+  Future<void> _pumpIntoWindow(
+    _Producer producer,
+    HttpClientResponse response, {
+    required int skipPlaintext,
+    required Stopwatch stopwatch,
+  }) async {
+    final decryptor = PcpDecryptor(keyForLabel: _keyForLabel);
+    final timed = response.timeout(
+      stallTimeout,
+      onTimeout: (sink) {
+        sink.addError(
+          NasneError.unreachable(
+            'dtcp:proxy',
+            cause:
+                'the content stream stalled for '
+                '${stallTimeout.inSeconds} seconds',
+          ),
+        );
+        sink.close();
+      },
+    );
+    final iterator = StreamIterator<List<int>>(timed);
+    producer.iterator = iterator;
+    var skip = skipPlaintext;
+    var produced = 0;
+    var firstPlainLogged = false;
+    try {
+      while (!producer.cancelled && !_stopRequested) {
+        if (_window.producerShouldPause) {
+          await _window.waitChange();
+          continue;
+        }
+        if (!await iterator.moveNext()) break;
+        final pieces = await decryptor.add(iterator.current);
+        for (var piece in pieces) {
+          if (skip > 0) {
+            if (piece.length <= skip) {
+              skip -= piece.length;
+              continue;
+            }
+            piece = Uint8List.sublistView(piece, skip);
+            skip = 0;
+          }
+          if (!firstPlainLogged) {
+            firstPlainLogged = true;
+            _diag(
+              DiagCategory.playback,
+              'proxy: producer at byte ${producer.anchor}: first '
+              'plaintext, ${stopwatch.elapsedMilliseconds} ms after '
+              'the producer started',
+            );
+          }
+          produced += piece.length;
+          _window.append(piece);
+        }
+      }
+    } finally {
+      await iterator.cancel();
+    }
+    _diag(
+      DiagCategory.playback,
+      'proxy: producer at byte ${producer.anchor} ended '
+      '(${producer.cancelled ? 'cancelled' : 'upstream end'}), '
+      '$produced plaintext bytes produced, '
+      '${stopwatch.elapsedMilliseconds} ms elapsed',
+    );
+  }
+
+  /// Parses a single-range `Range` header value against [total].
+  /// Returns null when the header is absent, malformed or a
+  /// multi-range (all served as a full 200), and the sentinel
+  /// [unsatisfiableRange] when the start lies beyond the content.
+  static const (int, int) unsatisfiableRange = (-1, -1);
+
+  static (int, int)? _parseRange(String? header, int total) {
+    if (header == null) return null;
+    final value = header.trim();
+    if (!value.startsWith('bytes=') || value.contains(',')) return null;
+    final spec = value.substring(6).trim();
+    final dash = spec.indexOf('-');
+    if (dash < 0) return null;
+    final startPart = spec.substring(0, dash).trim();
+    final endPart = spec.substring(dash + 1).trim();
+    if (startPart.isEmpty) {
+      // Suffix range: the last N bytes.
+      final suffix = int.tryParse(endPart);
+      if (suffix == null || suffix <= 0) return null;
+      return (suffix >= total ? 0 : total - suffix, total - 1);
+    }
+    final start = int.tryParse(startPart);
+    if (start == null || start < 0) return null;
+    if (start >= total) return unsatisfiableRange;
+    var end = total - 1;
+    if (endPart.isNotEmpty) {
+      final parsedEnd = int.tryParse(endPart);
+      if (parsedEnd == null || parsedEnd < start) return null;
+      end = parsedEnd > total - 1 ? total - 1 : parsedEnd;
+    }
+    return (start, end);
+  }
+
+  Future<void> _handleSeekable(HttpRequest request) async {
+    final total = _totalBytes!;
+    final response = request.response;
+    response.bufferOutput = false;
+    if (request.method != 'GET' && request.method != 'HEAD') {
+      response.statusCode = HttpStatus.methodNotAllowed;
+      await response.close();
+      return;
+    }
+    final range = _parseRange(request.headers.value('range'), total);
+    if (range == unsatisfiableRange) {
+      response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+      response.headers.set('Content-Range', 'bytes */$total');
+      response.contentLength = 0;
+      await response.close();
+      return;
+    }
+    final ranged = range != null;
+    final reqStart = ranged ? range.$1 : 0;
+    final reqEnd = ranged ? range.$2 : total - 1;
+    response.headers.contentType = ContentType('video', 'mp2t');
+    response.headers.set('Accept-Ranges', 'bytes');
+    response.headers.set('transferMode.dlna.org', 'Streaming');
+    if (request.method == 'HEAD') {
+      response.statusCode = ranged ? HttpStatus.partialContent : HttpStatus.ok;
+      if (ranged) {
+        response.headers.set('Content-Range', 'bytes $reqStart-$reqEnd/$total');
+      }
+      response.contentLength = reqEnd - reqStart + 1;
+      await response.close();
+      return;
+    }
+
+    // A new GET supersedes the previous one (the player opens a
+    // fresh connection per seek and abandons the old one).
+    final generation = ++_serveGeneration;
+    _requestCount++;
+    final requestNo = _requestCount;
+    _diag(
+      DiagCategory.playback,
+      'proxy: request #$requestNo (seekable) '
+      '${ranged ? 'range $reqStart-$reqEnd' : 'full stream'}',
+    );
+
+    // Decide where serving actually starts. Inside the window the
+    // bytes are exact; outside it a producer must establish first
+    // (its actual start can differ from the request only in the
+    // last-resort case documented in _runProducer).
+    var serveStart = reqStart;
+    if (reqStart < _window.start || reqStart > _window.end) {
+      _cancelProducer();
+      final producer = _startProducer(reqStart);
+      try {
+        serveStart = await producer.established.future.timeout(
+          seekEstablishTimeout,
+        );
+      } catch (e) {
+        _diag(
+          DiagCategory.playback,
+          'proxy: request #$requestNo: the seek to byte $reqStart '
+          'failed before serving: $e',
+        );
+        response.statusCode = HttpStatus.badGateway;
+        try {
+          await response.close();
+        } catch (_) {}
+        return;
+      }
+      if (generation != _serveGeneration) {
+        // Superseded while establishing; the newer request owns
+        // the producer now.
+        try {
+          await response.close();
+        } catch (_) {}
+        return;
+      }
+      if (serveStart > reqEnd) {
+        response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+        response.headers.set('Content-Range', 'bytes */$total');
+        response.contentLength = 0;
+        await response.close();
+        return;
+      }
+    } else if (_producer == null && reqStart == _window.end) {
+      // The window is complete up to here but nothing is
+      // producing the rest (an earlier stream ended early).
+      _startProducer(reqStart);
+    }
+
+    response.statusCode = ranged ? HttpStatus.partialContent : HttpStatus.ok;
+    if (ranged) {
+      response.headers.set('Content-Range', 'bytes $serveStart-$reqEnd/$total');
+    }
+    response.contentLength = reqEnd - serveStart + 1;
+    var pos = serveStart;
+    var servedHere = 0;
+    var stalledRestarts = 0;
+    var lastEnd = _window.end;
+    var retriedProducerError = false;
+    var completed = false;
+    try {
+      await response.flush();
+      while (pos <= reqEnd) {
+        if (generation != _serveGeneration || _stopRequested) {
+          _diag(
+            DiagCategory.playback,
+            'proxy: request #$requestNo superseded at byte $pos',
+          );
+          break;
+        }
+        _pinGeneration = generation;
+        _window.pin = pos;
+        final chunk = _window.readChunk(pos, 1024 * 1024);
+        if (chunk != null) {
+          final take = min(chunk.length, reqEnd - pos + 1);
+          response.add(
+            take == chunk.length
+                ? chunk
+                : Uint8List.sublistView(chunk, 0, take),
+          );
+          pos += take;
+          servedHere += take;
+          await response.flush();
+          continue;
+        }
+        // Nothing at pos yet.
+        if (pos < _window.start) {
+          // The window was re-anchored by a newer producer.
+          _diag(
+            DiagCategory.playback,
+            'proxy: request #$requestNo lost its window at byte $pos',
+          );
+          break;
+        }
+        final producer = _producer;
+        if (producer != null && !producer.finished) {
+          await _window.waitChange();
+          continue;
+        }
+        final error = producer?.error;
+        if (error != null) {
+          // One fresh attempt when nothing has been served yet
+          // (e.g. the primer failed before the player connected);
+          // a failure mid-stream just ends the response.
+          if (servedHere == 0 && !retriedProducerError) {
+            retriedProducerError = true;
+            _diag(
+              DiagCategory.playback,
+              'proxy: request #$requestNo: retrying after the '
+              'producer failed at byte $pos: $error',
+            );
+            _cancelProducer();
+            final retry = _startProducer(pos);
+            int actual;
+            try {
+              actual = await retry.established.future.timeout(
+                seekEstablishTimeout,
+              );
+            } catch (e) {
+              _diag(
+                DiagCategory.playback,
+                'proxy: request #$requestNo: the retry failed: $e',
+              );
+              break;
+            }
+            if (actual != pos) break;
+            continue;
+          }
+          _diag(
+            DiagCategory.playback,
+            'proxy: request #$requestNo: the producer failed at '
+            'byte $pos: $error',
+          );
+          break;
+        }
+        if (_window.end >= total || pos >= total) break;
+        // The producer ended before the content did (a truncated
+        // upstream stream): continue from the window end. Guard
+        // against a source that keeps ending at the same byte.
+        if (_window.end == lastEnd) {
+          stalledRestarts++;
+          if (stalledRestarts >= 3) {
+            _diag(
+              DiagCategory.playback,
+              'proxy: request #$requestNo: the upstream keeps '
+              'ending at byte ${_window.end}; giving up',
+            );
+            break;
+          }
+        } else {
+          stalledRestarts = 0;
+          lastEnd = _window.end;
+        }
+        _startProducer(_window.end);
+      }
+      if (pos > reqEnd) {
+        completed = true;
+        await response.close();
+        _diag(
+          DiagCategory.playback,
+          'proxy: request #$requestNo completed, $servedHere bytes '
+          'served from byte $serveStart',
+        );
+      }
+    } catch (e) {
+      _diag(
+        DiagCategory.playback,
+        'proxy: request #$requestNo ended with an error after '
+        '$servedHere bytes: $e',
+      );
+    } finally {
+      if (_pinGeneration == generation) {
+        _pinGeneration = -1;
+        _window.pin = null;
+      }
+      if (!completed) {
+        try {
+          await response.close();
+        } catch (_) {}
+      }
+    }
+  }
+}
+
+/// One seekable-mode producer pipeline (plan 61): establishes its
+/// plaintext start (see [DtcpProxy._runProducer]) and decrypts
+/// into the window until the upstream ends or it is cancelled.
+class _Producer {
+  _Producer(this.anchor);
+
+  /// The plaintext offset this producer was asked to start at.
+  final int anchor;
+
+  bool cancelled = false;
+  bool finished = false;
+
+  /// The producer's failure, when it ended with one.
+  Object? error;
+
+  /// Completes with the offset serving actually starts from
+  /// (normally [anchor]; the source's start byte in the last
+  /// resort), or with the establishment error.
+  final Completer<int> established = Completer<int>();
+
+  StreamIterator<List<int>>? iterator;
+  Future<void>? runFuture;
+
+  void finishEstablish(int actualStart) {
+    if (!established.isCompleted) established.complete(actualStart);
+  }
+
+  void failEstablish(Object e) {
+    if (!established.isCompleted) established.completeError(e);
+  }
+}
+
+/// The source's time<->byte map (plan 61), learned point by point
+/// from TimeSeekRange responses and interpolated piecewise
+/// linearly. Seeded with (0, 0) and (duration, totalBytes): the
+/// linear estimate, which measurement showed within a few seconds
+/// for DR and a few tens of seconds for the mobile (VBR) encodes;
+/// every real seek response refines the region it touched.
+class _SeekMap {
+  _SeekMap({required int totalBytes, required double totalSeconds})
+    : _points = [(0.0, 0), (totalSeconds, totalBytes)];
+
+  /// (seconds, byte) pairs, sorted by seconds; bytes grow
+  /// monotonically with seconds.
+  final List<(double, int)> _points;
+
+  void learn(double seconds, int byte) {
+    if (seconds <= 0) return;
+    for (var i = 0; i < _points.length; i++) {
+      final (t, _) = _points[i];
+      if ((t - seconds).abs() < 0.001) {
+        _points[i] = (seconds, byte);
+        return;
+      }
+      if (t > seconds) {
+        _points.insert(i, (seconds, byte));
+        return;
+      }
+    }
+    _points.add((seconds, byte));
+  }
+
+  /// The estimated time at which plaintext byte [byte] sits.
+  double timeForByte(int byte) {
+    if (byte <= 0) return 0;
+    for (var i = 1; i < _points.length; i++) {
+      final (t1, b1) = _points[i];
+      if (byte <= b1) {
+        final (t0, b0) = _points[i - 1];
+        if (b1 == b0) return t1;
+        return t0 + (t1 - t0) * (byte - b0) / (b1 - b0);
+      }
+    }
+    return _points.last.$1;
+  }
+}
+
+/// A contiguous window of decrypted plaintext with absolute
+/// offsets (plan 61). One producer appends at the end; one reader
+/// consumes through [readChunk]. Bytes below the reader's pin are
+/// evicted once the window exceeds [DtcpProxy.windowCapBytes], so
+/// short backward seeks are served from memory while memory stays
+/// bounded. Waiters share one change signal and re-check their
+/// own condition, as in [_PlaintextQueue].
+class _WindowCache {
+  final List<Uint8List> _chunks = [];
+  int _start = 0;
+  int _end = 0;
+  bool _closed = false;
+  Completer<void>? _changed;
+
+  /// The offset the active reader still needs; eviction never
+  /// crosses it. Null when no reader is attached.
+  int? pin;
+
+  int get start => _start;
+  int get end => _end;
+  bool get isClosed => _closed;
+
+  /// Whether the producer should pause: the window already holds
+  /// a full cap of not-yet-consumed plaintext.
+  bool get producerShouldPause =>
+      _end - (pin ?? _start) >= DtcpProxy.windowCapBytes;
+
+  /// Re-anchors the window at [offset] (a producer starts there):
+  /// bytes from [offset] onward are dropped; a start outside the
+  /// current window discards everything.
+  void anchor(int offset) {
+    if (offset < _start || offset > _end) {
+      _chunks.clear();
+      _start = offset;
+      _end = offset;
+    } else if (offset < _end) {
+      var pos = _start;
+      final kept = <Uint8List>[];
+      for (final chunk in _chunks) {
+        if (pos + chunk.length <= offset) {
+          kept.add(chunk);
+          pos += chunk.length;
+        } else if (pos < offset) {
+          kept.add(Uint8List.sublistView(chunk, 0, offset - pos));
+          pos = offset;
+          break;
+        } else {
+          break;
+        }
+      }
+      _chunks
+        ..clear()
+        ..addAll(kept);
+      _end = offset;
+    }
+    _notify();
+  }
+
+  void append(Uint8List chunk) {
+    if (_closed || chunk.isEmpty) return;
+    _chunks.add(chunk);
+    _end += chunk.length;
+    _evict();
+    _notify();
+  }
+
+  void _evict() {
+    final limit = pin ?? _start;
+    while (_end - _start > DtcpProxy.windowCapBytes && _start < limit) {
+      final first = _chunks.first;
+      final excess = _end - _start - DtcpProxy.windowCapBytes;
+      final droppable = min(first.length, min(excess, limit - _start));
+      if (droppable >= first.length) {
+        _chunks.removeAt(0);
+        _start += first.length;
+      } else {
+        _chunks[0] = Uint8List.sublistView(first, droppable);
+        _start += droppable;
+      }
+    }
+  }
+
+  /// Up to [maxLength] bytes starting exactly at [offset] (a view
+  /// into the retained chunk; retained plaintext is never mutated),
+  /// or null when [offset] is outside the window.
+  Uint8List? readChunk(int offset, int maxLength) {
+    if (offset < _start || offset >= _end) return null;
+    var pos = _start;
+    for (final chunk in _chunks) {
+      if (offset < pos + chunk.length) {
+        final from = offset - pos;
+        final take = min(chunk.length - from, maxLength);
+        // Consumption can unpause the producer; wake the waiters.
+        _notify();
+        return Uint8List.sublistView(chunk, from, from + take);
+      }
+      pos += chunk.length;
+    }
+    return null;
+  }
+
+  void close() {
+    _closed = true;
+    _notify();
+  }
+
+  Future<void> waitChange() {
+    if (_closed) return Future<void>.value();
+    final completer = _changed ??= Completer<void>();
+    return completer.future;
+  }
+
+  void notify() => _notify();
+
+  void _notify() {
+    final completer = _changed;
+    _changed = null;
+    completer?.complete();
   }
 }
 
