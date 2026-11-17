@@ -9,8 +9,10 @@ framework that exists neither in the app nor in iOS, and the app
 crashed in dyld at launch. This audit mechanically verifies, before
 shipping, that every recorded dependency can resolve on a device:
 
-  - @rpath/<Name>.framework/<Name> : <Name>.framework must be
-    present somewhere under the audited root.
+  - @rpath/<Name>.framework/<Name> (flat layout, iOS style) and
+    @rpath/<Name>.framework/Versions/<ver>/<Name> (versioned
+    layout, macOS style) : <Name>.framework must be present
+    somewhere under the audited root.
   - any other @rpath/... dependency : error (bare dylib @rpath
     dependencies cannot resolve inside an app bundle).
   - @executable_path/... / @loader_path/... : the target must
@@ -90,8 +92,20 @@ def main():
             if dep.startswith("@rpath/"):
                 rest = dep[len("@rpath/"):]
                 parts = rest.split("/")
-                if len(parts) == 2 and parts[0].endswith(".framework"):
-                    if parts[0] not in frameworks:
+                fw = parts[0] if parts[0].endswith(".framework") else None
+                stem = fw[:-len(".framework")] if fw else None
+                # Framework deps come in two layouts: flat
+                # (<Name>.framework/<Name>, iOS) and versioned
+                # (<Name>.framework/Versions/<ver>/<Name>, macOS).
+                # Both are fine as long as the framework is bundled;
+                # anything else under @rpath is a bare dylib dep.
+                is_framework_dep = fw is not None and (
+                    (len(parts) == 2 and parts[1] == stem)
+                    or (len(parts) == 4 and parts[1] == "Versions"
+                        and parts[3] == stem)
+                )
+                if is_framework_dep:
+                    if fw not in frameworks:
                         sink.append(f"{rel}: unresolved framework dep {dep}")
                 else:
                     sink.append(f"{rel}: bare @rpath dylib dep {dep}")

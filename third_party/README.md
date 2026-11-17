@@ -24,3 +24,14 @@ media-kit 公式の v0.6.0 ではなく、ARIB 字幕デコーダ
 差し替え済み)。その他のファイルは pub 版と同一。
 
 ビルド手順と保守方法は `tool/libmpv/README.md` と plan §57。
+
+## media_kit_libs_macos_video (pub 1.1.4 のコピー)
+
+改変点は `macos/Makefile` の libmpv xcframeworks の取得先のみ:
+media-kit 公式の v0.6.0 ではなく、ARIB 字幕デコーダ
+(libaribb24、DRCS の libpng 連携を含む) を有効化した自前
+ビルドの tar.gz を、本リポの GitHub リリース
+(`libmpv-macos-v0.6.0-arib1`) から取得する (URL と SHA-256 を
+差し替え済み)。その他のファイルは pub 版と同一。
+
+ビルド手順と保守方法は `tool/libmpv/README.md` (macOS の節)。
