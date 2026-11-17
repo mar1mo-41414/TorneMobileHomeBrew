@@ -4,7 +4,7 @@ Sony のサポート終了後も、公式ファームウェアの nasne をス�
 
 ## 現状
 
-v1.3.0 をリリースしました。配布物 (IPA / APK / Mac 版) は GitHub Releases から入手できます。開発の経緯・設計・検証記録は [docs/plan.md](docs/plan.md) にまとめています。
+v1.3.0 をリリースしました。配布物 (IPA / APK / Mac 版 / Linux 版) は GitHub Releases から入手できます。開発の経緯・設計・検証記録は [docs/plan.md](docs/plan.md) にまとめています。
 
 ## 機能
 
@@ -41,6 +41,10 @@ APK を直接インストールしてください (提供元不明アプリの�
 Releases から Mac 版の zip をダウンロードし、展開してアプリを起動してください。署名はアドホックのため、初回起動時に確認が出る場合は右クリックから「開く」を選んでください。
 
 Mac 版では再生のたびにキーチェーンのパスワードを聞かれる場合があります。その場合は「常に許可」を押してください。
+
+### Linux (デスクトップ版)
+
+Releases から Linux 版の tar.gz をダウンロードし、展開して `TorneMobileHomeBrew-linux/tmhb` を起動してください。実行にはシステムの libmpv (libmpv.so.2) と libepoxy が必要です。
 
 ## 使い方
 
