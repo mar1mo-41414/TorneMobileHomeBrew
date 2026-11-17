@@ -7,6 +7,13 @@
 /// and mpv errors), mpv errors are surfaced on screen instead of
 /// an eternal spinner, and a start watchdog turns "nothing ever
 /// plays" into a classified timeout error.
+///
+/// Plan 30: mpv's network timeout is raised from its 5 s default
+/// to 30 s before opening. In the build-8 field test the player
+/// failed with "Failed to open" about 5 s after the content GET
+/// while the (then packet-at-a-time) proxy had not delivered a
+/// single byte yet; the proxy now streams and prefetches, and the
+/// longer timeout keeps a slow path from tripping mpv first.
 library;
 
 import 'dart:async';
@@ -38,8 +45,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   String? _error;
 
   /// How long playback may take to reach the playing state before
-  /// the screen gives up with a timeout error (plan 29).
-  static const Duration startTimeout = Duration(seconds: 30);
+  /// the screen gives up with a timeout error (plan 29). Kept
+  /// above mpv's network timeout (plan 30) so mpv's own classified
+  /// error normally surfaces first and this stays a backstop.
+  static const Duration startTimeout = Duration(seconds: 45);
+
+  /// mpv's network timeout, set before opening (plan 30). The
+  /// factory default of 5 s is shorter than a slow path's time to
+  /// first byte even with the streaming proxy.
+  static const int mpvNetworkTimeoutSeconds = 30;
 
   DiagLog get _diag => ref.read(diagLogProvider);
 
@@ -92,6 +106,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Future<void> _open() async {
     _diag(DiagCategory.playback, 'player: opening ${widget.session.mediaUri}');
     try {
+      final platform = _player.platform;
+      if (platform is NativePlayer) {
+        await platform.setProperty(
+          'network-timeout',
+          '$mpvNetworkTimeoutSeconds',
+        );
+        _diag(
+          DiagCategory.playback,
+          'player: mpv network-timeout set to '
+          '${mpvNetworkTimeoutSeconds}s',
+        );
+      }
       await _player.open(Media(widget.session.mediaUri.toString()));
       _diag(DiagCategory.playback, 'player: open completed');
     } catch (e) {

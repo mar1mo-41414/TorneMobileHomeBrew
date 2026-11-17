@@ -307,6 +307,38 @@ Uint8List aesBlock(List<int> key, List<int> block16, {required bool encrypt}) {
   return out;
 }
 
+/// Streaming AES-128-CBC decryptor (plan 30): the CBC chain is
+/// carried across calls, so ciphertext can be decrypted block by
+/// block as it arrives instead of after a whole PCP packet has
+/// been buffered. CBC decryption only ever needs the previous
+/// ciphertext block, which is what makes this possible; the
+/// whole-buffer [aesCbcDecrypt] below is a thin wrapper over it.
+class AesCbcDecryptor {
+  AesCbcDecryptor(List<int> key, List<int> iv)
+    : _engine = _aesEngine(key, false),
+      _chain = Uint8List.fromList(iv);
+
+  final pc.AESEngine _engine;
+  final Uint8List _chain;
+  final Uint8List _block = Uint8List(16);
+
+  /// Decrypts [length] bytes of [data] starting at [offset];
+  /// [length] must be a multiple of 16. Returns a fresh buffer.
+  Uint8List decryptBlocks(Uint8List data, int offset, int length) {
+    final out = Uint8List(length);
+    final scratch = Uint8List(16);
+    for (var done = 0; done < length; done += 16) {
+      scratch.setRange(0, 16, data, offset + done);
+      _engine.processBlock(data, offset + done, _block, 0);
+      for (var i = 0; i < 16; i++) {
+        out[done + i] = _block[i] ^ _chain[i];
+      }
+      _chain.setRange(0, 16, scratch);
+    }
+    return out;
+  }
+}
+
 /// AES-128-CBC over a multiple-of-16 input, no padding (PCP contents
 /// are padded by the sender; padding is stripped by length, as in
 /// pydtcpip's decrypt_packet).
@@ -316,23 +348,8 @@ Uint8List aesBlock(List<int> key, List<int> block16, {required bool encrypt}) {
 /// whole input inside the per-block loop, which made decrypting one
 /// real 1 MiB PCP packet an O(n^2) copy loop (plan 29).
 Uint8List aesCbcDecrypt(List<int> key, List<int> iv, List<int> data) {
-  final engine = _aesEngine(key, false);
   final input = data is Uint8List ? data : Uint8List.fromList(data);
-  final out = Uint8List(input.length);
-  var chain = Uint8List.fromList(iv);
-  var scratch = Uint8List(16);
-  final block = Uint8List(16);
-  for (var offset = 0; offset < input.length; offset += 16) {
-    scratch.setRange(0, 16, input, offset);
-    engine.processBlock(input, offset, block, 0);
-    for (var i = 0; i < 16; i++) {
-      out[offset + i] = block[i] ^ chain[i];
-    }
-    final swap = chain;
-    chain = scratch;
-    scratch = swap;
-  }
-  return out;
+  return AesCbcDecryptor(key, iv).decryptBlocks(input, 0, input.length);
 }
 
 Uint8List aesCbcEncrypt(List<int> key, List<int> iv, List<int> data) {

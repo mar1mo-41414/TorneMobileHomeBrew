@@ -4,6 +4,11 @@
 /// buffer was a flat boxed-int list). These tests pin the packet
 /// scale end to end — crypto, decryptor framing, the loopback
 /// proxy over real HTTP, and the re-authenticating key source.
+///
+/// Plan 30 additions: decryption is streaming (plaintext emerges
+/// block by block, not after a whole packet), the proxy prefetches
+/// from the moment it starts, and a mid-packet upstream close
+/// delivers the decrypted prefix and then ends instead of hanging.
 library;
 
 import 'dart:async';
@@ -54,67 +59,102 @@ void main() {
   final nonceB = Uint8List.fromList([8, 7, 6, 5, 4, 3, 2, 1]);
 
   group('AES-CBC at PCP packet scale (plan 29)', () {
-    test(
-      'a 1 MiB block round-trips through encrypt and decrypt',
-      () {
-        final plain = pattern(1024 * 1024, 7);
-        final key = pattern(16, 3);
-        final iv = pattern(16, 11);
-        final cipher = aesCbcEncrypt(key, iv, plain);
-        final back = aesCbcDecrypt(key, iv, cipher);
-        expect(back, plain);
-      },
-      timeout: const Timeout(Duration(seconds: 120)),
-    );
+    test('a 1 MiB block round-trips through encrypt and decrypt', () {
+      final plain = pattern(1024 * 1024, 7);
+      final key = pattern(16, 3);
+      final iv = pattern(16, 11);
+      final cipher = aesCbcEncrypt(key, iv, plain);
+      final back = aesCbcDecrypt(key, iv, cipher);
+      expect(back, plain);
+    }, timeout: const Timeout(Duration(seconds: 120)));
   });
 
-  group('PCP decryptor with 1 MiB packets (plan 29)', () {
-    test(
-      'two 1 MiB packets fed in 16 KiB chunks decrypt exactly',
-      () async {
-        final plainA = pattern(1024 * 1024, 21);
-        final plainB = pattern(1024 * 1024, 99);
-        final wire = Uint8List.fromList([
-          ...buildPcpPacket(
-            exchangeKey: exchangeKey,
-            label: label,
-            encryptionMode: encryptionMode,
-            nonce: nonceA,
-            plaintext: plainA,
-          ),
-          ...buildPcpPacket(
-            exchangeKey: exchangeKey,
-            label: label,
-            encryptionMode: encryptionMode,
-            nonce: nonceB,
-            plaintext: plainB,
-          ),
-        ]);
-        final decryptor = PcpDecryptor(
-          keyForLabel: (requested) async {
-            expect(requested, label);
-            return exchangeKey;
-          },
-        );
-        final stopwatch = Stopwatch()..start();
-        final out = <Uint8List>[];
-        const chunkSize = 16 * 1024;
-        for (var offset = 0; offset < wire.length; offset += chunkSize) {
-          final end = offset + chunkSize > wire.length
-              ? wire.length
-              : offset + chunkSize;
-          out.addAll(await decryptor.add(wire.sublist(offset, end)));
+  group('PCP decryptor with 1 MiB packets (plan 29, 30)', () {
+    test('two 1 MiB packets fed in 16 KiB chunks decrypt exactly, '
+        'streaming', () async {
+      final plainA = pattern(1024 * 1024, 21);
+      final plainB = pattern(1024 * 1024, 99);
+      final wire = Uint8List.fromList([
+        ...buildPcpPacket(
+          exchangeKey: exchangeKey,
+          label: label,
+          encryptionMode: encryptionMode,
+          nonce: nonceA,
+          plaintext: plainA,
+        ),
+        ...buildPcpPacket(
+          exchangeKey: exchangeKey,
+          label: label,
+          encryptionMode: encryptionMode,
+          nonce: nonceB,
+          plaintext: plainB,
+        ),
+      ]);
+      final decryptor = PcpDecryptor(
+        keyForLabel: (requested) async {
+          expect(requested, label);
+          return exchangeKey;
+        },
+      );
+      final stopwatch = Stopwatch()..start();
+      final builder = BytesBuilder(copy: false);
+      var emergedBeforeFirstPacketCompleted = false;
+      const chunkSize = 16 * 1024;
+      final firstPacketWireLength = PcpHeader.size + plainA.length;
+      for (var offset = 0; offset < wire.length; offset += chunkSize) {
+        final end = offset + chunkSize > wire.length
+            ? wire.length
+            : offset + chunkSize;
+        final pieces = await decryptor.add(wire.sublist(offset, end));
+        for (final piece in pieces) {
+          builder.add(piece);
         }
-        stopwatch.stop();
-        expect(out, hasLength(2));
-        expect(out[0], plainA);
-        expect(out[1], plainB);
-        // Regression gate: the build-7 implementation needed
-        // O(n^2) copies per packet (minutes, effectively a hang).
-        expect(stopwatch.elapsed, lessThan(const Duration(seconds: 20)));
-      },
-      timeout: const Timeout(Duration(seconds: 120)),
-    );
+        if (end < firstPacketWireLength && builder.length > 0) {
+          emergedBeforeFirstPacketCompleted = true;
+        }
+      }
+      stopwatch.stop();
+      // Plan 30: plaintext must stream out while the first
+      // packet is still arriving (the build-8 form returned
+      // nothing until each whole packet had landed).
+      expect(emergedBeforeFirstPacketCompleted, isTrue);
+      expect(decryptor.packetsDecrypted, 2);
+      final joined = builder.takeBytes();
+      expect(joined.length, plainA.length + plainB.length);
+      expect(Uint8List.fromList(joined.sublist(0, plainA.length)), plainA);
+      expect(Uint8List.fromList(joined.sublist(plainA.length)), plainB);
+      // Regression gate: the build-7 implementation needed
+      // O(n^2) copies per packet (minutes, effectively a hang).
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 20)));
+    }, timeout: const Timeout(Duration(seconds: 120)));
+
+    test('the first blocks decrypt as soon as they arrive', () async {
+      final plain = pattern(4096, 42);
+      final wire = buildPcpPacket(
+        exchangeKey: exchangeKey,
+        label: label,
+        encryptionMode: encryptionMode,
+        nonce: nonceA,
+        plaintext: plain,
+      );
+      final decryptor = PcpDecryptor(keyForLabel: (_) async => exchangeKey);
+      // Header alone: nothing to decrypt yet.
+      expect(await decryptor.add(wire.sublist(0, PcpHeader.size)), isEmpty);
+      // One ciphertext block: exactly one plaintext block out.
+      final firstBlock = await decryptor.add(
+        wire.sublist(PcpHeader.size, PcpHeader.size + 16),
+      );
+      expect(firstBlock, hasLength(1));
+      expect(firstBlock.single, plain.sublist(0, 16));
+      // The rest completes the packet.
+      final rest = await decryptor.add(wire.sublist(PcpHeader.size + 16));
+      final joined = Uint8List.fromList([
+        ...firstBlock.single,
+        for (final piece in rest) ...piece,
+      ]);
+      expect(joined, plain);
+      expect(decryptor.packetsDecrypted, 1);
+    });
 
     test('an absurd content length is a parse error, not a stall', () async {
       final header = Uint8List(PcpHeader.size);
@@ -125,88 +165,256 @@ void main() {
       header[11] = 0xFF;
       header[12] = 0xFF;
       header[13] = 0xFF;
-      final decryptor = PcpDecryptor(
-        keyForLabel: (_) async => exchangeKey,
-      );
-      await expectLater(
-        decryptor.add(header),
-        throwsA(isA<NasneError>()),
-      );
+      final decryptor = PcpDecryptor(keyForLabel: (_) async => exchangeKey);
+      await expectLater(decryptor.add(header), throwsA(isA<NasneError>()));
     });
   });
 
-  group('proxy over loopback HTTP (plan 29)', () {
+  group('proxy over loopback HTTP (plan 29, 30)', () {
+    test('the player receives the decrypted 1 MiB packets in order', () async {
+      final plainA = pattern(1024 * 1024, 5);
+      final plainB = pattern(1024 * 1024, 77);
+      final wire = Uint8List.fromList([
+        ...buildPcpPacket(
+          exchangeKey: exchangeKey,
+          label: label,
+          encryptionMode: encryptionMode,
+          nonce: nonceA,
+          plaintext: plainA,
+        ),
+        ...buildPcpPacket(
+          exchangeKey: exchangeKey,
+          label: label,
+          encryptionMode: encryptionMode,
+          nonce: nonceB,
+          plaintext: plainB,
+        ),
+      ]);
+      // Fake content server: serves the wire bytes in slices.
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      upstream.listen((request) async {
+        request.response.statusCode = HttpStatus.ok;
+        const slice = 64 * 1024;
+        for (var offset = 0; offset < wire.length; offset += slice) {
+          final end = offset + slice > wire.length
+              ? wire.length
+              : offset + slice;
+          request.response.add(wire.sublist(offset, end));
+          await request.response.flush();
+        }
+        await request.response.close();
+      });
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: Uri.parse(
+          'http://127.0.0.1:${upstream.port}/web/video/pvr?id=1',
+        ),
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+      );
+      try {
+        final client = HttpClient();
+        final request = await client.getUrl(proxy.uri);
+        final response = await request.close();
+        expect(response.statusCode, HttpStatus.ok);
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in response) {
+          builder.add(chunk);
+        }
+        client.close();
+        final received = builder.takeBytes();
+        expect(received.length, plainA.length + plainB.length);
+        expect(Uint8List.fromList(received.sublist(0, plainA.length)), plainA);
+        expect(Uint8List.fromList(received.sublist(plainA.length)), plainB);
+      } finally {
+        await proxy.stop();
+        fetcher.close();
+        await upstream.close(force: true);
+      }
+    }, timeout: const Timeout(Duration(seconds: 120)));
+
     test(
-      'the player receives the decrypted 1 MiB packets in order',
+      'prefetch: the content GET starts before the player connects',
       () async {
-        final plainA = pattern(1024 * 1024, 5);
-        final plainB = pattern(1024 * 1024, 77);
-        final wire = Uint8List.fromList([
-          ...buildPcpPacket(
-            exchangeKey: exchangeKey,
-            label: label,
-            encryptionMode: encryptionMode,
-            nonce: nonceA,
-            plaintext: plainA,
-          ),
-          ...buildPcpPacket(
-            exchangeKey: exchangeKey,
-            label: label,
-            encryptionMode: encryptionMode,
-            nonce: nonceB,
-            plaintext: plainB,
-          ),
-        ]);
-        // Fake content server: serves the wire bytes in slices.
-        final upstream = await HttpServer.bind(
-          InternetAddress.loopbackIPv4,
-          0,
+        final plain = pattern(256 * 1024, 31);
+        final wire = buildPcpPacket(
+          exchangeKey: exchangeKey,
+          label: label,
+          encryptionMode: encryptionMode,
+          nonce: nonceA,
+          plaintext: plain,
         );
+        var getCount = 0;
+        final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
         upstream.listen((request) async {
+          getCount++;
           request.response.statusCode = HttpStatus.ok;
-          const slice = 64 * 1024;
-          for (var offset = 0; offset < wire.length; offset += slice) {
-            final end = offset + slice > wire.length
-                ? wire.length
-                : offset + slice;
-            request.response.add(wire.sublist(offset, end));
-            await request.response.flush();
-          }
+          request.response.add(wire);
           await request.response.close();
         });
         final fetcher = DtcpMediaFetcher();
         final proxy = await DtcpProxy.start(
           contentUrl: Uri.parse(
-            'http://127.0.0.1:${upstream.port}/web/video/pvr?id=1',
+            'http://127.0.0.1:${upstream.port}/web/video/pvr?id=2',
           ),
           keyForLabel: (_) async => exchangeKey,
           fetcher: fetcher,
         );
         try {
+          // No player request yet: the prefetch must already be
+          // pulling the content.
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          expect(getCount, 1);
+          // And the prefetched plaintext is what the player gets.
           final client = HttpClient();
           final request = await client.getUrl(proxy.uri);
           final response = await request.close();
           expect(response.statusCode, HttpStatus.ok);
-          final builder = BytesBuilder(copy: false);
-          await for (final chunk in response) {
-            builder.add(chunk);
-          }
+          final received = await response
+              .fold<BytesBuilder>(
+                BytesBuilder(copy: false),
+                (builder, chunk) => builder..add(chunk),
+              )
+              .then((builder) => builder.takeBytes());
           client.close();
-          final received = builder.takeBytes();
-          expect(received.length, plainA.length + plainB.length);
-          expect(
-            Uint8List.fromList(received.sublist(0, plainA.length)),
-            plainA,
-          );
-          expect(Uint8List.fromList(received.sublist(plainA.length)), plainB);
+          expect(Uint8List.fromList(received), plain);
         } finally {
           await proxy.stop();
           fetcher.close();
           await upstream.close(force: true);
         }
       },
-      timeout: const Timeout(Duration(seconds: 120)),
+      timeout: const Timeout(Duration(seconds: 60)),
     );
+
+    test('a trickling upstream yields first bytes long before the '
+        'first packet completes', () async {
+      final plain = pattern(1024 * 1024, 55);
+      final wire = buildPcpPacket(
+        exchangeKey: exchangeKey,
+        label: label,
+        encryptionMode: encryptionMode,
+        nonce: nonceA,
+        plaintext: plain,
+      );
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      upstream.listen((request) async {
+        request.response.statusCode = HttpStatus.ok;
+        // Header + 64 KiB now, the remaining ~960 KiB after a
+        // long pause: the shape of the slow VPN path in the
+        // build-8 field test (~8.5 s for the first packet).
+        const firstSlice = PcpHeader.size + 64 * 1024;
+        request.response.add(wire.sublist(0, firstSlice));
+        await request.response.flush();
+        await Future<void>.delayed(const Duration(seconds: 3));
+        request.response.add(wire.sublist(firstSlice));
+        await request.response.close();
+      });
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: Uri.parse(
+          'http://127.0.0.1:${upstream.port}/web/video/pvr?id=3',
+        ),
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+      );
+      try {
+        final client = HttpClient();
+        final request = await client.getUrl(proxy.uri);
+        final stopwatch = Stopwatch()..start();
+        final response = await request.close();
+        expect(response.statusCode, HttpStatus.ok);
+        final builder = BytesBuilder(copy: false);
+        int? firstByteMs;
+        await for (final chunk in response) {
+          firstByteMs ??= stopwatch.elapsedMilliseconds;
+          builder.add(chunk);
+        }
+        client.close();
+        // First plaintext must beat the 3 s upstream pause by a
+        // wide margin (packet-at-a-time decryption could not
+        // emit anything before ~3 s).
+        expect(firstByteMs, isNotNull);
+        expect(firstByteMs!, lessThan(2000));
+        expect(Uint8List.fromList(builder.takeBytes()), plain);
+      } finally {
+        await proxy.stop();
+        fetcher.close();
+        await upstream.close(force: true);
+      }
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('an upstream close mid-packet delivers the decrypted prefix '
+        'and then ends', () async {
+      final plain = pattern(1024 * 1024, 87);
+      final wire = buildPcpPacket(
+        exchangeKey: exchangeKey,
+        label: label,
+        encryptionMode: encryptionMode,
+        nonce: nonceA,
+        plaintext: plain,
+      );
+      // A raw socket server: an HttpServer response cannot be
+      // dropped mid-body once its headers are sent, and the
+      // abrupt drop is the point of this test.
+      final upstream = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      upstream.listen((socket) async {
+        socket.write(
+          'HTTP/1.1 200 OK\r\n'
+          'Content-Type: application/x-dtcp1\r\n'
+          'Transfer-Encoding: chunked\r\n\r\n',
+        );
+        // One chunk: header + 100 KiB of the packet body.
+        final slice = wire.sublist(0, PcpHeader.size + 100 * 1024);
+        socket.write('${slice.length.toRadixString(16)}\r\n');
+        socket.add(slice);
+        socket.write('\r\n');
+        await socket.flush();
+        // Let the slice land, then vanish mid-body, like the
+        // source closing in the field test.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        socket.destroy();
+      });
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: Uri.parse(
+          'http://127.0.0.1:${upstream.port}/web/video/pvr?id=4',
+        ),
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+      );
+      try {
+        final client = HttpClient();
+        final request = await client.getUrl(proxy.uri);
+        final response = await request.close();
+        expect(response.statusCode, HttpStatus.ok);
+        final builder = BytesBuilder(copy: false);
+        Object? streamError;
+        try {
+          await for (final chunk in response) {
+            builder.add(chunk);
+          }
+        } catch (e) {
+          // A truncated stream may surface as an error on the
+          // player side; either way it must END, not hang.
+          streamError = e;
+        }
+        client.close();
+        final received = builder.takeBytes();
+        // The decrypted prefix of the partial packet: complete
+        // blocks only, and a strict prefix of the plaintext.
+        expect(received.length, greaterThan(0));
+        expect(received.length, lessThan(plain.length));
+        expect(received.length % 16, 0);
+        expect(Uint8List.fromList(received), plain.sublist(0, received.length));
+        // Silence unused-variable lint for the narrative value.
+        expect(streamError, anyOf(isNull, isA<HttpException>()));
+      } finally {
+        await proxy.stop();
+        fetcher.close();
+        await upstream.close();
+      }
+    }, timeout: const Timeout(Duration(seconds: 60)));
   });
 
   group('PlaybackKeySource (plan 29)', () {

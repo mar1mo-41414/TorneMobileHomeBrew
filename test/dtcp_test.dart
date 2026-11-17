@@ -220,12 +220,15 @@ void main() {
       );
       final wire = hex(katPcpWire);
       // Feed in uneven chunks to exercise the buffering.
+      // Plan 30: decryption is streaming, so the plaintext comes
+      // back as several pieces; their concatenation is the packet
+      // content.
       final out = <Uint8List>[];
       out.addAll(await decryptor.add(wire.sublist(0, 5)));
       out.addAll(await decryptor.add(wire.sublist(5, 100)));
       out.addAll(await decryptor.add(wire.sublist(100)));
-      expect(out, hasLength(1));
-      expect(bytesToHex(out.single), katPcpContent);
+      final joined = Uint8List.fromList([for (final piece in out) ...piece]);
+      expect(bytesToHex(joined), katPcpContent);
     });
   });
 
@@ -425,19 +428,13 @@ void main() {
         testAuthority: testAuthority,
       );
       final session = await client.connect('192.0.2.1', 58293);
-      await session.waitExchangeKey(
-        0x2A,
-        timeout: const Duration(seconds: 10),
-      );
+      await session.waitExchangeKey(0x2A, timeout: const Duration(seconds: 10));
       await fake.timeout(const Duration(seconds: 10));
       await session.close();
 
       // Stage transitions and frame headers ARE recorded.
       expect(lines.any((l) => l.contains('stage: challenge accepted')), isTrue);
-      expect(
-        lines.any((l) => l.contains('stage: response accepted')),
-        isTrue,
-      );
+      expect(lines.any((l) => l.contains('stage: response accepted')), isTrue);
       expect(
         lines.any((l) => l.contains('exchange key received, label 42')),
         isTrue,
@@ -805,7 +802,11 @@ Future<void> _runFakeSource(
 
   // RTT: ready exchange, setup with the KAT counter, test, verify.
   send(
-    ControlFrame(command: AkeCommands.rttReady, payload: Uint8List(0), roleByte: 0),
+    ControlFrame(
+      command: AkeCommands.rttReady,
+      payload: Uint8List(0),
+      roleByte: 0,
+    ),
   );
   frame = await reader.next();
   assert(frame.isResponse && frame.command == AkeCommands.rttReady);
@@ -845,7 +846,11 @@ Future<void> _runFakeSource(
   assert(bytesToHex(frame.payload) == bytesToHex(responseMac));
 
   send(
-    ControlFrame(command: AkeCommands.rttVerify, payload: verifyMac, roleByte: 0),
+    ControlFrame(
+      command: AkeCommands.rttVerify,
+      payload: verifyMac,
+      roleByte: 0,
+    ),
   );
   frame = await reader.next();
   assert(frame.isResponse && frame.command == AkeCommands.rttVerify);
