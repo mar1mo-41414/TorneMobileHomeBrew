@@ -4,8 +4,8 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tmhb/app/ake_socket.dart';
@@ -159,8 +159,26 @@ void main() {
   });
 
   group('native AKE transport fallback', () {
-    test('off mobile platforms it falls back to a working dart socket',
-        () async {
+    // Linux is a native-socket platform too (plan 39.6) and the
+    // test host is Linux, so the factory now enters the native
+    // path here. Simulate the channel being unavailable (as in a
+    // test process) to exercise the documented fallback.
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('com.markun.tmhb/ake_socket'),
+        (call) async => throw MissingPluginException(),
+      );
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('com.markun.tmhb/ake_socket_events'),
+        (call) async => null,
+      );
+    });
+
+    test('when the native channel is unavailable it falls back to a '
+        'working dart socket', () async {
       final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close());
       server.listen((socket) {

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=torne mobile HB
+Comment=torne mobile HomeBrew edition - homebrew client for nasne (official firmware)
+Exec=tmhb
+Terminal=false
+Categories=AudioVideo;Video;
