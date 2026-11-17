@@ -2204,3 +2204,32 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 
 - デバッグ鍵署名だった初回分の APK (掲載は数分間) をインストールした人は、配布用鍵署名のものへ移る際に一度アンインストールが必要になる。
 - ワークフローの annotation に actions の Node 20 非推奨などの警告が出ているが、現時点では動作に影響はない (将来のメンテナンス事項)。
+
+## 46. デバッグログ共有ボタンの追加 (2026-11-17)
+
+(採番について: 当初 §45 で進めていたが、並行していた wakelock 決着の記録が §45 を使用したため、本件は §46 とした。実装 commit `d86a01f` は採番確定前に "(plan 45)" のメッセージで作成したため履歴上のメッセージはそのまま残し、コード内コメントの参照は後続 commit `ae5ae90` で §46 に訂正した。§43 と同じ扱い。)
+
+### 46.1 発端
+
+- 直サイドロード (LiveContainer でない) 環境ではアプリコンテナを取り出せず、端末上のデバッグログを外に出す手段がなかった (本人指摘、2026-11-17)。LC 環境ではコンテナ書き出しで抜けていたため、これまで問題にならなかった。
+- 本人の承認を受け、設定画面からログを共有シートで送れるようにした。
+
+### 46.2 実装 (commit `d86a01f`、ビルド 19)
+
+- 設定画面のデバッグセクションに「デバッグログを共有」タイルを追加した。マスタースイッチを切った後でも共有できるよう、カテゴリ開閉の条件ブロックの外に置いた (ログが必要になる時点では大抵記録済みのため)。
+- 収集と受け渡しは `lib/app/log_share.dart` が担う。`collectDebugLogFiles` は `<documents>/debug_logs/` の `.log` のみを名前順 (= 時系列順) に列挙し、それ以外のファイル (登録情報・キーバリューストア) は決して対象にしない。共有は原本ではなく一時ディレクトリへ stage したコピー (`tmhb_log_share/`) に対して行う。ローテーションによる原本削除と競合しないためと、Android の FileProvider が documents 配下を配信できないためである。
+- ログが1件もない場合は共有シートを出さず、スナックバーで「共有できるログがありません」と知らせる。共有の実行結果は DiagCategory.ui で診断ログ自体にも残す。
+- ネイティブ側は自前プラットフォームチャンネル `com.markun.tmhb/share_files` とした。選定理由: share_plus は platform interface 系の依存ツリーを引き込む。本プロジェクトは §35 で wakelock_plus を自前チャンネルに置き換えた経緯があり、pubspec にも自前チャンネルによる「依存なし」の方針が明記されている。共有シートの表示は iOS / Android とも小さなネイティブ実装で足りるため、自前チャンネルを選んだ。
+  - iOS: `ShareHub` (AppDelegate.swift) が UIActivityViewController を最前面の view controller から表示する。iPad ではポップオーバーになり、アンカーなしだと表示時にクラッシュするため、タップしたタイルの矩形 (origin) を Dart 側から渡す。
+  - Android: MainActivity が ACTION_SEND_MULTIPLE を FileProvider の content URI で発行する。FileProvider の paths (`res/xml/tmhb_share_paths.xml`) は cache 配下の stage ディレクトリのみを公開し、documents 配下には到達できない。URI の読み取り許可は ClipData 経由で chooser の先へ伝播させる。
+- テスト: `test/log_share_test.dart` を6件追加した (収集の対象絞り込みと順序、debug_logs 欠落時の空、stage のコピー同一性と旧 stage の掃除、ログなし/非対応プラットフォームではチャンネルを呼ばないこと、共有時のパスと origin 引数)。全体 **223 件全合格**、`flutter analyze` 検出なし。ログに資格情報やセッション鍵が混ざらないことは、従来の呼び出し側監査テスト (test/debug_log_test.dart) が引き続き担保する。
+
+### 46.3 ビルド (ビルド 19、リリースなし)
+
+- 版数は 1.3.0 のまま、ビルド番号を 19 に進めた。
+  - IPA (署名なし、CFBundleShortVersionString 1.3.0 / CFBundleVersion 19 を実物で確認): 16,985,802 バイト、SHA-256 `d847ae815843d676b3da6888fd26efbebf6fc0560fcc43db225b26f704325863`。marnux `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.3.0.ipa` に配置。iOS ビルドは Mac 側 clone に触れず、対象 commit の `git archive` を Mac の別フォルダへ展開して実施した。
+  - APK (配布用署名、versionCode 19、署名証明書 `e60cfeda…` 一致。マージ済みマニフェストに FileProvider (authority `com.markun.tmhb.fileprovider`) の登録があることを実物で確認): 101,817,565 バイト、SHA-256 `80d17dbce3642b1130a661675808ca734c11bd5366ef3645be7acd42355284cb`。marnux `~/ダウンロード/TorneMobileHomeBrew-1.3.0.apk` に配置。
+
+### 46.4 未確認事項
+
+- 実機での共有シートの動作確認 (iPad のポップオーバー表示、Android の chooser と受け側アプリでの読み取り) は本人の実機確認待ち。
