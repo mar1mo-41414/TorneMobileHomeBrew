@@ -3080,29 +3080,29 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   と iOS の両プラットフォームで実機成立となった。
 - 実機確認が揃ったため、版数上げの判断は本人へ返す。
 
-## 59. Windows デスクトップ対応の下準備: ランナー生成と AKE ソケット実装 (2026-11-17)
+## 61. Windows デスクトップ対応の下準備: ランナー生成と AKE ソケット実装 (2026-11-17)
 
-Windows 調査 (§ 調査レポート `tmhb.work/2026-11-17-windows-survey/report.md`) の展開として、アプリ側の先行作業をブランチ `windows-support` (起点は main `61ede48` = v1.4.0) で実施した。libmpv の自前ビルド (§ 調査 §2) と marog での実機ビルド確認は別作業であり、本節の範囲外。
+Windows 調査 (§ 調査レポート `tmhb.work/2026-11-17-windows-survey/report.md`) の展開として、アプリ側の先行作業をブランチ `windows-support` (起点は main `61ede48` = v1.4.0) で実施した。節番号は main 側の並行作業 (§59 v1.4.0 リリース記録、§60 プレイヤー UI 合流) との衝突を避けて §61 とした。libmpv の自前ビルド (§ 調査 §2) と marog での実機ビルド確認は別作業であり、本節の範囲外。
 
-### 59.1 marog への Flutter SDK 導入
+### 61.1 marog への Flutter SDK 導入
 
 - `C:\Users\markun\GitTmp\flutter` に flutter/flutter を clone し、タグ `3.50.0` を checkout (marnux / Mac と同一版数)。導入スクリプトはファイルで渡し、タスクスケジューラ経由でバックグラウンド実行した (ssh セッションから `Start-Process` で起動した子プロセスはセッション終了時に道連れで終了するため不可。PowerShell の `2>&1` リダイレクトはネイティブコマンドの stderr で `NativeCommandError` になるため、ネイティブ実行は `cmd /c ... >> log 2>&1` 形式に統一)。
 - 初回 `flutter --version` で Dart SDK のブートストラップと windows-x64 エンジンアーティファクトの取得まで完了: Flutter 3.50.0 • Framework revision `ab2912035e` (marnux と同一) • Dart 3.14.0 • DevTools 2.61.0。channel はタグの detached HEAD のため `[user-branch]` 表示になる (想定内)。
 - `flutter doctor` の指摘は 4 カテゴリ: Flutter 本体 (channel 表示と PATH 未登録の警告のみ)、Android toolchain 無し、Chrome 無し、**Visual Studio 無し**。Windows 開発で効くのは VS のみで想定内 (本人が後日「C++ によるデスクトップ開発」ワークロードを入れる)。Windows Version / Connected device (Windows desktop・Edge) / Network resources は正常。導入ログは marog の `C:\Users\markun\GitTmp\flutter-install.log` に保存。
 
-### 59.2 windows/ ランナーの生成
+### 61.2 windows/ ランナーの生成
 
 - marnux の Flutter 3.50.0 で `flutter create --platforms=windows` を実行し `windows/` を生成。他プラットフォーム (android/ios/linux/macos) のファイルは書き換わらず、変更は `.metadata` (windows プラットフォームの追加) と `analysis_options.yaml` (除外リストへの `windows/**` 追加) のみ。
 - 表示名は既存デスクトップの慣例に統一: ウィンドウタイトルと Runner.rc の ProductName/FileDescription を `torne mobile HB` に (バイナリ名 `tmhb` / InternalName / OriginalFilename は不変)、初期ウィンドウサイズを macOS/Linux と同じ 1280x800 に変更。
 
-### 59.3 AKE ソケットの Windows 実装 (5 つ目の実装)
+### 61.3 AKE ソケットの Windows 実装 (5 つ目の実装)
 
 - `windows/runner/ake_socket.h` / `ake_socket.cpp` を新規追加し、`flutter_window.cpp` (OnCreate で登録、MessageHandler でメッセージ処理) と `windows/runner/CMakeLists.txt` (`ake_socket.cpp` の追加と `ws2_32.lib` のリンク) を改修。契約は既存 4 実装と同一 (MethodChannel `com.markun.tmhb/ake_socket`: connect/send/close、EventChannel `com.markun.tmhb/ake_socket_events`: data/error/done)。
 - 実装は C++ の `linux/runner/ake_socket.cc` をモデルに Winsock2 で書き直した。接続時に `setsockopt(IP_TTL)=3` と `TCP_NODELAY` を設定 (必須要件、§47.5)。非ブロッキング connect のタイムアウト境界は poll の代わりに `select()`、受信はブロッキング recv ループをワーカースレッドで実行。
 - スレッドモデルの選択: Flutter Windows の MethodResult/EventSink はプラットフォームスレッド (UI スレッド) でしか触れないため、ワーカー側の成果 (イベント、connect の完了応答) はヒープ上の PostedWork に包んで `PostMessage(WM_APP+0xA1E)` で UI スレッドへ渡し、`FlutterWindow::MessageHandler` 経由で sink/result を呼ぶ。Linux 版の `g_idle_add` (GLib メインループへの投稿)、Swift 版の `DispatchQueue.main` への dispatch と同型の方式であり、UI スレッドにアクセスを寄せたことで hub の接続マップと sink にロックが不要になった。
 - Dart 側は `lib/app/ake_socket.dart` のゲートに `Platform.isWindows` を追加し、冒頭ドキュメントのプラットフォーム列挙も更新。wakelock とログ共有は macOS/Linux と同じくネイティブ実装なし (Dart 側がデスクトップでは no-op / unsupported)。
 
-### 59.4 検証状況
+### 61.4 検証状況
 
 - marnux で `flutter analyze` は無警告、`flutter test` は全 250 件合格。
 - **未検証: Windows コードのコンパイルと実機動作。** marnux には Windows ツールチェーンが無く、marog には Visual Studio が無いため、`ake_socket.cpp` を含む Windows ランナーはまだ一度もコンパイルされていない。VS 導入後に marog で `flutter build windows` を通し、AKE の実接続 (nasne への TTL 3 接続) まで確認して初めて成立とする。
