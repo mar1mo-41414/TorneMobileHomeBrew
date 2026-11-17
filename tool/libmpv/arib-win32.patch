@@ -37,7 +37,7 @@ index 36ed6d5..a0e7d6d 100644
               }
               av_strlcat(tmp_str, text + start, tmp_max_url_size);
 diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
-index fd0001e..bee7bc1 100644
+index fd0001e..5aba627 100644
 --- a/packages/ffmpeg.cmake
 +++ b/packages/ffmpeg.cmake
 @@ -26,12 +26,13 @@ ExternalProject_Add(ffmpeg
@@ -55,22 +55,99 @@ index fd0001e..bee7bc1 100644
      GIT_CLONE_POST_COMMAND "sparse-checkout set --no-cone /* !tests/ref/fate"
      PATCH_COMMAND ${EXEC} git apply ${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg-*.patch
      UPDATE_COMMAND ""
-@@ -94,6 +95,7 @@ ExternalProject_Add(ffmpeg
+@@ -65,7 +66,7 @@ ExternalProject_Add(ffmpeg
+         --disable-gray
+         --disable-swscale-alpha
+ 
+-        --disable-bsfs
++        --enable-bsfs
+ 
+         --disable-amf
+         --disable-cuda
+@@ -94,6 +95,8 @@ ExternalProject_Add(ffmpeg
          --enable-libssh
  
          --enable-libjxl
 +        --enable-libaribcaption
++        --enable-libdav1d
  
          --enable-avutil
          --enable-avcodec
-@@ -130,6 +132,7 @@ ExternalProject_Add(ffmpeg
+@@ -130,6 +133,35 @@ ExternalProject_Add(ffmpeg
          --enable-decoder=dca
          --enable-decoder=dca
          --enable-decoder=truehd
 +        --enable-decoder=libaribcaption
++        --enable-decoder='av1*'
++        --enable-decoder=libdav1d
++        --enable-decoder='h264*'
++        --enable-decoder='hevc*'
++        --enable-decoder='mpeg2*'
++        --enable-decoder=mpeg1video
++        --enable-decoder='mpeg4*'
++        --enable-decoder='msmpeg*'
++        --enable-decoder='vp8*'
++        --enable-decoder='vp9*'
++        --enable-decoder='wmv*'
++        --enable-decoder='h263*'
++        --enable-decoder=flv
++        --enable-decoder='vp6*'
++        --enable-decoder=theora
++        --enable-decoder=ass
++        --enable-decoder=dvbsub
++        --enable-decoder=dvdsub
++        --enable-decoder=movtext
++        --enable-decoder=srt
++        --enable-decoder=ssa
++        --enable-decoder=stl
++        --enable-decoder=subrip
++        --enable-decoder=subviewer
++        --enable-decoder=subviewer1
++        --enable-decoder=text
++        --enable-decoder=vplayer
++        --enable-decoder=webvtt
  
          --enable-decoder=mjpeg
          --enable-decoder=ljpeg
+@@ -170,6 +202,26 @@ ExternalProject_Add(ffmpeg
+         --enable-demuxer=truehd
+         --enable-demuxer=dts
+         --enable-demuxer=dtshd
++        --enable-demuxer=mpegts
++        --enable-demuxer=mpegps
++        --enable-demuxer=mpegvideo
++        --enable-demuxer=hevc
++        --enable-demuxer=av1
++        --enable-demuxer=hls
++        --enable-demuxer=dash
++        --enable-demuxer=ass
++        --enable-demuxer=webvtt
++        --enable-demuxer=srt
++        --enable-demuxer=stl
++        --enable-demuxer=loas
++        --enable-demuxer=concat
++        --enable-demuxer=data
++        --enable-demuxer=rtsp
++        --enable-demuxer=live_flv
++        --enable-demuxer=subviewer
++        --enable-demuxer=subviewer1
++        --enable-demuxer=vplayer
++        --enable-demuxer='mjpeg*'
+ 
+         --enable-parser=aac*
+         --enable-parser=ac3
+@@ -180,6 +232,11 @@ ExternalProject_Add(ffmpeg
+         --enable-parser=tak
+         --enable-parser=vorbis
+         --enable-parser=dca
++        --enable-parser=mpegvideo
++        --enable-parser=mpeg4video
++        --enable-parser=h264
++        --enable-parser=hevc
++        --enable-parser=h263
+ 
+         --enable-filter=overlay
+         --enable-filter=equalizer
 diff --git a/packages/fontconfig.cmake b/packages/fontconfig.cmake
 index 00ba5f7..784d81e 100644
 --- a/packages/fontconfig.cmake
@@ -333,6 +410,40 @@ index 0000000..af81891
 +         EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
 +             EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE,
 +         EGL_NONE,
+diff --git a/packages/mpv-0003-header-drift-compat.patch b/packages/mpv-0003-header-drift-compat.patch
+new file mode 100644
+index 0000000..d316cde
+--- /dev/null
++++ b/packages/mpv-0003-header-drift-compat.patch
+@@ -0,0 +1,28 @@
++diff --git a/video/out/gpu/d3d11_helpers.h b/video/out/gpu/d3d11_helpers.h
++index 92322b9152..b5428fdd11 100644
++--- a/video/out/gpu/d3d11_helpers.h
+++++ b/video/out/gpu/d3d11_helpers.h
++@@ -39,7 +39,7 @@
++ #define DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_LEFT_P2020    ((DXGI_COLOR_SPACE_TYPE)23)
++ #define DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_TOPLEFT_P2020 ((DXGI_COLOR_SPACE_TYPE)24)
++ 
++-#if !HAVE_DXGI_DEBUG_D3D11
+++#if !HAVE_DXGI_DEBUG_D3D11 && !defined(__d3d11sdklayers_h__)
++ DEFINE_GUID(DXGI_DEBUG_D3D11, 0x4b99317b, 0xac39, 0x4aa6, 0xbb, 0xb, 0xba, 0xa0, 0x47, 0x84, 0x79, 0x8f);
++ #endif
++ 
++diff --git a/video/out/opengl/context_angle.c b/video/out/opengl/context_angle.c
++index 3a70c09c7e..b5b475d913 100644
++--- a/video/out/opengl/context_angle.c
+++++ b/video/out/opengl/context_angle.c
++@@ -18,6 +18,10 @@
++ #include <windows.h>
++ #include <EGL/egl.h>
++ #include <EGL/eglext.h>
+++
+++#ifndef EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE
+++#define EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE 0x3207
+++#endif
++ #include <EGL/eglext_angle.h>
++ #include <d3d11.h>
++ #include <dxgi1_2.h>
 diff --git a/packages/mpv.cmake b/packages/mpv.cmake
 index bdcfea4..ccf2e24 100644
 --- a/packages/mpv.cmake

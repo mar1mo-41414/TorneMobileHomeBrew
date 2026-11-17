@@ -349,8 +349,9 @@ make XCODE_PATH=/Applications/Xcode.app TARGET=mk-out-archive-xcframeworks-macos
 
 ### 配布と取り込み
 
-- GitHub リリース `libmpv-windows-v1.0.11-arib1` に 7z を置く
-  (MD5 は vendored パッケージ側の検証に使われる)。
+- GitHub リリース `libmpv-windows-v1.0.11-arib2` に 7z を置く
+  (現行。MD5 は vendored パッケージ側の検証に使われる)。
+  arib1 は MPEG-TS を開けない欠陥があるため使用禁止 (下記 arib2 の節)。
 - `third_party/media_kit_libs_windows_video` (pub 1.0.11 の
   vendored コピー) の `windows/CMakeLists.txt` が、公式の
   2023-09-24 アーカイブではなくこの 7z を取得する
@@ -366,6 +367,41 @@ make XCODE_PATH=/Applications/Xcode.app TARGET=mk-out-archive-xcframeworks-macos
   掲載されていること。
 - 実機 (Windows) での字幕描画の確認はアプリ組み込み後の
   段で行う (ビルド単体では未実施)。
+
+### arib2: MPEG-TS 再生不能の修正 (2026-11-18、plan §68)
+
+arib1 は Windows 実機でライブ・録画とも mpv の
+"Failed to recognize file format." で再生できなかった。原因は
+FFmpeg のコンポーネント構成: superbuild の `packages/ffmpeg.cmake`
+は `--disable-demuxers/--disable-decoders/--disable-parsers` と
+`--disable-bsfs` を全体に掛け、音声中心の短い有効化リストだけを
+足す流儀で、放送 TS に要る **mpegts デマルチプレクサ、
+mpeg2video/h264 デコーダ、mpegvideo パーサが全て無効**だった
+(旧公式 DLL (2023) には全て入っていた)。libaribcaption の配線時に
+この前提を見落としたのが混入経路。AKE/復号側は無実で、平文は
+正しかった (実測の詳細は plan §68)。
+
+arib2 での変更 (`arib-win32.patch` に含まれる):
+
+- `packages/ffmpeg.cmake`: 有効化リストへ放送系を追加
+  (demuxer: mpegts/mpegps/mpegvideo/hevc/hls/dash 等、decoder:
+  mpeg2*/mpeg1video/h264*/hevc*/mpeg4*/vp8*/vp9* と字幕系、
+  parser: mpegvideo/mpeg4video/h264/hevc/h263)、
+  `--disable-bsfs` を `--enable-bsfs` に変更、libdav1d を有効化。
+  名前は FFmpeg n7.1.5 のソースで実在確認したものだけを使う
+  (`mpeg4` demuxer と `latm` demuxer は 7.1 に存在しない)。
+- `packages/mpv-0003-header-drift-compat.patch` (新規):
+  追随版数で動く ANGLE / mingw-w64 ヘッダへの互換2件
+  (`EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE` の自前定義 0x3207 と、
+  `DXGI_DEBUG_D3D11` の二重定義ガード)。
+
+検証: 生成された `config_components.h` で
+CONFIG_MPEGTS_DEMUXER / CONFIG_MPEG2VIDEO_DECODER /
+CONFIG_H264_DECODER = 1 と BSF 45 個の有効化を確認し、
+アプリと無関係な単体プローブ (libmpv を直接ロードして
+検証済み MPEG-TTS を開く) で arib1 = UNKNOWN_FORMAT (-17) →
+arib2 = FILE_LOADED (video mpeg2video / audio aac /
+sub arib_caption) の前後比較を取った。
 
 ### 上流 media_kit が版数を上げたら
 
