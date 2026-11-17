@@ -1,7 +1,7 @@
 name: tmhb
 description: "torne mobile HomeBrew edition - a homebrew client for nasne (official firmware)."
 publish_to: 'none'
-version: 1.3.0+21
+version: 1.3.0+22
 
 environment:
   sdk: ^3.14.0
@@ -49,3 +49,10 @@ flutter_launcher_icons:
   remove_alpha_ios: true
   adaptive_icon_background: "#211753"
   adaptive_icon_foreground: "assets/icon/app_icon_1024.png"
+
+# Vendored media_kit native-library packages (third_party/) replace the
+# hosted ones so the app can ship custom libmpv binaries with ARIB
+# caption decoding (libaribb24). See tool/libmpv/README.md and plan §55.
+dependency_overrides:
+  media_kit_libs_android_video:
+    path: third_party/media_kit_libs_android_video

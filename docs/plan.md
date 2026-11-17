@@ -2629,3 +2629,102 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - 字幕描画は、同梱 libmpv への libaribcaption 追加 (カスタムビルド化) が前提条件。実施するかどうかはビルド基盤整備として別途判断する。
 - 音声切り替えの実機確認 (実音声2本の x3 録画・ライブで、主⇔副が数秒で切り替わること) は本人の実機確認待ち。デスクトップ実測では cache=no で 1.75〜2.55 秒。
 - キーボード修正の実機確認 (iPhone で手動登録欄を開き、外タップ / ドラッグ / 完了キーで閉じること) も本人の確認待ち。
+
+## 55. libmpv カスタムビルドによる ARIB 字幕対応 (2026-11-17、ビルド +22)
+
+§54.7 の残件だった「同梱 libmpv への ARIB 字幕デコーダ追加」を
+実施した。本人承認済み (2026-11-17)。バージョンは 1.3.0 のまま
+ビルド番号のみ +22。リリースはしない。
+
+なお §54.7 の他の実機確認待ち2件は同日に本人の確認が取れた:
+キーボードの閉鎖 OK、音声の主⇔副切り替え OK (実測約1秒)。
+§54 の実機確認待ちは字幕描画のみとなった。
+
+### 55.1 デコーダの選定: libaribcaption ではなく libaribb24
+
+- 当初想定の libaribcaption は使えない。media_kit のビルドが
+  固定する **FFmpeg 6.0 には libaribcaption ラッパーが存在
+  しない** (libaribcaption 対応は FFmpeg 7.0 で追加)。
+  FFmpeg 6.0 の allcodecs で ARIB 字幕に関係するのは
+  `ff_libaribb24_decoder` (およびネイティブの未完成な
+  aribb24 実験実装、Profile A 限定の arib_caption ネイティブ)
+  のみで、実績ある経路は libaribb24 のみ。
+- FFmpeg 6.0 の非 GPL 構成では configure が pkg-config で
+  `aribb24 > 1.0.3` を要求する。これはライセンス判定の代理で、
+  1.0.3 タグの aribb24 は GPLv3 だが master は LGPLv3 へ
+  再ライセンス済み (nkoriyama/aribb24 commit ed79dab)。
+  ただし master の版数ラベルも 1.0.3 のままなので、ビルド側で
+  master スナップショット (5e9be272) を **1.0.4 とラベル**
+  して使う (コード自体は無改変)。configure の出力でも
+  `License: LGPL version 3 or later` となることを確認。
+- libaribb24 の libpng 連携 (DRCS 外字の描画) は Android では
+  無効化した。NDK sysroot に libpng が無く、上流
+  libmpv-android-video-build の aribb24 は libpng チェックの
+  not-found アクションが空で、最近の pkg.m4 ではこれが致命的
+  エラーになる (no-op に直して任意化)。テキスト字幕は影響
+  しない。DRCS 外字は当面プレースホルダ表示になる。
+
+### 55.2 Android: ビルドと実証 (完了)
+
+- 上流 `media-kit/libmpv-android-video-build` commit `1ecf510`
+  (JAR v1.1.7、FFmpeg 6.0、mpv 78d4374、NDK 25.2.9519653) を
+  フォークし、差分5ファイルを適用。再現手順と保守方法は
+  `tool/libmpv/README.md`、差分は `tool/libmpv/arib-android.patch`。
+- ビルド中に潰した問題:
+  - mbedtls の生成に jinja2 + jsonschema が必要 (venv で供給)。
+  - libaribb24 の in-tree ビルドが前 arch のオブジェクトを
+    再利用し、他 arch の .a が prefix に混入 (ffmpeg の
+    リンクテスト失敗で検出)。arch 毎の VPATH ビルドに変更。
+  - 上流 build.sh の `sudo chmod` が marnux の対話 sudo で
+    止まるため `chmod` に変更。
+- 成果物: 4 ABI 全ての libmpv.so に `--enable-libaribb24` /
+  `--enable-decoder=libaribb24` を含む ffmpeg configuration と
+  `ff_libaribb24_decoder` が存在することを確認。NDK llvm-strip
+  後のサイズ: arm64-v8a 12,433,656 B (標準 12,369,680 B)、
+  armeabi-v7a 11,810,092 B、x86_64 15,883,680 B、x86 15,187,556 B。
+- 機能実証 (ホスト): 同じ aribb24 スナップショット (1.0.4
+  ラベル) でホスト用 FFmpeg 6.0 を組み、§54 の x3 キャプチャ
+  (rec_x3_fushigi.ts) から字幕キュー **46 件**を抽出。
+  §54 で Debian の ffmpeg + libaribb24 が出した件数と一致し、
+  日本語テキストも正しく復号できた。
+- JAR 化: 自前 libmpv.so + 公式 JAR の
+  libmediakitandroidhelper.so (無改変) で再構成し、本リポの
+  GitHub リリース `libmpv-android-v1.1.7-arib1` に公開。
+  MD5: arm64-v8a `d569f6d35b597cf982b3365c18c6fc4a`、
+  armeabi-v7a `3e588757e6efaf7833435345557e23b7`、
+  x86_64 `514669475c9c0529848bb847e66417eb`、
+  x86 `fe592e8358072ba68739337c73703cb0`。
+
+### 55.3 アプリへの統合
+
+- `third_party/media_kit_libs_android_video` に pub 1.3.8 を
+  vendored し、`android/build.gradle` の JAR 取得先を自前
+  リリース (URL + MD5) に差し替えた。`pubspec.yaml` の
+  `dependency_overrides` で vendored 版を優先する。
+  詳細は `third_party/README.md`。
+- テスト 246 件全合格、`flutter analyze` クリーン。
+- APK (ビルド22、リリース署名) を組み、封入された
+  libmpv.so 3 ABI 分が自前ビルドであること (サイズ一致と
+  arm64 のデコーダ文字列) を検証済み。
+  SHA-256: `f2e3a99252b8255a80902f043a4d7dbe02c5d9ee0824bbce85ade8f392fcc701`。
+  配置先は marnux `~/ダウンロード/TorneMobileHomeBrew-1.3.0.apk`。
+- 実機での字幕描画確認は本人の担当 (字幕トグル §53 の経路で
+  `sid` を選べばデコードされるはず)。
+
+### 55.4 iOS: 経路確定、実施は次段
+
+- 上流は `media-kit/libmpv-darwin-build` (nix flake)。FFmpeg は
+  こちらも 6.0 で、`nix/packages/mk-pkg-ffmpeg/meson.build` が
+  External Project として configure を叩き、オプションリストは
+  Android の flavor と並行管理されている。ここに
+  `--enable-libaribb24` / `--enable-decoder=libaribb24` を足し、
+  `mk-pkg-aribb24` を新規作成して buildInputs に加えるのが本筋。
+- iOS スタックには libpng (Png16.framework) が既にあるため、
+  DRCS の PNG 連携まで含められる可能性がある。
+- 未実施の理由: Mac への nix 導入と Xcode パス設定を含む
+  ビルド基盤構築が前提で、依存チェーン全体のクロスビルドを
+  伴う大きな作業になるため、本節では区切る。実施時は
+  media_kit_libs_ios_video も vendored し、Makefile の
+  版数・URL・SHA-256 を自前リリースへ差し替える。
+- そのため今回の IPA は作っていない (iOS 側は現行ビルド21の
+  まま)。Android の字幕確認が取れてから iOS に着手する。
