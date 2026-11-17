@@ -130,4 +130,25 @@ class RecordedTitle {
       res: res ?? this.res,
     );
   }
+
+  /// The original-quality resource (plan 33): the title's own
+  /// recording (DR / 3倍 / …), i.e. the first res that is not the
+  /// mobile transcode. Falls back to the first res when every res
+  /// is mobile, and is null when the title carries no res.
+  TitleRes? get originalRes {
+    for (final r in res) {
+      if (r.quality != 'mobile') return r;
+    }
+    return res.isEmpty ? null : res.first;
+  }
+
+  /// The mobile (low-bitrate) resource, when the nasne offers one
+  /// alongside the original (plan 33). Null when it does not, in
+  /// which case the UI offers no quality choice.
+  TitleRes? get mobileRes {
+    for (final r in res) {
+      if (r.quality == 'mobile') return r;
+    }
+    return null;
+  }
 }

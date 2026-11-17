@@ -156,7 +156,11 @@ class DtcpPlaybackEngine implements PlaybackEngine {
     AkeSession? session;
     final fetcher = _fetcherFactory();
     try {
-      diag(DiagCategory.playback, 'start: credentials -> HEAD -> AKE -> proxy');
+      diag(
+        DiagCategory.playback,
+        'start: res quality=${res.quality ?? '(none)'}; '
+        'credentials -> HEAD -> AKE -> proxy',
+      );
       final credentials = await credentialStore.load();
       if (credentials == null) {
         throw NasneError.validation(

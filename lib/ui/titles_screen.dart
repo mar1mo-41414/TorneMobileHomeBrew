@@ -194,15 +194,31 @@ class TitleDetailPage extends ConsumerWidget {
 }
 
 /// The title detail: merged XSRS + DIDL information and the playback
-/// action (which surfaces the v1 not-implemented notice).
-class TitleDetailView extends ConsumerWidget {
+/// action. When the title carries a mobile resource alongside the
+/// original, a playback quality choice is offered (plan 33); the
+/// default is always the original quality.
+class TitleDetailView extends ConsumerStatefulWidget {
   const TitleDetailView({super.key, required this.reg, required this.title});
 
   final RegisteredNasne reg;
   final RecordedTitle title;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TitleDetailView> createState() => _TitleDetailViewState();
+}
+
+class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
+  /// Playback quality choice (plan 33): false = the title's
+  /// original resource (DR / 3倍), true = the mobile transcode.
+  /// A per-playback option only — nothing is persisted, and every
+  /// visit to this screen starts on the original.
+  bool _useMobile = false;
+
+  RegisteredNasne get reg => widget.reg;
+  RecordedTitle get title => widget.title;
+
+  @override
+  Widget build(BuildContext context) {
     final t = title;
     final channels = ref.watch(channelsProvider(reg)).value;
     final sizeBytes = t.res
@@ -213,6 +229,11 @@ class TitleDetailView extends ConsumerWidget {
       for (final r in t.res)
         if (r.quality != null) r.quality!,
     ];
+    final originalRes = t.originalRes;
+    final mobileRes = t.mobileRes;
+    final originalLabel = originalRes?.quality == null
+        ? '元画質'
+        : '元画質 (${resQualityLabel(originalRes!.quality)})';
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -260,6 +281,20 @@ class TitleDetailView extends ConsumerWidget {
           Text(t.longDescription!),
         ],
         const SizedBox(height: 24),
+        if (mobileRes != null) ...[
+          Text('再生画質', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          SegmentedButton<bool>(
+            segments: [
+              ButtonSegment(value: false, label: Text(originalLabel)),
+              const ButtonSegment(value: true, label: Text('モバイル')),
+            ],
+            selected: {_useMobile},
+            onSelectionChanged: (selection) =>
+                setState(() => _useMobile = selection.first),
+          ),
+          const SizedBox(height: 16),
+        ],
         FilledButton.icon(
           onPressed: () => _play(context, ref),
           icon: const Icon(Icons.play_arrow),
@@ -281,8 +316,10 @@ class TitleDetailView extends ConsumerWidget {
       showSnack(context, '再生可能なコンテンツがありません');
       return;
     }
+    final res =
+        (_useMobile ? title.mobileRes : title.originalRes) ?? title.res.first;
     try {
-      final session = await engine.startPlayback(title, title.res.first);
+      final session = await engine.startPlayback(title, res);
       if (!context.mounted) {
         await session.stop();
         return;

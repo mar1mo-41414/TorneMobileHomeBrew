@@ -98,6 +98,18 @@ String qualityModeLabel(int mode) => switch (mode) {
   _ => '$mode',
 };
 
+/// Display label of a DIDL res `quality` value (plan 33): the
+/// `quality` query parameter of a res URL (`dr` / `x3` / `mobile`,
+/// measured in plan 11.8). Unknown values fall back to the raw
+/// string; labels are never invented (plan 16.4).
+String resQualityLabel(String? quality) => switch (quality) {
+  'dr' => 'DR',
+  'x3' => '3倍',
+  'mobile' => 'モバイル',
+  null => '元画質',
+  _ => quality,
+};
+
 /// Official display form of the software version.
 ///
 /// `softwareVersionGet` returns a 4-digit string ("0260"); the

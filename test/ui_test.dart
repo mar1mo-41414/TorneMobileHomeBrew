@@ -179,42 +179,71 @@ class FakeSchedules implements ScheduleService {
 }
 
 class FakeTitles implements TitleCatalogService {
-  @override
-  Future<List<RecordedTitle>> listTitles({bool withMetadata = true}) async => [
-        RecordedTitle(
-          id: '201',
-          title: '録画タイトルA',
-          scheduledStart: DateTime.parse('2026-11-15T11:34:46+09:00'),
-          scheduledDurationSeconds: 1800,
-          channelName: 'テスト放送',
-          copyCountRemaining: 10,
-          protectFlag: true,
-          description: '番組Aの概要',
-          res: const [
-            TitleRes(
-              url: 'http://192.0.2.10:58890/web/video/pvr?id=201&quality=dr',
-              protocolInfo: 'http-get:*:application/x-dtcp1:*',
-              cleartextSize: 100000000,
-              quality: 'dr',
-            ),
-          ],
+  FakeTitles({List<RecordedTitle>? items}) : items = items ?? defaultItems;
+
+  final List<RecordedTitle> items;
+
+  static final defaultItems = [
+    RecordedTitle(
+      id: '201',
+      title: '録画タイトルA',
+      scheduledStart: DateTime.parse('2026-11-15T11:34:46+09:00'),
+      scheduledDurationSeconds: 1800,
+      channelName: 'テスト放送',
+      copyCountRemaining: 10,
+      protectFlag: true,
+      description: '番組Aの概要',
+      res: const [
+        TitleRes(
+          url: 'http://192.0.2.10:58890/web/video/pvr?id=201&quality=dr',
+          protocolInfo: 'http-get:*:application/x-dtcp1:*',
+          cleartextSize: 100000000,
+          quality: 'dr',
         ),
-        RecordedTitle(
-          id: '202',
-          title: '録画タイトルB',
-          scheduledStart: DateTime.parse('2026-11-15T12:00:00+09:00'),
-          scheduledDurationSeconds: 3600,
-          channelName: 'テスト放送',
-          copyCountRemaining: 3,
-          newFlag: true,
-        ),
-      ];
+      ],
+    ),
+    RecordedTitle(
+      id: '202',
+      title: '録画タイトルB',
+      scheduledStart: DateTime.parse('2026-11-15T12:00:00+09:00'),
+      scheduledDurationSeconds: 3600,
+      channelName: 'テスト放送',
+      copyCountRemaining: 3,
+      newFlag: true,
+    ),
+  ];
 
   @override
-  Future<int> countTitles() async => 2;
+  Future<List<RecordedTitle>> listTitles({bool withMetadata = true}) async =>
+      items;
+
+  @override
+  Future<int> countTitles() async => items.length;
 
   @override
   Future<int> maxTitles() async => 3000;
+}
+
+/// Records the res it was asked to play, then fails with a
+/// validation error so the detail view shows the credential
+/// guidance dialog instead of navigating to the player screen
+/// (plan 33).
+class RecordingPlaybackEngine implements PlaybackEngine {
+  RecordedTitle? lastTitle;
+  TitleRes? lastRes;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<PlaybackSession> startPlayback(
+    RecordedTitle title,
+    TitleRes res,
+  ) async {
+    lastTitle = title;
+    lastRes = res;
+    throw NasneError.validation('test:playback', 'テスト用の検証エラー');
+  }
 }
 
 class FakeSettings implements SettingsService {
@@ -277,21 +306,27 @@ class FakeRegistration implements RegistrationService {
 // ---------------------------------------------------------------------------
 
 class Fixture {
-  Fixture({List<RegisteredNasne>? registrations, FakeSchedules? schedules})
-      : schedules = schedules ?? FakeSchedules(),
+  Fixture({
+    List<RegisteredNasne>? registrations,
+    FakeSchedules? schedules,
+    this.titles,
+    this.playback,
+  })  : schedules = schedules ?? FakeSchedules(),
         store = InMemoryRegistrationStore(registrations ?? [testReg]);
 
   final FakeSchedules schedules;
   final InMemoryRegistrationStore store;
+  final List<RecordedTitle>? titles;
+  final PlaybackEngine? playback;
 
   Widget app() {
     final bundle = DeviceServices(
       deviceInfo: FakeDeviceInfo(),
       settings: FakeSettings(),
       schedules: schedules,
-      titles: FakeTitles(),
+      titles: FakeTitles(items: titles),
       metadata: FakeMetadata(),
-      playback: const UnsupportedPlaybackEngine(),
+      playback: playback ?? const UnsupportedPlaybackEngine(),
     );
     return ProviderScope(
       overrides: [
@@ -488,6 +523,91 @@ void main() {
     await tester.tap(find.text('再生'));
     await tester.pumpAndSettle();
     expect(find.text('再生は未実装です'), findsOneWidget);
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('title detail with a mobile res offers the quality choice; '
+      'the original is the default (plan 33)', (tester) async {
+    usePhoneSize(tester);
+    final engine = RecordingPlaybackEngine();
+    final fixture = Fixture(
+      titles: [
+        RecordedTitle(
+          id: '301',
+          title: 'モバイル付きタイトル',
+          scheduledStart: DateTime.parse('2026-11-15T13:00:00+09:00'),
+          scheduledDurationSeconds: 1800,
+          channelName: 'テスト放送',
+          copyCountRemaining: 10,
+          res: const [
+            TitleRes(
+              url: 'http://192.0.2.10:58890/web/video/pvr?id=301&quality=dr',
+              protocolInfo: 'http-get:*:application/x-dtcp1:*',
+              cleartextSize: 200000000,
+              quality: 'dr',
+            ),
+            TitleRes(
+              url:
+                  'http://192.0.2.10:58890/web/video/pvr?id=301&quality=mobile',
+              protocolInfo: 'http-get:*:application/x-dtcp1:*',
+              cleartextSize: 20000000,
+              quality: 'mobile',
+            ),
+          ],
+        ),
+      ],
+      playback: engine,
+    );
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('モバイル付きタイトル'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('再生画質'), findsOneWidget);
+    expect(find.text('元画質 (DR)'), findsOneWidget);
+    expect(find.text('モバイル'), findsOneWidget);
+
+    // No selection change: the engine receives the original res.
+    await tester.tap(find.text('再生'));
+    await tester.pumpAndSettle();
+    expect(engine.lastRes?.quality, 'dr');
+    expect(find.text('再生について'), findsOneWidget);
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+
+    // Selecting mobile switches the res the engine receives.
+    await tester.tap(find.text('モバイル'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('再生'));
+    await tester.pumpAndSettle();
+    expect(engine.lastRes?.quality, 'mobile');
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('title detail without a mobile res shows no quality choice '
+      '(plan 33)', (tester) async {
+    usePhoneSize(tester);
+    final engine = RecordingPlaybackEngine();
+    final fixture = Fixture(playback: engine);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルA'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('再生画質'), findsNothing);
+    expect(find.text('モバイル'), findsNothing);
+
+    await tester.tap(find.text('再生'));
+    await tester.pumpAndSettle();
+    expect(engine.lastRes?.quality, 'dr');
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
   });
