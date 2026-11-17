@@ -123,7 +123,7 @@ md5sum default-*.jar
 `libmpv-xcframeworks_v0.6.0_ios-universal-video-default.tar.gz`)。
 FFmpeg は Android と同じ 6.0。
 
-差分は `arib-darwin.patch` (7ファイル):
+差分は `arib-darwin.patch` (9ファイル):
 
 - `nix/packages/mk-pkg-aribb24/` (新規): aribb24 の autotools
   クロスビルド。Android と同じ固定コミット・同じ2つの sed
@@ -147,6 +147,24 @@ FFmpeg は Android と同じ 6.0。
 - `nix/packages/mk-pkg-ffmpeg/meson.build`:
   `--enable-libaribb24` (video_common_options) と
   `--enable-decoder=libaribb24` (video_default_options) を追加。
+- `nix/packages/mk-pkg-ffmpeg/default.nix` (依存の是正、
+  plan §58): 現行 Xcode SDK の CoreMedia.tbd は、CoreMedia へ
+  移転した Swift オーバーレイシンボルを `$ld$previous$` として
+  宣言しており、移転前の版数を deployment target に含む
+  リンクでは、ld が CoreMedia の代わりに libswiftCoreMedia
+  (@rpath/libswiftCoreMedia.dylib) への依存を記録する。
+  ffmpeg はそのシンボルを一切参照しない (nm -u で未定義の
+  Swift シンボルが0件であることを確認済み) ため、この依存は
+  偽物であり、installPhase で当該 load command を本来の
+  `/System/Library/Frameworks/CoreMedia.framework/CoreMedia`
+  へ書き戻す。
+- `nix/packages/mk-out-frameworks/{ios,macos}/build-*.sh`:
+  フレームワーク化の依存書き換えを、`${DEPS}` から作る
+  フレームワークへの依存だけに限定するガード。範囲外の
+  @rpath 依存まで書き換えると、実在しないフレームワーク名を
+  作ってしまう (arib1 では上記の libswiftCoreMedia が
+  SwiftCoreMedia.framework という実在しない依存に化け、
+  アプリが起動直後に dyld エラーで落ちた。plan §58)。
 - `packages.lock.nix`: aribb24 エントリ (版数 1.0.4、固定
   コミットのアーカイブ URL と sha256 は実測値)。
 - 現在の Xcode/SDK 向け互換修正2件 (上流スタック側の問題で、
@@ -190,9 +208,10 @@ make XCODE_PATH=/Applications/Xcode.app TARGET=mk-out-archive-xcframeworks-ios-u
 ### 配布と取り込み
 
 - tar.gz は本リポの GitHub リリースに置く (現行: タグ
-  `libmpv-ios-v0.6.0-arib1`、ファイル名は上流と同じ
+  `libmpv-ios-v0.6.0-arib2`、ファイル名は上流と同じ
   `libmpv-xcframeworks_v0.6.0_ios-universal-video-default.tar.gz`、
-  SHA-256 は `12cc6eda4596aa14921cddedcf6e062cbd792e6f571309c755e6dd4387e5069e`)。
+  SHA-256 は `99a29c7b802f21f02dba6dc987869b5324f61c0521208e0d7f71af95dc6c2d6c`)。
+  arib1 は上記の依存事故で起動しないため使用禁止 (plan §58)。
 - アプリ側は `third_party/media_kit_libs_ios_video`
   (pub の 1.1.4 を vendored したもの) の `ios/Makefile` が、
   そのリリースの URL と SHA-256 を指す。`pubspec.yaml` の
@@ -212,6 +231,21 @@ make XCODE_PATH=/Applications/Xcode.app TARGET=mk-out-archive-xcframeworks-ios-u
   パッケージでホスト用 FFmpeg 6.0 CLI を組み、字幕付き TS
   からキューが抽出できること (§57 では x3 録画のキャプチャ
   で実施。Android §55 の 46 キューと照合)。
+- 出荷前監査 (必須、plan §58): `audit_load_commands.py`
+  (本ディレクトリ) で、アーカイブの展開先と、IPA 内の
+  .app を走査し、全 Mach-O の load command が実機で
+  解決可能であることを機械的に確認する。判定基準は
+  スクリプト冒頭の docstring のとおり (@rpath の
+  フレームワーク依存は同梱されていること、裸の @rpath
+  dylib 依存は不可、絶対パスは /System/Library/ と
+  /usr/lib/ のみ可)。arib1 の事故はこの監査で検出できる
+  (公式アーカイブと arib2 は通過、arib1 は12件の
+  未解決依存で失敗することを確認済み)。
+
+  ```sh
+  python3 tool/libmpv/audit_load_commands.py <展開したアーカイブのルート>
+  python3 tool/libmpv/audit_load_commands.py <IPA を展開した Payload/*.app>
+  ```
 
 ### 上流 media_kit が版数を上げたら
 

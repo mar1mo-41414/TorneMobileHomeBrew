@@ -20,7 +20,7 @@ GitHub リリース (`libmpv-android-v1.1.7-arib1`) から取得する
 media-kit 公式の v0.6.0 ではなく、ARIB 字幕デコーダ
 (libaribb24、DRCS の libpng 連携を含む) を有効化した自前
 ビルドの tar.gz を、本リポの GitHub リリース
-(`libmpv-ios-v0.6.0-arib1`) から取得する (URL と SHA-256 を
+(`libmpv-ios-v0.6.0-arib2`) から取得する (URL と SHA-256 を
 差し替え済み)。その他のファイルは pub 版と同一。
 
 ビルド手順と保守方法は `tool/libmpv/README.md` と plan §57。

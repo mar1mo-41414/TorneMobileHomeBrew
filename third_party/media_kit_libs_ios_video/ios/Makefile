@@ -1,13 +1,13 @@
 all: Frameworks/*.xcframework Frameworks/.symlinks
 
 MPV_XCFRAMEWORKS_VERSION=v0.6.0
-MPV_XCFRAMEWORKS_SHA256SUM=12cc6eda4596aa14921cddedcf6e062cbd792e6f571309c755e6dd4387e5069e
+MPV_XCFRAMEWORKS_SHA256SUM=99a29c7b802f21f02dba6dc987869b5324f61c0521208e0d7f71af95dc6c2d6c
 
 .cache/xcframeworks/libmpv-xcframeworks-${MPV_XCFRAMEWORKS_VERSION}-ios-universal.tar.gz:
 	mkdir -p .cache/xcframeworks
 	rm -f .cache/xcframeworks/*.tmp .cache/xcframeworks/*-ios-universal.tar.gz
 	curl -L \
-		https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/download/libmpv-ios-${MPV_XCFRAMEWORKS_VERSION}-arib1/libmpv-xcframeworks_${MPV_XCFRAMEWORKS_VERSION}_ios-universal-video-default.tar.gz \
+		https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/download/libmpv-ios-${MPV_XCFRAMEWORKS_VERSION}-arib2/libmpv-xcframeworks_${MPV_XCFRAMEWORKS_VERSION}_ios-universal-video-default.tar.gz \
 		-o .cache/xcframeworks/libmpv.tar.gz.tmp
 	shasum -a 256 -c <<< '${MPV_XCFRAMEWORKS_SHA256SUM}  .cache/xcframeworks/libmpv.tar.gz.tmp'
 	mv .cache/xcframeworks/libmpv.tar.gz.tmp .cache/xcframeworks/libmpv-xcframeworks-${MPV_XCFRAMEWORKS_VERSION}-ios-universal.tar.gz

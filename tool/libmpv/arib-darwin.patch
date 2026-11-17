@@ -1,3 +1,79 @@
+diff --git a/nix/packages/mk-out-frameworks/ios/build-ios.sh b/nix/packages/mk-out-frameworks/ios/build-ios.sh
+index 308b0a3..e7e0cc3 100644
+--- a/nix/packages/mk-out-frameworks/ios/build-ios.sh
++++ b/nix/packages/mk-out-frameworks/ios/build-ios.sh
+@@ -5,6 +5,20 @@ set -u # treat unset variables as an error
+ 
+ # see: MobileVLCKit cocoapods
+ 
++# Names of the frameworks created from ${DEPS} by this script. Only
++# dependencies on one of these are rewritten to framework form below.
++# Any other @rpath dylib (e.g. a system or Swift-overlay library the
++# linker recorded) is left untouched: rewriting it would invent a
++# framework that does not exist. (In a custom arib1 archive this
++# turned a spurious @rpath/libswiftCoreMedia.dylib dependency,
++# recorded by ld for -framework CoreMedia against a current Xcode
++# SDK, into a load command for a nonexistent
++# SwiftCoreMedia.framework, and the app crashed at launch in dyld.)
++FRAMEWORK_NAMES=$(find ${DEPS} -name "*.dylib" -type f | while read D; do
++    N=$(basename $D .dylib | sed 's/\.[0-9]*$//' | sed 's/^lib//')
++    echo "$(tr '[:lower:]' '[:upper:]' <<<${N:0:1})${N:1}"
++done | sort -u)
++
+ find ${DEPS} -name "*.dylib" -type f | while read DYLIB; do
+     echo "${DYLIB}"
+ 
+@@ -67,6 +81,12 @@ find ${DEPS} -name "*.dylib" -type f | while read DYLIB; do
+             DEP_NAME=$(basename $DEP .dylib | sed 's/\.[0-9]*$//' | sed 's/^lib//')
+             DEP_NAME="$(tr '[:lower:]' '[:upper:]' <<<${DEP_NAME:0:1})${DEP_NAME:1}"
+ 
++            # Skip dependencies that are not one of the frameworks
++            # created from ${DEPS} (see FRAMEWORK_NAMES above).
++            if ! grep -qx "${DEP_NAME}" <<<"${FRAMEWORK_NAMES}"; then
++                continue
++            fi
++
+             NEW_DEP="@rpath/${DEP_NAME}.framework/${DEP_NAME}"
+ 
+             install_name_tool \
+diff --git a/nix/packages/mk-out-frameworks/macos/build-macos.sh b/nix/packages/mk-out-frameworks/macos/build-macos.sh
+index 16dc137..635b358 100644
+--- a/nix/packages/mk-out-frameworks/macos/build-macos.sh
++++ b/nix/packages/mk-out-frameworks/macos/build-macos.sh
+@@ -6,6 +6,20 @@ set -u # treat unset variables as an error
+ # see: VLCKit cocoapods
+ # see: https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPFrameworks/Concepts/FrameworkAnatomy.html
+ 
++# Names of the frameworks created from ${DEPS} by this script. Only
++# dependencies on one of these are rewritten to framework form below.
++# Any other @rpath dylib (e.g. a system or Swift-overlay library the
++# linker recorded) is left untouched: rewriting it would invent a
++# framework that does not exist. (In a custom arib1 archive this
++# turned a spurious @rpath/libswiftCoreMedia.dylib dependency,
++# recorded by ld for -framework CoreMedia against a current Xcode
++# SDK, into a load command for a nonexistent
++# SwiftCoreMedia.framework, and the app crashed at launch in dyld.)
++FRAMEWORK_NAMES=$(find ${DEPS} -name "*.dylib" -type f | while read D; do
++    N=$(basename $D .dylib | sed 's/\.[0-9]*$//' | sed 's/^lib//')
++    echo "$(tr '[:lower:]' '[:upper:]' <<<${N:0:1})${N:1}"
++done | sort -u)
++
+ find ${DEPS} -name "*.dylib" -type f | while read DYLIB; do
+     echo "${DYLIB}"
+ 
+@@ -68,6 +82,12 @@ find ${DEPS} -name "*.dylib" -type f | while read DYLIB; do
+             DEP_NAME=$(basename $DEP .dylib | sed 's/\.[0-9]*$//' | sed 's/^lib//')
+             DEP_NAME="$(tr '[:lower:]' '[:upper:]' <<<${DEP_NAME:0:1})${DEP_NAME:1}"
+ 
++            # Skip dependencies that are not one of the frameworks
++            # created from ${DEPS} (see FRAMEWORK_NAMES above).
++            if ! grep -qx "${DEP_NAME}" <<<"${FRAMEWORK_NAMES}"; then
++                continue
++            fi
++
+             NEW_DEP="@rpath/${DEP_NAME}.framework/Versions/A/${DEP_NAME}"
+ 
+             install_name_tool \
 diff --git a/nix/packages/mk-pkg-aribb24/default.nix b/nix/packages/mk-pkg-aribb24/default.nix
 new file mode 100644
 index 0000000..9d87423
@@ -150,10 +226,14 @@ index 0000000..501961b
 @@ -0,0 +1 @@
 +import ../../utils/targets/pkgs.nix
 diff --git a/nix/packages/mk-pkg-ffmpeg/default.nix b/nix/packages/mk-pkg-ffmpeg/default.nix
-index 060869c..f9b80b9 100644
+index 060869c..eb16111 100644
 --- a/nix/packages/mk-pkg-ffmpeg/default.nix
 +++ b/nix/packages/mk-pkg-ffmpeg/default.nix
-@@ -27,6 +27,8 @@ let
+@@ -24,9 +24,12 @@ let
+   };
+   nativeFile = callPackage ../../utils/native-file/default.nix { };
+   crossFile = callPackage ../../utils/cross-file/default.nix { };
++  xctoolchainInstallNameTool = callPackage ../../utils/xctoolchain/install-name-tool.nix { };
    mbedtls = callPackage ../mk-pkg-mbedtls/default.nix { };
    dav1d = callPackage ../mk-pkg-dav1d/default.nix { };
    libxml2 = callPackage ../mk-pkg-libxml2/default.nix { };
@@ -162,7 +242,15 @@ index 060869c..f9b80b9 100644
    libvorbis = callPackage ../mk-pkg-libvorbis/default.nix { };
    libvpx = callPackage ../mk-pkg-libvpx/default.nix { };
    libx264 = callPackage ../mk-pkg-libx264/default.nix { };
-@@ -75,6 +77,11 @@ pkgs.stdenvNoCC.mkDerivation {
+@@ -66,6 +69,7 @@ pkgs.stdenvNoCC.mkDerivation {
+     pkgs.meson
+     pkgs.ninja
+     pkgs.pkg-config
++    xctoolchainInstallNameTool
+   ];
+   buildInputs =
+     [ mbedtls ]
+@@ -75,6 +79,11 @@ pkgs.stdenvNoCC.mkDerivation {
      ++ pkgs.lib.optionals (variant == variants.video) [
        dav1d
        libxml2
@@ -174,6 +262,30 @@ index 060869c..f9b80b9 100644
      ]
      ++ pkgs.lib.optionals (variant == variants.video && flavor == flavors.encodersgpl) [
        libvpx
+@@ -98,5 +107,23 @@ pkgs.stdenvNoCC.mkDerivation {
+ 
+     # copy configure.log
+     cp configure.log $out/share/ffmpeg/
++
++    # Current Xcode SDKs declare the Swift-overlay symbols that moved
++    # into CoreMedia as "$ld$previous$" entries pointing at
++    # libswiftCoreMedia. When ffmpeg links -framework CoreMedia with a
++    # deployment target below the move, ld records a load command for
++    # that previous library (@rpath/libswiftCoreMedia.dylib) *instead
++    # of* CoreMedia itself. ffmpeg references none of the Swift-overlay
++    # symbols (verified with nm -u: zero Swift-mangled undefined
++    # symbols in the ffmpeg libraries), so the recorded dependency is
++    # spurious; restore the real CoreMedia dependency here, at the
++    # package level, before anything downstream (mpv, the framework
++    # packaging in mk-out-frameworks) consumes these dylibs.
++    for lib in $out/lib/*.dylib; do
++      if [ -f "$lib" ] && [ ! -L "$lib" ] && grep -q "@rpath/libswiftCoreMedia.dylib" "$lib"; then
++        install_name_tool -change "@rpath/libswiftCoreMedia.dylib" \
++          "/System/Library/Frameworks/CoreMedia.framework/CoreMedia" "$lib"
++      fi
++    done
+   '';
+ }
 diff --git a/nix/packages/mk-pkg-ffmpeg/meson.build b/nix/packages/mk-pkg-ffmpeg/meson.build
 index 35457c2..b78049e 100644
 --- a/nix/packages/mk-pkg-ffmpeg/meson.build
