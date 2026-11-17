@@ -35,6 +35,15 @@ void main() {
       expect(bytesToHex(env.privateKey), katSinkPriv);
     });
 
+    test('tolerates a UTF-8 BOM at the start of the file', () {
+      final env = parseCredentialsEnv(
+        '\uFEFFPYDTCPIP_CERTIFICATE=$katSinkCert\n'
+        'PYDTCPIP_PRIVATE_KEY=$katSinkPriv\n',
+      );
+      expect(bytesToHex(env.certificate), katSinkCert);
+      expect(bytesToHex(env.privateKey), katSinkPriv);
+    });
+
     test('tolerates whitespace inside the hex value', () {
       final spaced = katSinkPriv.replaceAllMapped(
         RegExp(r'.{4}'),

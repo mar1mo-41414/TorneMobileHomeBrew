@@ -41,6 +41,9 @@ class CredentialsEnv {
 /// inline comments on unquoted values, and unrelated variables
 /// (ignored). Both variables are required.
 CredentialsEnv parseCredentialsEnv(String text) {
+  // A UTF-8 BOM (some Windows editors add one) must not hide the
+  // first variable name.
+  if (text.startsWith('\uFEFF')) text = text.substring(1);
   String? certificateHex;
   String? privateKeyHex;
   for (final rawLine in text.split('\n')) {
