@@ -3545,3 +3545,119 @@ Mac 版は ad-hoc 署名のため、ビルド毎にアプリの cdhash が変わ
 - Desktop の `torne mobile HB 1.4.0.app` を、この署名済みビルド 28 で差し替えた (差し替え前は §66 の署名済みビルド 27)。旧版の退避は、本人の新ルール (旧版は削除可) に従い行っていない。差し替え後の Desktop コピーでも版数・署名 ID・DR・verify を再確認済み。
 - 起動スモークテスト合格: Desktop のコピーを起動し、10 秒後もプロセス生存 (Desktop パスからの起動) を確認した。終了操作では osascript の quit が -128 を返したが、プロセスの終了は確認できている。
 - 署名の身元が §66 と同一のため、§66.6 の初回起動で「常に許可」を押していれば、ビルド 28 でも資格情報ダイアログは再表示されない想定。
+
+## 68. Windows 版の再生失敗の切り分けと修正: libmpv arib2 (2026-11-18)
+
+§65 の初回ビルドに対する本人の実機確認で、Windows 版はライブ視聴・
+録画再生のどちらも mpv の "Failed to recognize file format." で
+失敗した。制御系 (発見・登録・一覧・番組表) は正常。本節が切り分けと
+修正の記録。版数は 1.4.0 据え置き (実機での再生成立確認まで上げない)。
+
+### 68.1 ログからの事実 (marog から直接取得)
+
+デバッグログ `tmhb-debug-20261118-074120-341.log` (marog の
+`%APPDATA%\com.markun\torne mobile HB\debug_logs\`) を取得して読んだ。
+
+- ライブ・録画の両セッションとも **AKE は完走**している
+  (681/695 ms、証明書検証・双方向の署名検証・RTT 検証・鍵交換
+  ラベル 117 まで正常)。
+- プロキシは復号して配信している (ライブ 20,336,640 B / 19 パケット、
+  録画は全量 494,434,560 B)。
+- mpv は開始 5〜6 秒でエラーを返し、実トラック数は 0。
+  つまり死点は AKE でもプロキシでもなく、mpv の形式認識 (プローブ)
+  段にある。
+
+### 68.2 AKE 鍵素材化け仮説の棄却 (積極的証拠による)
+
+Windows の AKE ソケットは新規実装 (§64) のため、「AKE が成功した
+ように見えて鍵が化け、復号出力がゴミ」という仮説を実測で潰した。
+
+- AKE の RTT 検証と双方向署名検証が通っている時点で、鍵交換の
+  正しさは暗号学的に担保される (化けていれば検証が落ちる)。
+- 決定的な切り分けとして、**アプリを介さない単体プローブ**を行った:
+  marog 上で Python ctypes からアプリ同梱の libmpv-2.dll を直接
+  ロードし、検証済みの正常な MPEG-TTS ファイル (字幕検証用
+  キャプチャの先頭) を開かせた。結果は END_FILE error=-17
+  (MPV_ERROR_UNKNOWN_FORMAT)。プロキシ・AKE・アプリを全て
+  介さずに同じ失敗が再現したため、原因は DLL 単体にあると確定。
+
+### 68.3 原因: arib1 の FFmpeg に放送系コンポーネントが無い
+
+DLL 内の FFmpeg configuration 文字列と、superbuild の
+`packages/ffmpeg.cmake` を実測した。
+
+- ffmpeg.cmake は `--disable-demuxers --disable-decoders
+  --disable-parsers --disable-bsfs` を全体に掛けた上で、音声中心の
+  短い有効化リストだけを足す構成だった。
+- そのため arib1 の FFmpeg n7.1.5 には **mpegts デマルチプレクサ、
+  mpeg2video/h264 デコーダ、mpegvideo パーサ、BSF 全般が存在しない**。
+  TS のプローブ自体ができないので、平文が正しくても mpv は
+  形式を認識できない。他プラットフォーム (旧公式 DLL (2023) や
+  各自前ビルド) にはこれらが全て入っていたため Windows だけで
+  死んでいた。
+- 混入経路: §64 で libaribcaption を配線した際、有効化リストの
+  前提 (何が入っているか) を確認せず、字幕デコーダの追加だけを
+  見ていた。
+
+### 68.4 修正: ffmpeg.cmake への放送系追加と arib2 再公開
+
+- `packages/ffmpeg.cmake` の有効化リストへ追加: demuxer は
+  mpegts/mpegps/mpegvideo/hevc/av1/hls/dash/ass/webvtt/srt/stl/
+  loas/concat/data/rtsp/live_flv/subviewer/subviewer1/vplayer/
+  mjpeg 系、decoder は av1/libdav1d/h264/hevc/mpeg2/mpeg1video/
+  mpeg4/msmpeg/vp8/vp9/wmv/h263/flv/vp6/theora と字幕系
+  (ass/dvbsub/dvdsub/movtext/srt/ssa/stl/subrip/subviewer/
+  subviewer1/text/vplayer/webvtt)、parser は mpegvideo/
+  mpeg4video/h264/hevc/h263。`--disable-bsfs` は `--enable-bsfs`
+  へ変更し、libdav1d を有効化した。コンポーネント名は FFmpeg
+  n7.1.5 のソースツリーで実在確認したものだけを使った
+  (`mpeg4` demuxer と `latm` demuxer は 7.1 に存在せず除外、
+  `webm_dash_manifest` は 7.0 で削除済みのため除外)。
+- 生成された `config_components.h` で CONFIG_MPEGTS_DEMUXER=1、
+  CONFIG_MPEG2VIDEO_DECODER=1、CONFIG_H264_DECODER=1、BSF 45 個の
+  有効化を確認した。
+- 再ビルド中に mpv 本体のヘッダ追随問題が2件出た (移動標的の
+  angle-headers / mingw-w64 ヘッダが §64 時点から進んでいたためで、
+  FFmpeg 変更とは無関係): ANGLE が D3D9 定数を削除していたこと
+  (`EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE` = 0x3207 を自前定義で補う)、
+  mingw 側が `DXGI_DEBUG_D3D11` を自前定義するようになっていた
+  こと (ガードに `!defined(__d3d11sdklayers_h__)` を追加)。
+  どちらも `packages/mpv-0003-header-drift-compat.patch` として
+  パッチ化し、累積パッチ `tool/libmpv/arib-win32.patch` は16件に
+  再生成した。meson の `rst2pdf` 要件は §64 記録の通り
+  meson-venv を PATH に足して回避。
+- 新 DLL (43,685,902 B) を単体プローブで再検証: 同じ TS ファイルで
+  **FILE_LOADED**、トラックは video=mpeg2video (1440x1080)、
+  audio=aac、sub=arib_caption の3本を認識した。
+- GitHub リリース `libmpv-windows-v1.0.11-arib2` に 7z
+  (12,683,170 B、MD5 `6f89a8ea0a9e5b697b02201fb64bb5d5`) を公開し、
+  無認証の再ダウンロードで MD5 一致を確認した。vendored
+  `media_kit_libs_windows_video` の取得先を arib2 に差し替えた
+  (commit `3cd4604`)。`tool/libmpv/README.md` の Windows 節にも
+  arib2 の節を追加し、arib1 は使用禁止と明記した。
+
+### 68.5 アプリ再ビルドと配置
+
+- marog のクローンでは pull がローカル変更で abort した
+  (§65 の修正3件の未コミット複製と、生成ファイルの行末差分)。
+  作業ツリーが origin/main とバイト単位で一致することを実測で
+  確認してから破棄し、`3cd4604` へ fast-forward した。
+- `flutter build windows --release` で再ビルドし、同梱
+  libmpv-2.dll が arib2 (43,685,902 B) であることを確認した。
+  さらに Release フォルダ自体を対象に単体プローブを再実行し、
+  FILE_LOADED (video mpeg2video / audio aac / sub arib_caption)
+  を確認した。
+- 配置ルールの変更 (本人指示) に従い、Release フォルダ一式を
+  Desktop の `TorneMobileHomeBrew-windows-1.4.0` フォルダとして
+  圧縮せず配置した。Desktop にあったもう1つの旧コピー
+  `TorneMobileHomeBrew` フォルダ (arib1 同梱) も、壊れた版を
+  誤って起動しないよう同じ新ビルドに差し替えた。旧 zip は
+  Desktop に既に存在しなかった。
+- Desktop コピーから起動し、10 秒後のプロセス生存を確認した
+  (起動スモーク合格)。
+
+### 68.6 残件
+
+- 本人の実機確認: Windows 版でライブ・録画が再生開始すること、
+  字幕が描画されること。成立するまで版数は 1.4.0 据え置き。
+- ビルド27 のシーク確認 (§61) は引き続き本人待ち。
