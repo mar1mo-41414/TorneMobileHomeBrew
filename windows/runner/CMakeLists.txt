@@ -21,6 +21,11 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+# The runner sources are UTF-8 (some carry Japanese comments). Without
+# this, MSVC reads them in the system code page (932 on a Japanese
+# Windows), which trips warning C4819 - an error under /WX.
+target_compile_options(${BINARY_NAME} PRIVATE /utf-8)
+
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")
@@ -33,7 +38,10 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
-target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
+# flutter_wrapper_plugin carries the C++ plugin wrapper (PluginRegistrar
+# and the channels), which the AKE socket hub uses; the stock runner
+# only links flutter_wrapper_app.
+target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app flutter_wrapper_plugin)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 # Winsock2 for the native AKE socket (windows/runner/ake_socket.cpp).
 target_link_libraries(${BINARY_NAME} PRIVATE "ws2_32.lib")

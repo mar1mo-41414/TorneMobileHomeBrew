@@ -4,6 +4,8 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+#include <flutter/plugin_registrar_windows.h>
+
 #include "ake_socket.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -33,8 +35,13 @@ bool FlutterWindow::OnCreate() {
   // TTL, so Windows uses a native Winsock socket like the other
   // platforms. Worker threads post their events back to this
   // window's message loop (see ake_socket.h).
-  auto ake_registrar =
-      flutter_controller_->engine()->GetRegistrarForPlugin("AkeSocket");
+  // GetRegistrarForPlugin returns the C handle; the C++ wrapper
+  // (owned by the PluginRegistrarManager for the handle's lifetime)
+  // is what AkeSocketRegister takes.
+  auto* ake_registrar = flutter::PluginRegistrarManager::GetInstance()
+                            ->GetRegistrar<flutter::PluginRegistrarWindows>(
+                                flutter_controller_->engine()
+                                    ->GetRegistrarForPlugin("AkeSocket"));
   AkeSocketRegister(ake_registrar, GetHandle());
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
