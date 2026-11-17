@@ -3079,3 +3079,69 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   に本人が Xperia Ace・NHK総合ライブで字幕描画を確認)
   と iOS の両プラットフォームで実機成立となった。
 - 実機確認が揃ったため、版数上げの判断は本人へ返す。
+
+## 59. v1.4.0 リリース (2026-11-17、ビルド +26)
+
+### 59.1 リリース内容
+
+- 本人の承認を受け、版数を 1.3.0 → **1.4.0** に上げた
+  (ビルド番号 26)。タグ v1.4.0 の先は版数確定コミット
+  `61ede48` (release: version 1.4.0 (build 26))。
+- v1.3.0 (ビルド17) 以降の確定分のまとめ:
+  - ARIB 字幕表示 (§53–§58): 自前 libmpv (libaribb24)
+    で Android・iOS 両プラットフォーム実機成立。iOS は
+    DRCS 外字も有効、Android は DRCS 外字が代替表示。
+  - 主音声 / 副音声の切り替え (§53 / §54)。
+  - デバッグログ共有ボタン (§46)。
+  - ライブ視聴の seek エラー対策 (§43、ビルド18) と、
+    その付随行による開始失敗の修正 (§56)。
+  - ライブ詳細の文字化け2字形 (⁉ U+2049・㊙ U+3299)
+    の修正 (§56)。
+  - テキスト入力欄でキーボードが閉じられない問題の
+    修正 (§54)。
+
+### 59.2 成果物と検証
+
+- テスト 250/250 全合格、flutter analyze クリーン。
+- IPA: arib2 の iOS libmpv を封入。出荷前に
+  `tool/libmpv/audit_load_commands.py` の監査を実施し
+  合格 (24 Mach-O バイナリ / 261 load commands、
+  全て解決可能)。Avcodec の configuration 文字列と
+  字幕デコーダの文字列が、実機確認済みのビルド25と
+  一致することも確認した。
+- APK: リリース署名 (証明書 SHA-256 `e60cfeda…`) と
+  版数 (1.4.0 / ビルド26) を確認。封入 libmpv.so
+  (arm64) の configuration 文字列で
+  `--enable-libaribb24` と `ff_libaribb24_decoder`
+  の存在を確認した。
+- macOS zip: §47 の手順 (config-only + xcodebuild、
+  アドホック署名) でビルド。**darwin 側の自前 libmpv
+  は今回のリリースでは macOS に適用していない**
+  (従来の上流 libmpv のまま)。このため字幕表示は
+  Android / iOS のみの対応とし、リリースノートに
+  明記した。Linux 版はシステム libmpv 依存のため、
+  字幕表示はその構成に依存する (tar.gz は §47.6 /
+  §51 の手順でビルド)。
+- 配置: IPA は marnux
+  `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.4.0.ipa`、
+  APK と desktop 成果物は `~/ダウンロード/`
+  (いずれも最新版のみ、1.3.0 のファイルは除去)。
+- GitHub リリース:
+  https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/tag/v1.4.0
+  リリース後に全アセットを未認証で再ダウンロードし、
+  SHA-256 が一致することを確認した。
+
+| ファイル | サイズ | SHA-256 |
+|---|---|---|
+| TorneMobileHomeBrew-1.4.0.ipa (署名なし) | 16,789,156 バイト | `a337a3d8d5dacb0e524489d08f107b1e1d43389a6be64b343d81507a4ddf1c75` |
+| TorneMobileHomeBrew-1.4.0.apk (配布用署名) | 102,048,949 バイト | `b995e295e88ae63234ade9ec7564fc3e235618483059eb668fcf786bd79dd987` |
+| TorneMobileHomeBrew-macos-1.4.0.zip (Mac 版、アドホック署名) | 38,493,902 バイト | `e84de1bd7cfd44dd903ada95a7704b7a657cc5b76317cb2cdcb5585280bf9ff0` |
+| TorneMobileHomeBrew-linux-1.4.0.tar.gz (Linux 版) | 11,334,504 バイト | `fba754f4c782d594051f9ee38a45335cb1a977252e27b1fe0ec540748af95509` |
+
+### 59.3 README の更新
+
+- 現状を v1.4.0 に更新し、機能に「再生中の字幕表示
+  (ARIB 字幕) と、主音声 / 副音声の切り替え」を追加、
+  既知の制限に Android 版の DRCS 外字の代替表示を
+  追記した (版数コミット `61ede48` に含む)。
+  「字幕未対応」のような陳腐化した記述は無かった。
