@@ -3372,3 +3372,21 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   (TorneMobileHomeBrew-macos-1.4.0.zip) ができるが、
   リリース済み資産と中身が異なるため削除した。
   .app 本体は作業領域の clone 内に残っている。
+
+## 63. desktop-subtitle ブランチの main 合流 (2026-11-17)
+
+- §62 (デスクトップ字幕対応) のブランチ `desktop-subtitle`
+  を main へ合流した。merge commit `401779f`。
+- 競合は docs/plan.md のみ。main 側の §61 とブランチ側の
+  §62 がどちらも §60 の直後に追加されていたため、
+  §60 → §61 → §62 の順に並べ替えて解消した。
+  pubspec.yaml は自動マージで、版数 1.4.0+27 と
+  media_kit_libs_macos_video の vendored override が
+  両立している。
+- 合流後の検証: `flutter test` 271 件全合格、
+  `flutter analyze` クリーン。macOS の vendored override が
+  他プラットフォームのビルド・テストを壊していないことを
+  確認した。
+- §62.3 の残件のうち main 合流は本節で完了。残るは
+  macOS 実機での字幕描画の目視確認 (本人待ち) と、
+  Debian 向け自前 libmpv 同梱の要否判断。
