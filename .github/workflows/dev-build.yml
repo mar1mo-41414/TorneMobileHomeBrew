@@ -4,6 +4,8 @@ name: dev-build
 # main への push と手動実行 (workflow_dispatch) で走り、成果物は Actions の
 # artifact に加えて、ローリングな prerelease (タグ dev) にも載せる。
 # 利用者は Actions 画面を開かずに Releases の「開発版 (dev)」から取得できる。
+# 資産名は TorneMobileHomeBrew-dev.apk / TorneMobileHomeBrew-dev.ipa で固定し、
+# リリースは作り直さず資産の差し替えで更新する (ダウンロード URL が変わらない)。
 
 on:
   push:
@@ -79,7 +81,7 @@ jobs:
         run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk \
-            "dist/TorneMobileHomeBrew-${{ steps.ver.outputs.short }}+${{ steps.ver.outputs.build }}-dev.apk"
+            "dist/TorneMobileHomeBrew-dev.apk"
 
       - name: artifact アップロード
         uses: actions/upload-artifact@v4
@@ -122,7 +124,7 @@ jobs:
           APP_PATH="$(ls -d build/ios/iphoneos/*.app | head -n 1)"
           echo "app: ${APP_PATH}"
           cp -r "${APP_PATH}" Payload/
-          zip -qry "dist/TorneMobileHomeBrew-${{ steps.ver.outputs.short }}+${{ steps.ver.outputs.build }}-dev.ipa" Payload
+          zip -qry "dist/TorneMobileHomeBrew-dev.ipa" Payload
 
       - name: artifact アップロード
         uses: actions/upload-artifact@v4
@@ -159,10 +161,31 @@ jobs:
             echo ""
             echo "このリリース (タグ dev) はビルドのたびに最新の成果物へ差し替わります。"
           } > notes.md
-          gh release delete dev --cleanup-tag --yes || true
-          gh release create dev \
+          # リリースは作り直さない。なければ作り、あれば資産の差し替えで更新する
+          # (作り直すとダウンロード URL が一時的に 404 になるため)。
+          if ! gh release view dev > /dev/null 2>&1; then
+            gh release create dev \
+              --prerelease \
+              --title "開発版 (dev)" \
+              --notes-file notes.md \
+              --target "${GITHUB_SHA}"
+          fi
+          # 今回の成果物と名前が一致しない資産 (旧名のもの) が残っていれば消す。
+          gh release view dev --json assets --jq '.assets[].name' \
+            | while IFS= read -r name; do
+                keep=0
+                for f in dist/*; do
+                  if [ "$(basename "${f}")" = "${name}" ]; then
+                    keep=1
+                  fi
+                done
+                if [ "${keep}" -eq 0 ]; then
+                  echo "今回の成果物に含まれない資産を削除します: ${name}"
+                  gh release delete-asset dev "${name}" --yes
+                fi
+              done
+          gh release upload dev dist/* --clobber
+          gh release edit dev \
             --prerelease \
             --title "開発版 (dev)" \
-            --notes-file notes.md \
-            --target "${GITHUB_SHA}" \
-            dist/*
+            --notes-file notes.md

@@ -50,6 +50,7 @@
 
 - main への push と手動実行で、GitHub Actions の `dev-build` ワークフロー (`.github/workflows/dev-build.yml`) が Android APK と署名なし IPA をビルドする。
 - 成果物は Actions の artifact のほか、ローリングな prerelease (タグ `dev`、Releases の「開発版 (dev)」) にも載る。利用者は Actions 画面を開かずにそこから取得できる。テスト用ビルドの案内はそちらへ誘導する。
+- prerelease の資産名は `TorneMobileHomeBrew-dev.apk` / `TorneMobileHomeBrew-dev.ipa` で固定 (plan.md §50)。リリースは作り直さず資産の差し替えで更新するため、ダウンロード URL は常に同じになる。案内にはこの固定 URL を使う。
 - Android の署名は、以下の Secrets が登録されていれば配布用キーストア、なければデバッグ鍵にフォールバックする (ビルド自体は常に通る)。
   - `TMHB_KEYSTORE_BASE64`: 配布用キーストア (release.keystore) を base64 化したもの
   - `TMHB_STORE_PASSWORD` / `TMHB_KEY_ALIAS` / `TMHB_KEY_PASSWORD`: key.properties の同名項目
