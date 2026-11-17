@@ -2946,3 +2946,125 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - 残件: iOS 実機での字幕描画の確認は本人待ち (字幕トグル
   ON で ARIB 字幕が描画されること)。ホスト実証と封入確認
   までは本節で完了している。
+
+## 58. ビルド24の起動時クラッシュ (SwiftCoreMedia) の原因特定と修正 (2026-11-17、ビルド +25)
+
+### 58.1 症状
+
+- ビルド24 (§57 の arib1 統合) が LiveContainer で起動直後に
+  落ち、LC 本体も巻き込んで終了した。本人の dyld ログ:
+  `dlopen(.../Runner): Library not loaded:
+  @rpath/SwiftCoreMedia.framework/SwiftCoreMedia /
+  Referenced from: .../Frameworks/Swscale.framework/Swscale /
+  Reason: tried: ... (no such file, not in dyld cache)`。
+- ビルド23 以前 (公式 libmpv) は正常起動しており、arib1 の
+  統合が原因であることは切り分け済みだった。dyld は最初の
+  失敗で止まるため、Swscale 以外にも同種の依存が潜む前提で
+  全フレームワークを監査した。
+
+### 58.2 監査結果 (公式との依存比較)
+
+- 公式 v0.6.0 と arib1 の全36バイナリ (18 xcframework ×
+  device / simulator スライス) の `otool -L` を比較した。
+- 差分は2種のみ:
+  1. **異常**: FFmpeg 系6フレームワーク (Avcodec /
+     Avfilter / Avformat / Avutil / Swresample / Swscale)
+     × 2スライス = 12件の
+     `@rpath/SwiftCoreMedia.framework/SwiftCoreMedia` 依存。
+     device スライスでは本来の
+     `/System/Library/Frameworks/CoreMedia.framework/CoreMedia`
+     がこの依存に置き換わっており、simulator スライスでは
+     公式に無い依存が追加されていた。
+  2. 想定内: Avcodec / Avformat の
+     `@rpath/Png16.framework/Png16` (aribb24 の libpng 連携、
+     §57。Png16.framework は同梱されており解決可能)。
+- 残り30バイナリの依存集合は公式と完全一致。
+
+### 58.3 発生源 (2段)
+
+- **リンク段**: nix store の生 dylib では、ios-arm64 と
+  iossimulator-amd64 の ffmpeg ライブラリが
+  `@rpath/libswiftCoreMedia.dylib` (current version
+  3350.77.1) にリンクしていた (iossimulator-arm64 と
+  macos-arm64 は正しく CoreMedia)。現行 Xcode (27.1) SDK
+  の CoreMedia.tbd は、iOS 27 で CoreMedia 本体へ移転した
+  Swift オーバーレイシンボルを
+  `$ld$previous$/usr/lib/swift/libswiftCoreMedia.dylib$$2$12.2$27.0$…`
+  として宣言している。移転前の版数を含む deployment
+  target で `-framework CoreMedia` をリンクすると、ld は
+  CoreMedia の代わりに移転先ライブラリへの load command
+  を記録する (記録された版数 3350.77.1 は CoreMedia.tbd
+  の current version と一致)。なお Runner 自身も
+  `/usr/lib/swift/libswiftCoreMedia.dylib` への正規の依存を
+  持ち、これは実機に存在するシステムライブラリである。
+  問題は依存の存在ではなく、フレームワーク形式の名前が
+  作られたことにある。
+- **シンボル需要の確認**: ios-arm64 の ffmpeg 全 dylib の
+  未定義シンボル (nm -u) に Swift マングル名は0件。この
+  依存はシンボル需要としては偽物で、CoreMedia へ戻して
+  実害はない。
+- **パッケージング段**: 上流フォークの
+  `mk-out-frameworks/ios/build-ios.sh` は、依存の
+  `@rpath/*.dylib` を一律にフレームワーク形式へ書き換える
+  (自前ライブラリ libavcodec → Avcodec.framework 前提の
+  変換)。ここで libswiftCoreMedia.dylib が、実在しない
+  `SwiftCoreMedia.framework` への依存に化けた。公式
+  v0.6.0 は旧 SDK でビルドされ CoreMedia 依存が通常形
+  だったため、この段を踏まなかった。
+
+### 58.4 修正と arib2
+
+- `nix/packages/mk-pkg-ffmpeg/default.nix`: installPhase
+  で、`@rpath/libswiftCoreMedia.dylib` を含む dylib に
+  対し、xctoolchain の install_name_tool で当該 load
+  command を本来の
+  `/System/Library/Frameworks/CoreMedia.framework/CoreMedia`
+  へ書き戻す。
+- `nix/packages/mk-out-frameworks/{ios,macos}/build-*.sh`:
+  依存書き換えを、実際にパッケージするフレームワークへの
+  依存だけに限定するガードを追加 (macOS 側は今回実害が
+  無かったが、同型の事故防止として同じ修正)。
+- `arib-darwin.patch` は9ファイルに再生成した。
+- 再ビルド (arib2): tar.gz は 19,439,016 バイト、
+  SHA-256
+  `99a29c7b802f21f02dba6dc987869b5324f61c0521208e0d7f71af95dc6c2d6c`。
+  SwiftCoreMedia / libswift への参照は0件。公式との依存
+  差分は Png16 (Avcodec / Avformat) のみで、36本中32本が
+  公式と依存集合が完全一致し、残り4本もその差分のみ。
+- GitHub リリース `libmpv-ios-v0.6.0-arib2` に公開し、
+  未認証での再ダウンロードで SHA-256 の一致を確認した。
+  **arib1 は使用禁止**。
+
+### 58.5 出荷前監査の手順化
+
+- `tool/libmpv/audit_load_commands.py` を追加した。
+  アーカイブの展開先や .app を走査し、全 Mach-O の
+  load command が実機で解決可能かを機械的に判定する
+  (@rpath のフレームワーク依存は同梱されていること、
+  裸の @rpath dylib 依存は不可、絶対パスは
+  /System/Library/ と /usr/lib/ のみ可、weak 依存は警告)。
+  手順は tool/libmpv/README.md にも記載した。
+- 監査自体の検証: 公式アーカイブ = 通過 (36本 / 270件)、
+  arib1 = SwiftCoreMedia の12件で失敗 (今回の事故を
+  出荷前に検出できることを確認)、arib2 = 通過
+  (36本 / 276件)。
+- ビルド25の IPA の監査: 24本 / 261件、全て解決可能。
+  Info.plist の版数 1.3.0 / ビルド 25 も確認した。
+
+### 58.6 統合と成果物
+
+- commit `b75ca9f` (fix): vendored Makefile の取得先を
+  arib2 へ差し替え、ビルド番号を 25 へ。arib-darwin.patch
+  再生成、tool/libmpv/README.md 更新、監査スクリプト追加
+  を含む。テスト 250 件全合格、`flutter analyze`
+  クリーン。GitHub Actions の dev ビルドも成功した
+  (run 44089468440)。
+- IPA (ビルド25): 16,789,180 バイト、SHA-256
+  `b907ada1e945b2d6e6017c5a6ed338eeeee0183bd53c681a6247304cb4c71331`。
+  Runner.app 内の Avcodec の configuration 文字列で
+  aribb24 の封入を確認済み。配置先は marnux
+  `~/tmp/Decrypted-ipa/TorneMobileHomeBrew-1.3.0.ipa`
+  (ビルド24と差し替え)。
+- 残件: 実機での起動確認と iOS 字幕描画の確認は本人待ち
+  (§57 の残件を引き継ぐ)。版数は実機確認まで 1.3.0 の
+  まま据え置く。
