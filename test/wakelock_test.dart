@@ -1,7 +1,9 @@
-/// Playback wakelock tests (plan 32, reworked in plan 35): the
-/// OS lock is held while ANY playback session is playing, the
-/// guard's read-back is logged, an external override detected by
-/// the periodic verify is logged and re-applied, and a failing
+/// Playback wakelock tests (plan 32, reworked in plan 35, verify
+/// logging completed in plan 36): the OS lock is held while ANY
+/// playback session is playing, the guard's read-back is logged,
+/// every periodic verify logs its read-back (plan 36 — silence
+/// used to be ambiguous), an external override detected by the
+/// periodic verify is logged and re-applied, and a failing
 /// platform guard is logged instead of breaking playback.
 ///
 /// The overlap cases are the regression test for the build-13
@@ -191,15 +193,35 @@ void main() {
       expect(records.last, 'playback: wakelock: re-apply os readback=true');
     });
 
-    test('verifyNow: a held lock that reads back fine stays quiet',
-        () async {
+    test('verifyNow: a held lock that reads back fine logs the '
+        'check (plan 36)', () async {
       final session = wakelock.openSession();
       session.setPlaying(true);
       await wakelock.settled;
       records.clear();
       await wakelock.verifyNow();
       expect(guard.calls, ['apply(true)', 'read()']);
-      expect(records, isEmpty);
+      expect(records, ['playback: wakelock: verify os readback=true']);
+    });
+
+    test('verifyNow: every periodic check is logged, so a field '
+        'log proves the timer ran (plan 36)', () async {
+      final session = wakelock.openSession();
+      session.setPlaying(true);
+      await wakelock.settled;
+      records.clear();
+      await wakelock.verifyNow();
+      await wakelock.verifyNow();
+      await wakelock.verifyNow();
+      expect(
+        guard.calls,
+        ['apply(true)', 'read()', 'read()', 'read()'],
+      );
+      expect(records, [
+        'playback: wakelock: verify os readback=true',
+        'playback: wakelock: verify os readback=true',
+        'playback: wakelock: verify os readback=true',
+      ]);
     });
 
     test('verifyNow: nothing to verify while the lock is not held',

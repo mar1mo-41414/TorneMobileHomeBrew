@@ -33,6 +33,17 @@
 ///   the idle timer, that is logged and the lock is re-applied,
 ///   so the next field log can pin down where the request goes.
 ///
+/// Plan 36: every periodic verify now logs its read-back, not
+/// just the anomalies. The build-14 field log (2026-11-17
+/// 13:45) held the lock for ~104 s — five verify ticks — with
+/// the enable read-back `true`, yet the device slept and the
+/// log contains no verify record at all. Silence was ambiguous:
+/// "the timer ran and every read came back true" and "the
+/// timer never ran" looked exactly alike. Logging each tick
+/// removes that ambiguity, and the app lifecycle records
+/// (app/lifecycle_log.dart) bracket the session from the other
+/// side.
+///
 /// Behaviour otherwise follows plan 32: pause, stop,
 /// end-of-stream and leaving the screen release a session's
 /// hold; buffering keeps it (the player still reports playing
@@ -149,7 +160,9 @@ class PlaybackWakelock {
   }
 
   /// Re-reads the OS state while the lock is held (called
-  /// periodically, and directly from tests). If the OS reports
+  /// periodically, and directly from tests). Every check logs
+  /// its read-back (plan 36), so a field log proves the timer
+  /// ran and what the OS reported each time. If the OS reports
   /// the lock gone — something outside the app re-enabled the
   /// idle timer — that is logged and the lock is re-applied, so
   /// the field log shows both the override and the recovery.
@@ -162,7 +175,13 @@ class PlaybackWakelock {
     if (!_held) return;
     try {
       final readback = await _guard.read();
-      if (readback) return;
+      if (readback) {
+        _diag(
+          DiagCategory.playback,
+          'wakelock: verify os readback=true',
+        );
+        return;
+      }
       _diag(
         DiagCategory.playback,
         'wakelock: os readback=false while the lock should be '

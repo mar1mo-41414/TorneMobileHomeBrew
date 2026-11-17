@@ -15,15 +15,23 @@ import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'app/bootstrap.dart';
+import 'app/lifecycle_log.dart';
+import 'app/providers.dart';
 import 'ui/app_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   final documentsDirectory = await getApplicationDocumentsDirectory();
+  final container = fileStoreContainer(documentsDirectory);
+  // App lifecycle transitions go to the debug log (plan 36), so a
+  // field log shows when the process was suspended and resumed
+  // around a playback session (the wakelock sleep investigation).
+  // The binding holds the observer for the app's lifetime.
+  LifecycleLogger(container.read(diagLogProvider)).attach();
   runApp(
     UncontrolledProviderScope(
-      container: fileStoreContainer(documentsDirectory),
+      container: container,
       child: const TmhbApp(),
     ),
   );
