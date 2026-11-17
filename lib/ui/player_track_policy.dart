@@ -14,18 +14,55 @@
 /// owner's environment, and this policy covers only the
 /// separate-track form that was measured.
 ///
-/// The bundled mpv builds contain the caption support: the
-/// Android libmpv.so and the iOS Mpv.framework inside the
-/// shipped 1.3.0 binaries both carry the arib_caption decoder
-/// and the S_ARIBSUB renderer.
+/// CORRECTION (plan 54): the bundled mpv builds do NOT carry
+/// a working ARIB caption decoder. The strings plan 53 relied
+/// on — the arib_caption codec name, S_ARIBSUB, the profile
+/// message — are mpv-side strings that also exist in desktop
+/// libmpv, whose actual decoding is done by ffmpeg's
+/// libaribb24; they say nothing about a decoder. Both bundled
+/// ffmpeg builds (Android libmpv-android-video-build, iOS
+/// libmpv-darwin-build) are enable-list builds, and their
+/// embedded configuration strings, read from the shipped
+/// 1.3.0 binaries, enable no arib decoder and neither
+/// libaribcaption nor libaribb24 — the demuxed caption track
+/// can be selected but never decoded or rendered with these
+/// builds. Desktop mpv renders the same streams' captions
+/// (measured), so the selection mechanism is sound; rendering
+/// waits on a decoder-equipped libmpv build, a build-pipeline
+/// matter rather than an app setting. The field report of
+/// captions seen on Android is re-interpreted as text that
+/// was part of the video image itself (inference).
 ///
 /// mpv may auto-select a subtitle track matching the device
-/// language — captions were seen rendered without any user
-/// action on a Japanese Android phone in the field — so
-/// "subtitles default to off" cannot be left to mpv's
-/// defaults. The player screen forces the no-track selection
-/// until the user turns captions on (see player_screen).
+/// language, so "subtitles default to off" cannot be left to
+/// mpv's defaults. The player screen forces the no-track
+/// selection until the user turns captions on (see
+/// player_screen).
 library;
+
+/// media_kit's track lists lead with two synthetic entries
+/// that are selection states, not demuxer tracks: 'auto'
+/// (let mpv choose) and 'no' (no track). Plan 53 counted
+/// them as tracks: on a single-audio stream the audio menu
+/// offered 主音声 (auto) / 副音声 (no) / 音声3 (the one real
+/// track), and choosing "副音声" selected aid=no — silence
+/// by construction (plan 54, from the owner's device log).
+/// Every count, menu and selection therefore works on real
+/// tracks only.
+const String autoTrackId = 'auto';
+
+/// The synthetic "no track" selection id in media_kit lists.
+const String noTrackId = 'no';
+
+/// Whether [id] belongs to a real demuxer track rather than
+/// one of media_kit's synthetic selection entries.
+bool isRealTrackId(String id) => id != autoTrackId && id != noTrackId;
+
+/// The real-track ids within [ids], order preserved.
+List<String> realTrackIds(List<String> ids) => [
+  for (final id in ids)
+    if (isRealTrackId(id)) id,
+];
 
 /// Whether the subtitle toggle should be offered: the stream
 /// carries at least one subtitle track.

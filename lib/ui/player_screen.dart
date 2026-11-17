@@ -55,6 +55,23 @@
 /// audio switcher （主音声 / 副音声） is offered. Both selections
 /// live only in this screen's state — like the quality choice,
 /// nothing is persisted.
+///
+/// Plan 54 corrections, driven by the owner's build-20 device
+/// log and desktop-mpv measurements on the same streams:
+/// (1) media_kit's synthetic 'auto'/'no' list entries are no
+/// longer counted as tracks — plan 53's menu sent "副音声" on
+/// a single-audio stream to aid=no (silence). Real tracks
+/// only; see player_track_policy.
+/// (2) mpv's demuxer cache stalls audio track switching on
+/// unseekable streams indefinitely (measured: still no audio
+/// decode 30 s after a switch; the same switch from a file
+/// settles in ~0.15 s, and with cache=no in ~2 s), so the
+/// player disables mpv's cache before open. Jitter buffering
+/// is the proxy prefetch queue's job, not mpv's cache.
+/// (3) The caption toggle's selection is correct, but the
+/// bundled ffmpeg builds carry no ARIB caption decoder
+/// (plan 54; see player_track_policy), so captions cannot
+/// render until the libmpv builds gain one.
 library;
 
 import 'dart:async';
@@ -107,6 +124,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Tracks _tracks = const Tracks();
   Track _selectedTrack = const Track();
 
+  /// The demuxer's real audio tracks, without media_kit's
+  /// synthetic 'auto'/'no' entries (plan 54).
+  List<AudioTrack> get _realAudioTracks => [
+    for (final track in _tracks.audio)
+      if (isRealTrackId(track.id)) track,
+  ];
+
+  /// The demuxer's real subtitle tracks (plan 54).
+  List<SubtitleTrack> get _realSubtitleTracks => [
+    for (final track in _tracks.subtitle)
+      if (isRealTrackId(track.id)) track,
+  ];
+
   /// The caption toggle (plan 53). Default off, per the
   /// owner's spec; kept in this state only, never persisted.
   bool _subtitlesOn = false;
@@ -151,7 +181,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         _diag(
           DiagCategory.playback,
           'player: tracks: video=${tracks.video.length} '
-          'audio=${tracks.audio.length} subtitle=${tracks.subtitle.length}',
+          'audio=${tracks.audio.length} subtitle=${tracks.subtitle.length} '
+          '(real audio='
+          '${realTrackIds([for (final t in tracks.audio) t.id]).length} '
+          'real subtitle='
+          '${realTrackIds([for (final t in tracks.subtitle) t.id]).length})',
         );
         for (final track in tracks.audio) {
           _diag(
@@ -225,14 +259,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Future<void> _applySubtitleSelection() async {
     final id = subtitleTrackIdToSelect(
       subtitlesOn: _subtitlesOn,
-      subtitleTrackIds: [for (final track in _tracks.subtitle) track.id],
+      subtitleTrackIds: [for (final track in _realSubtitleTracks) track.id],
     );
     try {
       if (id == null) {
         await _player.setSubtitleTrack(SubtitleTrack.no());
       } else {
         await _player.setSubtitleTrack(
-          _tracks.subtitle.firstWhere((track) => track.id == id),
+          _realSubtitleTracks.firstWhere((track) => track.id == id),
         );
       }
     } catch (e) {
@@ -250,8 +284,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _selectAudioTrack(int index) async {
-    if (index < 0 || index >= _tracks.audio.length) return;
-    final track = _tracks.audio[index];
+    if (index < 0 || index >= _realAudioTracks.length) return;
+    final track = _realAudioTracks[index];
     _diag(
       DiagCategory.playback,
       'player: audio track -> ${audioTrackLabel(index)} (id=${track.id})',
@@ -265,7 +299,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   int get _selectedAudioIndex => selectedAudioIndex(
     selectedId: _selectedTrack.audio.id,
-    trackIds: [for (final track in _tracks.audio) track.id],
+    trackIds: [for (final track in _realAudioTracks) track.id],
   );
 
   Future<void> _open() async {
@@ -289,6 +323,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         // track list settles.
         await platform.setProperty('sid', 'no');
         _diag(DiagCategory.playback, 'player: mpv sid pinned to no (default)');
+        // No mpv cache (plan 54): with the demuxer cache on,
+        // an audio track switch on this unseekable stream
+        // never re-engages decoding (measured 30 s and
+        // counting); with it off the same switch settles in
+        // ~2 s. The proxy's prefetch queue is the jitter
+        // buffer instead.
+        await platform.setProperty('cache', 'no');
+        _diag(DiagCategory.playback, 'player: mpv cache disabled (plan 54)');
       }
       await _player.open(Media(widget.session.mediaUri.toString()));
       _diag(DiagCategory.playback, 'player: open completed');
@@ -327,14 +369,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
-          if (canSwitchAudio(_tracks.audio.length))
+          if (canSwitchAudio(_realAudioTracks.length))
             PopupMenuButton<int>(
               tooltip: '音声',
               icon: const Icon(Icons.audiotrack),
               initialValue: _selectedAudioIndex,
               onSelected: _selectAudioTrack,
               itemBuilder: (context) => [
-                for (var i = 0; i < _tracks.audio.length; i++)
+                for (var i = 0; i < _realAudioTracks.length; i++)
                   CheckedPopupMenuItem<int>(
                     value: i,
                     checked: i == _selectedAudioIndex,
@@ -342,7 +384,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                   ),
               ],
             ),
-          if (canToggleSubtitles(_tracks.subtitle.length))
+          if (canToggleSubtitles(_realSubtitleTracks.length))
             IconButton(
               tooltip: '字幕',
               icon: Icon(

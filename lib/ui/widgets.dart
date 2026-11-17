@@ -198,3 +198,26 @@ Future<bool> confirmDialog(
   );
   return result ?? false;
 }
+
+/// Dismisses the software keyboard when a tap lands outside
+/// the focused text field (plan 54). The app wraps its whole
+/// UI in this (see main.dart): the field screens had no
+/// unfocus path at all — no tap-outside handling, no done
+/// action — so on iOS, whose keyboard offers no dismiss key
+/// for these input types, opening a field (the manual
+/// registration field was the reported case) trapped the
+/// keyboard on screen with no way to close it.
+class KeyboardDismissOnTap extends StatelessWidget {
+  const KeyboardDismissOnTap({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: child,
+    );
+  }
+}

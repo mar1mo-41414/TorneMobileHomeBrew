@@ -66,6 +66,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
   }
 
   Future<void> _import() async {
+    FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _error = null;
@@ -127,6 +128,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('DTCP-IP 資格情報')),
       body: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(16),
         children: [
           const Text(

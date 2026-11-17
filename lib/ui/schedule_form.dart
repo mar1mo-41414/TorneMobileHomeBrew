@@ -263,6 +263,8 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
             suffixText: '分',
           ),
           keyboardType: TextInputType.number,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(context).unfocus(),
         ),
         const SizedBox(height: 16),
         _qualityField(),
@@ -319,6 +321,7 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   }
 
   Future<void> _saveCreate() async {
+    FocusScope.of(context).unfocus();
     final channels = ref.read(channelsProvider(widget.reg)).value;
     Channel? channel;
     if (channels != null) {
@@ -465,11 +468,15 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
         TextField(
           controller: _condition,
           decoration: const InputDecoration(labelText: '条件 ID'),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(context).unfocus(),
         ),
         const SizedBox(height: 16),
         TextField(
           controller: _destination,
           decoration: const InputDecoration(labelText: '録画先'),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(context).unfocus(),
         ),
         const SizedBox(height: 24),
         FilledButton(
@@ -481,6 +488,7 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   }
 
   Future<void> _saveEdit() async {
+    FocusScope.of(context).unfocus();
     final original = widget.original!;
     final condition = _condition.text.trim();
     final destination = _destination.text.trim();

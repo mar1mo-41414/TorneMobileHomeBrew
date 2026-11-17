@@ -33,6 +33,53 @@ void main() {
     });
   });
 
+  group('isRealTrackId / realTrackIds (plan 54)', () {
+    test('auto and no are synthetic, everything else is real', () {
+      expect(isRealTrackId('auto'), isFalse);
+      expect(isRealTrackId('no'), isFalse);
+      expect(isRealTrackId('1'), isTrue);
+      expect(isRealTrackId('2'), isTrue);
+    });
+
+    test('filtering keeps real ids in order', () {
+      expect(realTrackIds(['auto', 'no', '1']), ['1']);
+      expect(realTrackIds(['auto', 'no', '1', '2']), ['1', '2']);
+      expect(realTrackIds(['auto', 'no']), isEmpty);
+      expect(realTrackIds(const []), isEmpty);
+    });
+
+    // The build-20 device regression: media_kit reported
+    // [auto, no, 1] for a single-audio recording, and counting
+    // the synthetic entries offered a "副音声" that selected
+    // aid=no. On real counts the switcher must not appear.
+    test('single real audio track offers no switcher', () {
+      final real = realTrackIds(['auto', 'no', '1']);
+      expect(canSwitchAudio(real.length), isFalse);
+    });
+
+    test('two real audio tracks offer the switcher', () {
+      final real = realTrackIds(['auto', 'no', '1', '2']);
+      expect(canSwitchAudio(real.length), isTrue);
+    });
+
+    test('subtitle selection resolves against real ids only', () {
+      final real = realTrackIds(['auto', 'no', '1']);
+      expect(
+        subtitleTrackIdToSelect(subtitlesOn: true, subtitleTrackIds: real),
+        '1',
+      );
+      expect(
+        subtitleTrackIdToSelect(subtitlesOn: false, subtitleTrackIds: real),
+        isNull,
+      );
+    });
+
+    test('no real subtitle track offers no toggle', () {
+      final real = realTrackIds(['auto', 'no']);
+      expect(canToggleSubtitles(real.length), isFalse);
+    });
+  });
+
   group('audioTrackLabel', () {
     test('first track is the main audio, second is the sub audio', () {
       expect(audioTrackLabel(0), '主音声');

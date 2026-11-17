@@ -48,6 +48,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
       body: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
           _sectionTitle(context, '登録済み nasne'),
           registrations.when(
@@ -151,6 +152,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     hintText: '192.168.11.129',
                   ),
                   keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => FocusScope.of(context).unfocus(),
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
@@ -334,6 +337,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _registerManual() async {
+    FocusScope.of(context).unfocus();
     final host = _manualHost.text.trim();
     if (host.isEmpty) {
       showSnack(context, 'アドレスを入力してください');

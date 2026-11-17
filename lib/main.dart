@@ -15,6 +15,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'app/bootstrap.dart';
+import 'ui/widgets.dart';
 import 'app/lifecycle_log.dart';
 import 'app/providers.dart';
 import 'app/store_directory.dart';
@@ -45,6 +46,10 @@ class TmhbApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'torne mobile HB',
+      // A tap outside a text field dismisses the keyboard
+      // anywhere in the app (plan 54).
+      builder: (context, child) =>
+          KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
       ),
