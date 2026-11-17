@@ -11,6 +11,11 @@
 /// (request status byte 0x0F, role byte, accepted frames copying
 /// the received header) after a step-by-step re-comparison, and
 /// the app now injects a native transport that sets the TTL.
+/// Plan 29 aligned the session lifecycle: the control connection
+/// is one-shot for streaming (the source closes it right after
+/// authentication; the reference closes it from the sink side),
+/// so a post-auth close is a normal end, and a key the ended
+/// session never delivered is obtained by re-authenticating.
 library;
 
 import 'dart:async';
@@ -46,6 +51,25 @@ const int _keyTypeAes128 = 0x08;
 /// fake source sends 0x00. The first implementation sent 0x02
 /// from the sink, diverging from the verified reference.
 const int _roleByteSink = 0x01;
+
+/// The AKE connection ended (the source closed it) while an
+/// operation was pending.
+///
+/// For a streaming session this is the NORMAL end of the control
+/// channel, not a failure: measured against the real nasne
+/// (plan 29), the source closes the AKE connection immediately
+/// after authentication completes — before the content GET is
+/// even issued — and the reference client closes it from the sink
+/// side at the same point for the same reason. A caller that
+/// needs a key for a label the ended session never delivered
+/// re-authenticates on a fresh connection (the reference's model)
+/// instead of waiting on the dead one.
+class AkeConnectionClosed implements Exception {
+  const AkeConnectionClosed();
+
+  @override
+  String toString() => 'the AKE connection closed';
+}
 
 /// An 11-byte-header AKE control frame.
 class ControlFrame {
@@ -198,9 +222,28 @@ abstract interface class SrmStore {
   Future<Uint8List?> loadRaw();
 }
 
+/// The exchange-key surface of an established AKE session, as
+/// consumed by the playback key source (plan 29). [AkeSession] is
+/// the real implementation; tests substitute fakes.
+abstract interface class ExchangeKeySession {
+  /// The key for [label] when already received, else null.
+  Uint8List? keyOrNull(int label);
+
+  /// Waits for the key with [label]; throws [AkeConnectionClosed]
+  /// when the session ended without delivering it.
+  Future<Uint8List> waitExchangeKey(int label, {Duration? timeout});
+
+  /// Waits for the session's first exchange key and returns its
+  /// label.
+  Future<int> waitFirstExchangeKey({Duration timeout});
+
+  /// Closes the session's connection.
+  Future<void> close();
+}
+
 /// An established AKE session: holds the exchange keys in memory
 /// only. Keys are never persisted (plan 26.4).
-class AkeSession {
+class AkeSession implements ExchangeKeySession {
   AkeSession._(this._connection, this._client);
 
   final AkeConnection _connection;
@@ -209,7 +252,15 @@ class AkeSession {
   /// The currently active exchange key label, if any.
   int? get exchangeKeyLabel => _client.exchangeKeyLabel;
 
+  /// The key for [label] when it has already been received, else
+  /// null (never waits).
+  @override
+  Uint8List? keyOrNull(int label) => _client.keyOrNull(label);
+
   /// Waits for a key with [label] to arrive via EXCHANGE_KEY.
+  /// Throws [AkeConnectionClosed] when the session's connection
+  /// has already ended and the key was never delivered.
+  @override
   Future<Uint8List> waitExchangeKey(int label, {Duration? timeout}) =>
       _client.waitExchangeKey(label, timeout: timeout);
 
@@ -217,10 +268,12 @@ class AkeSession {
   /// its label (plan 28: playback start waits for it, like the
   /// reference client, instead of starting the proxy optimistically
   /// and failing later inside the player).
+  @override
   Future<int> waitFirstExchangeKey({
     Duration timeout = const Duration(seconds: 20),
   }) => _client.waitFirstExchangeKey(timeout: timeout);
 
+  @override
   Future<void> close() => _connection.close();
 }
 
@@ -264,21 +317,66 @@ class AkeClient {
   final Map<int, Uint8List> _exchangeKeys = {};
   final Completer<int> _firstKey = Completer<int>();
 
+  /// Whether the post-authentication message loop has finished
+  /// (plan 29). Once it has, no further keys can arrive on this
+  /// session: a wait for an undelivered label fails fast with
+  /// [AkeConnectionClosed] (or the loop's error) so the caller can
+  /// re-authenticate instead of stalling.
+  bool _loopEnded = false;
+  Object? _loopError;
+
   /// The handshake stage currently in progress, named in the
   /// timeout error so a stall is attributable (plan 28).
   String _authStage = 'connect';
 
   int? get exchangeKeyLabel => _exchangeKeyLabel;
 
+  /// The key for [label] when it has already been received, else
+  /// null (never waits).
+  Uint8List? keyOrNull(int label) => _exchangeKeys[label];
+
   Future<Uint8List> waitExchangeKey(int label, {Duration? timeout}) {
     final existing = _exchangeKeys[label];
     if (existing != null) return Future.value(existing);
+    if (_loopEnded) {
+      return Future.error(_loopError ?? const AkeConnectionClosed());
+    }
     final completer = _keyWaiters.putIfAbsent(
       label,
       () => Completer<Uint8List>(),
     );
     final future = completer.future;
     return timeout == null ? future : future.timeout(timeout);
+  }
+
+  /// Settles every pending key wait when the message loop ends
+  /// (plan 29). A clean end (the source closed the connection, the
+  /// normal case for streaming) fails undelivered waits with
+  /// [AkeConnectionClosed]; a loop error propagates as-is. The
+  /// first-key wait is special: ending before ANY key arrived is a
+  /// start failure, so it gets a classified error instead.
+  void _onLoopEnd(Object? error) {
+    if (_loopEnded) return;
+    _loopEnded = true;
+    _loopError = error;
+    final waiters = _keyWaiters.values.toList();
+    _keyWaiters.clear();
+    for (final completer in waiters) {
+      if (!completer.isCompleted) {
+        completer.completeError(error ?? const AkeConnectionClosed());
+      }
+    }
+    if (!_firstKey.isCompleted) {
+      _firstKey.completeError(
+        error ??
+            NasneError.unreachable(
+              'dtcp:ake',
+              cause:
+                  'the source closed the AKE connection before '
+                  'sending an exchange key',
+            ),
+      );
+    }
   }
 
   /// Completes with the label of the first exchange key received.
@@ -312,26 +410,57 @@ class AkeClient {
       // A timed-out handshake must not surface a second, orphaned
       // error later.
       unawaited(authFuture.then((_) {}, onError: (_) {}));
-      final authKey = await authFuture.timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => throw NasneError.unreachable(
+      final Uint8List authKey;
+      try {
+        authKey = await authFuture.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => throw NasneError.unreachable(
+            'dtcp:ake',
+            cause: 'AKE timed out during stage: $_authStage',
+          ),
+        );
+      } on AkeConnectionClosed {
+        // The source hung up mid-handshake: a reachability failure
+        // naming the stage, not a bare close (plan 29).
+        throw NasneError.unreachable(
           'dtcp:ake',
-          cause: 'AKE timed out during stage: $_authStage',
-        ),
-      );
+          cause:
+              'the source closed the AKE connection during '
+              'stage: $_authStage',
+        );
+      }
       final session = AkeSession._(connection, this);
       diag(
         DiagCategory.ake,
         'authenticated in ${stopwatch.elapsedMilliseconds} ms; '
         'post-auth message loop running',
       );
+      // The first-key future may be settled by the loop before the
+      // caller awaits it; keep its error from going unhandled.
+      unawaited(_firstKey.future.then((_) {}, onError: (_) {}));
       // The post-authentication loop (RTT / EXCHANGE_KEY /
-      // SRM_UPDATE) runs in the background; failures close the
-      // session silently from the player's perspective.
+      // SRM_UPDATE) runs in the background. Its end settles every
+      // pending key wait (plan 29): the source closing the
+      // connection here is the normal streaming lifecycle (the
+      // reference client closes it from its own side), while a
+      // real protocol error still surfaces to the waiters.
       unawaited(
-        _messageLoop(reader, authKey).catchError((Object e) {
-          diag(DiagCategory.ake, 'message loop ended: $e');
-        }),
+        _messageLoop(reader, authKey).then(
+          (_) => _onLoopEnd(null),
+          onError: (Object e) {
+            if (e is AkeConnectionClosed) {
+              diag(
+                DiagCategory.ake,
+                'ake session ended: the source closed the '
+                'connection (normal after authentication)',
+              );
+              _onLoopEnd(null);
+            } else {
+              diag(DiagCategory.ake, 'message loop ended: $e');
+              _onLoopEnd(e);
+            }
+          },
+        ),
       );
       return session;
     } catch (_) {
@@ -694,9 +823,12 @@ class _FrameReader {
         _drain();
       },
       onError: (Object e) => _fail(e),
-      onDone: () => _fail(
-        NasneError.unreachable('dtcp:ake', cause: 'the AKE connection closed'),
-      ),
+      // A clean EOF is reported as AkeConnectionClosed, NOT as a
+      // reachability failure: for streaming, the source closes the
+      // AKE connection as soon as authentication completes
+      // (plan 29). Mid-handshake closes are reclassified by the
+      // caller, which knows the stage.
+      onDone: () => _handleClosed(),
     );
   }
 
@@ -739,6 +871,23 @@ class _FrameReader {
       diag(DiagCategory.ake, 'ake connection failed: $error');
     }
     _error ??= error;
+    for (final waiter in _waiters) {
+      if (!waiter.isCompleted) waiter.completeError(error);
+    }
+    _waiters.clear();
+  }
+
+  bool _closed = false;
+
+  /// Clean EOF from the source. Pending readers get
+  /// [AkeConnectionClosed]; whether that is an error depends on
+  /// how far the session got (the session layer decides).
+  void _handleClosed() {
+    if (_closed || _error != null) return;
+    _closed = true;
+    diag(DiagCategory.ake, 'ake connection closed by the source');
+    const error = AkeConnectionClosed();
+    _error = error;
     for (final waiter in _waiters) {
       if (!waiter.isCompleted) waiter.completeError(error);
     }

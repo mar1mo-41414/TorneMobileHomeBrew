@@ -316,6 +316,84 @@ void main() {
       }
     });
 
+    test(
+      'a source close after authentication is a normal end (plan 29)',
+      () async {
+        final lines = <String>[];
+        final diag = DiagLog(
+          (category, message) => lines.add('[${category.name}] $message'),
+          (_) => true,
+        );
+        final srmStore = _TestSrmStore(testAuthority);
+        late _FakeConnection clientConn;
+        late _FakeConnection sourceConn;
+        clientConn = _FakeConnection((bytes) => sourceConn.deliver(bytes));
+        sourceConn = _FakeConnection((bytes) => clientConn.deliver(bytes));
+        final credentials = DeviceCredentials(
+          certificate: sinkCert,
+          privateKey: sinkPriv,
+          authorityKeys: testAuthority,
+        );
+        final client = AkeClient(
+          credentials: credentials,
+          srmStore: srmStore,
+          connectionFactory: (host, port) async => clientConn,
+          randomBytes: (n) => hex(katSinkNonce),
+          ephemeralScalar: () => bytesToBigInt(hex(katEphA)),
+          authorityKeys: testAuthority,
+          diag: diag,
+        );
+        final fake = _runFakeSource(
+          sourceConn,
+          srcCert: srcCert,
+          srcPriv: srcPriv,
+          testAuthority: testAuthority,
+        );
+        final session = await client.connect('192.0.2.1', 58293);
+        expect(
+          await session.waitFirstExchangeKey(
+            timeout: const Duration(seconds: 10),
+          ),
+          0x2A,
+        );
+        await fake.timeout(const Duration(seconds: 10));
+
+        // The real nasne closes the AKE connection right after
+        // authentication (plan 29, measured): simulate the EOF.
+        await clientConn.close();
+        // Let the message loop observe the close.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+
+        // A delivered key stays available on the ended session...
+        final key = await session.waitExchangeKey(
+          0x2A,
+          timeout: const Duration(seconds: 5),
+        );
+        expect(bytesToHex(key), katPcpExchangeKey);
+        // ...while a label that never arrived fails fast with the
+        // close signal, so the caller can re-authenticate instead
+        // of waiting out a timeout on a dead connection.
+        await expectLater(
+          session.waitExchangeKey(0x77, timeout: const Duration(seconds: 5)),
+          throwsA(isA<AkeConnectionClosed>()),
+        );
+        // The close is logged as the normal lifecycle, not as a
+        // connection failure or a loop error.
+        expect(
+          lines.any((line) => line.contains('closed by the source')),
+          isTrue,
+        );
+        expect(
+          lines.any((line) => line.contains('connection failed')),
+          isFalse,
+        );
+        expect(
+          lines.any((line) => line.contains('message loop ended')),
+          isFalse,
+        );
+      },
+    );
+
     test('diagnostics record stages but never key material', () async {
       final lines = <String>[];
       final diag = DiagLog(

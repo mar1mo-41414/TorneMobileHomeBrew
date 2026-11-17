@@ -12,10 +12,10 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../diagnostics.dart';
 import '../errors.dart';
-import 'ake.dart';
 import 'pcp.dart';
 
 /// Supplies the media response: HEAD/GET against the content URL
@@ -32,7 +32,9 @@ class DtcpMediaFetcher {
   final DiagLog diag;
   HttpClient? _client;
 
-  HttpClient get _http => _client ??= _clientFactory();
+  HttpClient get _http =>
+      _client ??= _clientFactory()
+        ..connectionTimeout = const Duration(seconds: 15);
 
   void close() {
     _client?.close(force: true);
@@ -169,9 +171,15 @@ class DtcpProxy {
   /// The URL to hand to the player.
   final Uri uri;
 
+  /// How long the content stream may go without a single byte
+  /// before the proxy gives up (plan 29). The reference client
+  /// applies its 30 s timeout as the socket read timeout; an
+  /// unbounded wait here left the player spinning forever.
+  static const Duration stallTimeout = Duration(seconds: 30);
+
   static Future<DtcpProxy> start({
     required Uri contentUrl,
-    required AkeSession session,
+    required Future<Uint8List> Function(int label) keyForLabel,
     required DtcpMediaFetcher fetcher,
     DiagLog diag = const DiagLog.none(),
   }) async {
@@ -180,47 +188,75 @@ class DtcpProxy {
       server,
       Uri.parse('http://127.0.0.1:${server.port}/stream'),
     );
+    var requestCount = 0;
     server.listen((request) async {
       if (request.uri.path != '/stream') {
         request.response.statusCode = HttpStatus.notFound;
         await request.response.close();
         return;
       }
+      requestCount++;
+      final requestNo = requestCount;
       try {
-        diag(DiagCategory.playback, 'proxy: content GET started');
+        diag(
+          DiagCategory.playback,
+          'proxy: request #$requestNo from the player, content GET started',
+        );
+        final stopwatch = Stopwatch()..start();
         final response = await fetcher.openContent(contentUrl);
         request.response.statusCode = HttpStatus.ok;
         request.response.headers.contentType = ContentType('video', 'mp2t');
         request.response.headers.set('transferMode.dlna.org', 'Streaming');
-        final decryptor = PcpDecryptor(
-          keyForLabel: (label) {
-            diag(
-              DiagCategory.playback,
-              'proxy: waiting for exchange key, label $label',
+        final decryptor = PcpDecryptor(keyForLabel: keyForLabel);
+        var packetCount = 0;
+        var plainBytes = 0;
+        var cipherBytes = 0;
+        final timed = response.timeout(
+          stallTimeout,
+          onTimeout: (sink) {
+            sink.addError(
+              NasneError.unreachable(
+                'dtcp:proxy',
+                cause:
+                    'the content stream stalled for '
+                    '${stallTimeout.inSeconds} seconds',
+              ),
             );
-            return session.waitExchangeKey(
-              label,
-              timeout: const Duration(seconds: 15),
-            );
+            sink.close();
           },
         );
-        var firstPacketLogged = false;
-        var plainBytes = 0;
-        await for (final chunk in response) {
+        await for (final chunk in timed) {
+          cipherBytes += chunk.length;
           final plainChunks = await decryptor.add(chunk);
           for (final plain in plainChunks) {
-            if (!firstPacketLogged) {
-              firstPacketLogged = true;
-              diag(DiagCategory.playback, 'proxy: first decrypted packet out');
-            }
+            packetCount++;
             plainBytes += plain.length;
+            if (packetCount == 1) {
+              diag(
+                DiagCategory.playback,
+                'proxy: first packet decrypted, ${plain.length} bytes '
+                'plaintext, ${stopwatch.elapsedMilliseconds} ms after '
+                'the content GET',
+              );
+            } else if (packetCount % 50 == 0) {
+              diag(
+                DiagCategory.playback,
+                'proxy: $packetCount packets, $plainBytes bytes '
+                'decrypted so far',
+              );
+            }
+            // Await the flush per packet: the player paces the
+            // upstream reads, and buffered plaintext stays bounded
+            // to about one packet (plan 29).
             request.response.add(plain);
+            await request.response.flush();
           }
         }
         await request.response.close();
         diag(
           DiagCategory.playback,
-          'proxy: stream ended, $plainBytes bytes decrypted',
+          'proxy: stream ended, $packetCount packets, $plainBytes '
+          'bytes decrypted ($cipherBytes bytes received)',
         );
       } catch (e) {
         diag(DiagCategory.playback, 'proxy: stream error: $e');

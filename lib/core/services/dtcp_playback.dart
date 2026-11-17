@@ -5,6 +5,9 @@
 /// into import guidance.
 library;
 
+import 'dart:async';
+import 'dart:typed_data';
+
 import '../diagnostics.dart';
 import '../dtcp/ake.dart';
 import '../dtcp/credential_store.dart';
@@ -13,6 +16,96 @@ import '../dtcp/dtcp_proxy.dart';
 import '../errors.dart';
 import '../models/title.dart';
 import 'interfaces.dart';
+
+/// Supplies exchange keys to the proxy's decryptor (plan 29).
+///
+/// The AKE connection is one-shot for streaming: the source
+/// closes it right after authentication, so when a packet arrives
+/// with a label the current session never delivered (key
+/// rotation), the key is obtained by RE-AUTHENTICATING on a fresh
+/// connection — the reference client's model — rather than by
+/// waiting on the ended session. Concurrent requests share one
+/// in-flight re-authentication.
+class PlaybackKeySource {
+  // The public parameter names (session / reauthenticate) are the
+  // call-site vocabulary while the fields stay private, hence no
+  // initializing formals here.
+  PlaybackKeySource({
+    required ExchangeKeySession session,
+    required Future<ExchangeKeySession> Function() reauthenticate,
+    this.diag = const DiagLog.none(),
+  }) : _session = session, // ignore: prefer_initializing_formals
+       _reauthenticate = reauthenticate; // ignore: prefer_initializing_formals
+
+  ExchangeKeySession _session;
+  final Future<ExchangeKeySession> Function() _reauthenticate;
+
+  /// Diagnostics sink, category playback.
+  final DiagLog diag;
+  Future<ExchangeKeySession>? _reauthInFlight;
+
+  /// The session currently supplying keys (the latest after any
+  /// re-authentication); the playback session stops this one.
+  ExchangeKeySession get currentSession => _session;
+
+  /// The key for [label]: immediate when already delivered, a
+  /// bounded wait while the session is alive, and a
+  /// re-authentication when the session has ended without it.
+  Future<Uint8List> keyForLabel(int label) async {
+    final known = _session.keyOrNull(label);
+    if (known != null) return known;
+    diag(
+      DiagCategory.playback,
+      'waiting for exchange key, label $label',
+    );
+    try {
+      return await _session.waitExchangeKey(
+        label,
+        timeout: const Duration(seconds: 15),
+      );
+    } on AkeConnectionClosed {
+      diag(
+        DiagCategory.playback,
+        'the AKE session ended without label $label; '
+        're-authenticating',
+      );
+      final fresh = await _reauthenticateOnce();
+      final firstLabel = await fresh.waitFirstExchangeKey(
+        timeout: const Duration(seconds: 20),
+      );
+      final key = fresh.keyOrNull(label);
+      if (key == null) {
+        throw NasneError.parse(
+          'dtcp:ake',
+          cause:
+              'the exchange key label still does not match after '
+              're-authentication (wanted $label, got $firstLabel)',
+        );
+      }
+      diag(
+        DiagCategory.playback,
+        're-authenticated; exchange key label $firstLabel in hand',
+      );
+      return key;
+    }
+  }
+
+  Future<ExchangeKeySession> _reauthenticateOnce() async {
+    final inFlight = _reauthInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _reauthenticate();
+    _reauthInFlight = future;
+    try {
+      final fresh = await future;
+      final old = _session;
+      _session = fresh;
+      if (!identical(old, fresh)) unawaited(old.close());
+      return fresh;
+    } finally {
+      if (identical(_reauthInFlight, future)) _reauthInFlight = null;
+    }
+  }
+}
 
 class DtcpPlaybackEngine implements PlaybackEngine {
   DtcpPlaybackEngine({
@@ -98,9 +191,21 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         '(${stopwatch.elapsedMilliseconds} ms)',
       );
       stage = 'proxy';
+      // Keys for later labels (rotation) come from fresh
+      // authentications: each re-authentication builds a NEW
+      // client, because an AkeClient carries one session's state
+      // (plan 29).
+      final keySource = PlaybackKeySource(
+        session: session,
+        reauthenticate: () async {
+          final freshClient = _clientFactory(credentials);
+          return freshClient.connect(host, port);
+        },
+        diag: diag,
+      );
       final proxy = await DtcpProxy.start(
         contentUrl: contentUrl,
-        session: session,
+        keyForLabel: keySource.keyForLabel,
         fetcher: fetcher,
         diag: diag,
       );
@@ -109,7 +214,7 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         'playback ready at ${proxy.uri} '
         '(${stopwatch.elapsedMilliseconds} ms)',
       );
-      return _DtcpPlaybackSession(proxy, session, fetcher);
+      return _DtcpPlaybackSession(proxy, keySource, fetcher);
     } catch (e) {
       diag(DiagCategory.playback, 'failed at stage "$stage": $e');
       if (session != null) await session.close();
@@ -120,10 +225,10 @@ class DtcpPlaybackEngine implements PlaybackEngine {
 }
 
 class _DtcpPlaybackSession implements PlaybackSession {
-  _DtcpPlaybackSession(this._proxy, this._akeSession, this._fetcher);
+  _DtcpPlaybackSession(this._proxy, this._keySource, this._fetcher);
 
   final DtcpProxy _proxy;
-  final AkeSession _akeSession;
+  final PlaybackKeySource _keySource;
   final DtcpMediaFetcher _fetcher;
   bool _stopped = false;
 
@@ -135,7 +240,7 @@ class _DtcpPlaybackSession implements PlaybackSession {
     if (_stopped) return;
     _stopped = true;
     await _proxy.stop();
-    await _akeSession.close();
+    await _keySource.currentSession.close();
     _fetcher.close();
   }
 }

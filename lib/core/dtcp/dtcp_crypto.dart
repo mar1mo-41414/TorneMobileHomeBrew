@@ -310,29 +310,40 @@ Uint8List aesBlock(List<int> key, List<int> block16, {required bool encrypt}) {
 /// AES-128-CBC over a multiple-of-16 input, no padding (PCP contents
 /// are padded by the sender; padding is stripped by length, as in
 /// pydtcpip's decrypt_packet).
+///
+/// The input is converted to a [Uint8List] ONCE and the block engine
+/// is driven by offsets. The first implementation converted the
+/// whole input inside the per-block loop, which made decrypting one
+/// real 1 MiB PCP packet an O(n^2) copy loop (plan 29).
 Uint8List aesCbcDecrypt(List<int> key, List<int> iv, List<int> data) {
   final engine = _aesEngine(key, false);
-  final out = Uint8List(data.length);
+  final input = data is Uint8List ? data : Uint8List.fromList(data);
+  final out = Uint8List(input.length);
   var chain = Uint8List.fromList(iv);
+  var scratch = Uint8List(16);
   final block = Uint8List(16);
-  for (var offset = 0; offset < data.length; offset += 16) {
-    engine.processBlock(Uint8List.fromList(data), offset, block, 0);
+  for (var offset = 0; offset < input.length; offset += 16) {
+    scratch.setRange(0, 16, input, offset);
+    engine.processBlock(input, offset, block, 0);
     for (var i = 0; i < 16; i++) {
       out[offset + i] = block[i] ^ chain[i];
     }
-    chain = Uint8List.fromList(data.sublist(offset, offset + 16));
+    final swap = chain;
+    chain = scratch;
+    scratch = swap;
   }
   return out;
 }
 
 Uint8List aesCbcEncrypt(List<int> key, List<int> iv, List<int> data) {
   final engine = _aesEngine(key, true);
-  final out = Uint8List(data.length);
+  final input = data is Uint8List ? data : Uint8List.fromList(data);
+  final out = Uint8List(input.length);
   var chain = Uint8List.fromList(iv);
   final block = Uint8List(16);
-  for (var offset = 0; offset < data.length; offset += 16) {
+  for (var offset = 0; offset < input.length; offset += 16) {
     for (var i = 0; i < 16; i++) {
-      block[i] = data[offset + i] ^ chain[i];
+      block[i] = input[offset + i] ^ chain[i];
     }
     engine.processBlock(block, 0, out, offset);
     chain = Uint8List.fromList(out.sublist(offset, offset + 16));
