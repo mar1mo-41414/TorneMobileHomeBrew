@@ -2180,3 +2180,27 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 ### 45.5 対外表記の更新
 
 - GitHub の v1.3.0 リリースノートの既知の事項 (wakelock) を、「調査中・現時点で唯一の未解決事項」から「LiveContainer 環境でのみ発生し、直接インストールでは正常動作を確認済み」へ改め、LC 利用者向けに、視聴中は端末の自動ロックを長めに設定する案内を一文添えた。
+
+## 44. デバッグビルドの GitHub Actions 配布 (2026-11-17)
+
+### 44.1 目的と構成
+
+- 本人の発案: テスト用ビルドを GitHub Actions に投げ、報告者などの利用者が自分で取得できるようにする (§43 の修正ビルドを報告者へ渡す手段が課題だった)。
+- `.github/workflows/dev-build.yml` (commit `bcc83a4`):
+  - トリガー: main への push + 手動実行 (workflow_dispatch)。
+  - Android ジョブ (ubuntu-latest): JDK 21 (temurin) + Flutter 3.50.0 (ローカルと同版) で `flutter build apk --release`。
+  - iOS ジョブ (macos-latest): Flutter 3.50.0 で `flutter build ios --no-codesign --release` を行い、Payload を zip して署名なし IPA を作る (ローカルの手順と同等)。
+  - prerelease ジョブ: 両成果物を集め、ローリングな prerelease (タグ `dev`、prerelease: true) を作り直して掲載する。説明文には開発版・テスト用の旨と、バージョン・元 commit を記載。利用者は Actions 画面を開かずに Releases の「開発版 (dev)」から取得できる。
+  - 成果物名は `TorneMobileHomeBrew-<版数>+<ビルド>-dev.apk` / `.ipa` (初回は 1.3.0+18)。
+
+### 44.2 署名と Secrets 契約
+
+- CI の Android 署名は Secrets 契約で切り替える: `TMHB_KEYSTORE_BASE64` (release.keystore を base64 化したもの) / `TMHB_STORE_PASSWORD` / `TMHB_KEY_ALIAS` / `TMHB_KEY_PASSWORD`。ワークフローがキーストアを復元して key.properties を生成し、`TMHB_KEY_PROPERTIES` 経由で build.gradle.kts の既存の仕組みに渡す。Secrets がなければデバッグ鍵にフォールバックし、ビルド自体は常に通る。契約は AGENTS.md §9 にも記載した。
+- 初回実行 (run `44036158867`、push トリガー) は Secrets 未登録の状態で実施し、全ジョブ成功 (Android 6m46s / iOS 6m45s / prerelease 14s) と prerelease への両資産の掲載を確認した。この回の APK はデバッグ鍵署名。
+- その後、オーナーの承認を得て、配布用キーストアと key.properties の3項目を Secrets に登録した (2026-11-17)。値は標準入力経由でのみ `gh secret set` に渡し、出力・ログ・記録には残していない。
+- 再実行 (run `44037144671`、手動実行) も全ジョブ成功し、prerelease の資産が差し替わった。成果物 APK をダウンロードして apksigner で検証し、**署名証明書の SHA-256 が配布用証明書 `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5` と一致**することを確認した。以後、dev prerelease の APK は正式リリースと同じ鍵で署名される。
+
+### 44.3 残件・注意
+
+- デバッグ鍵署名だった初回分の APK (掲載は数分間) をインストールした人は、配布用鍵署名のものへ移る際に一度アンインストールが必要になる。
+- ワークフローの annotation に actions の Node 20 非推奨などの警告が出ているが、現時点では動作に影響はない (将来のメンテナンス事項)。

@@ -53,4 +53,4 @@
 - Android の署名は、以下の Secrets が登録されていれば配布用キーストア、なければデバッグ鍵にフォールバックする (ビルド自体は常に通る)。
   - `TMHB_KEYSTORE_BASE64`: 配布用キーストア (release.keystore) を base64 化したもの
   - `TMHB_STORE_PASSWORD` / `TMHB_KEY_ALIAS` / `TMHB_KEY_PASSWORD`: key.properties の同名項目
-- Secrets の登録はオーナーが行う。値そのものをコミット・Issue・ログに残さない (§5 と同じ)。
+- Secrets は登録済み (2026-11-17、オーナー承認のもとで登録、経緯は plan.md §44)。登録・変更はオーナーの管理下でのみ行い、値そのものをコミット・Issue・ログに残さない (§5 と同じ)。
