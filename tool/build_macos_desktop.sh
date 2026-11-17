@@ -19,12 +19,17 @@
 #
 # 2. The resulting .app is unsigned; its frameworks are rejected
 #    by dyld, so it is signed below. The signature must NOT carry
-#    entitlements: an app whose signature contains
-#    keychain-access-groups is refused by launchd at spawn time
-#    (RBSRequestErrorDomain 5 / NSPOSIXErrorDomain 163), even
-#    though `codesign --verify` passes. Credential storage does
-#    not need the entitlement — the app uses the legacy login
-#    keychain on macOS (plan 47).
+#    keychain-access-groups: an app whose signature contains it is
+#    refused by launchd at spawn time (RBSRequestErrorDomain 5 /
+#    NSPOSIXErrorDomain 163), even though `codesign --verify`
+#    passes. Credential storage does not need the entitlement —
+#    the app uses the legacy login keychain on macOS (plan 47).
+#    The signing step therefore applies the dedicated minimal set
+#    in macos/Runner/Signing.entitlements, not the Runner
+#    entitlements files. That set carries exactly one entitlement,
+#    com.apple.security.files.user-selected.read-only, which
+#    file_picker's macOS plugin requires before it will open a
+#    file panel at all (plan 69).
 #
 # 3. The version in the zip name is read from pubspec.yaml.
 #
@@ -45,6 +50,7 @@ VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
 APP="build/macos/Build/Products/Release/torne mobile HB.app"
 ZIP="$HOME/Desktop/TorneMobileHomeBrew-macos-${VERSION}.zip"
 SIGN_IDENTITY="torne-mobile-hb-signing"
+SIGN_ENTITLEMENTS="macos/Runner/Signing.entitlements"
 
 flutter build macos --config-only --release
 xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
@@ -53,17 +59,19 @@ xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$SIGN_IDENTITY\""; then
   echo "signing with identity: $SIGN_IDENTITY"
-  codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" "$APP"
+  codesign --force --deep --timestamp=none \
+    --entitlements "$SIGN_ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$APP"
 else
   echo "WARNING: code-signing identity '$SIGN_IDENTITY' not found;" >&2
   echo "falling back to ad-hoc signing. The login keychain will" >&2
   echo "ask for its password again after every rebuild (plan 66)." >&2
-  codesign --force --deep --sign - "$APP"
+  codesign --force --deep \
+    --entitlements "$SIGN_ENTITLEMENTS" --sign - "$APP"
 fi
 codesign --verify --deep --strict "$APP"
 
-# Guard against the plan-39 trap: if entitlements ever sneak
-# back into the signature, the app will not launch.
+# Guard against the plan-47 trap: if keychain-access-groups ever
+# sneaks back into the signature, the app will not launch.
 if codesign -d --entitlements - "$APP" 2>/dev/null | grep -q keychain-access-groups; then
   echo "ERROR: keychain-access-groups present in signature;" >&2
   echo "launchd will refuse to spawn this app (plan 47)." >&2
