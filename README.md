@@ -53,6 +53,10 @@ APK を直接インストールしてください (提供元不明アプリの�
 - アプリ識別子: com.markun.tmhb
 - 対応 OS: iOS 15.0 以降 / Android 10 (API 29) 以降
 
+## 謝辞
+
+録画再生 (DTCP-IP) の AKE 実装は、tsukumijima 氏の [pydtcpip](https://github.com/tsukumijima/pydtcpip) を Dart へ移植したものです。本アプリの DTCP-IP 再生は pydtcpip の知見の上に成り立っています。記して感謝します。
+
 ## ライセンス
 
 MIT License
