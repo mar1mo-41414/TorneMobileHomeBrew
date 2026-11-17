@@ -3245,3 +3245,24 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
 - Debian 向け自前 libmpv 同梱の要否判断。
 - 詳細な調査記録は作業領域
   tmhb.work/2026-11-17-desktop-subtitle/report.md。
+
+### 62.4 アプリビルドでの統合検証 (追記)
+
+- ブランチ `desktop-subtitle` を Mac に clone し、
+  `tool/build_macos_desktop.sh` でアプリをビルド:
+  vendored Makefile が自前 tarball を取得して SHA-256
+  検証を通し、xcodebuild と ad-hoc 署名まで完走した
+  (初回は非対話シェルの PATH に /opt/homebrew/bin が
+  無く CocoaPods が見つからず失敗。PATH を通して再実行
+  して成功。これは環境側の既知の癖)。
+- 生成した .app を監査: 24 バイナリ / 494 load command /
+  23 フレームワークで全依存が解決可能。同梱 Avcodec に
+  aribb24 の構成文字列とデコーダ文字列を確認
+  (ハッシュはビルド時の ad-hoc 再署名で変わる)。
+- 起動スモークテスト: アプリが起動してプロセスが
+  継続することを確認し、dyld の実行時解決まで実証した
+  (確認後に終了)。
+- ビルドの副産物として Desktop に同名 zip
+  (TorneMobileHomeBrew-macos-1.4.0.zip) ができるが、
+  リリース済み資産と中身が異なるため削除した。
+  .app 本体は作業領域の clone 内に残っている。
