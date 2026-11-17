@@ -214,6 +214,15 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   /// visit to this screen starts on the original.
   bool _useMobile = false;
 
+  /// A playback start is in flight (plan 35). Starting takes a
+  /// second or more (credentials -> HEAD -> AKE -> proxy); the
+  /// build-13 field log showed a second tap in that window
+  /// starting a whole second session, whose player screen then
+  /// shared — and dropped — the first one's wakelock. While a
+  /// start is in flight the button is disabled and _play is
+  /// re-entrancy-guarded.
+  bool _starting = false;
+
   RegisteredNasne get reg => widget.reg;
   RecordedTitle get title => widget.title;
 
@@ -296,7 +305,7 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           const SizedBox(height: 16),
         ],
         FilledButton.icon(
-          onPressed: () => _play(context, ref),
+          onPressed: _starting ? null : () => _play(context, ref),
           icon: const Icon(Icons.play_arrow),
           label: const Text('再生'),
         ),
@@ -307,6 +316,7 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   }
 
   Future<void> _play(BuildContext context, WidgetRef ref) async {
+    if (_starting) return;
     final engine = ref.read(deviceServicesProvider(reg)).playback;
     if (!engine.isSupported) {
       await _showPlaybackNotice(context);
@@ -318,6 +328,7 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
     }
     final res =
         (_useMobile ? title.mobileRes : title.originalRes) ?? title.res.first;
+    setState(() => _starting = true);
     try {
       final session = await engine.startPlayback(title, res);
       if (!context.mounted) {
@@ -355,6 +366,8 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
         'playback start failed (unclassified): $e',
       );
       showSnack(context, '再生を開始できませんでした');
+    } finally {
+      if (mounted) setState(() => _starting = false);
     }
   }
 

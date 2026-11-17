@@ -4,6 +4,8 @@
 /// network or device is involved.
 library;
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -231,6 +233,11 @@ class FakeTitles implements TitleCatalogService {
 class RecordingPlaybackEngine implements PlaybackEngine {
   RecordedTitle? lastTitle;
   TitleRes? lastRes;
+  int startCalls = 0;
+
+  /// When set, startPlayback waits on this gate before failing,
+  /// simulating a start that is still in flight (plan 35).
+  Completer<void>? startGate;
 
   @override
   bool get isSupported => true;
@@ -240,8 +247,11 @@ class RecordingPlaybackEngine implements PlaybackEngine {
     RecordedTitle title,
     TitleRes res,
   ) async {
+    startCalls++;
     lastTitle = title;
     lastRes = res;
+    final gate = startGate;
+    if (gate != null) await gate.future;
     throw NasneError.validation('test:playback', 'テスト用の検証エラー');
   }
 }
@@ -608,6 +618,41 @@ void main() {
     await tester.tap(find.text('再生'));
     await tester.pumpAndSettle();
     expect(engine.lastRes?.quality, 'dr');
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a second tap while a start is in flight does not '
+      'start playback twice (plan 35)', (tester) async {
+    usePhoneSize(tester);
+    final engine = RecordingPlaybackEngine()
+      ..startGate = Completer<void>();
+    final fixture = Fixture(playback: engine);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルA'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('再生'));
+    await tester.pump();
+    expect(engine.startCalls, 1);
+
+    // While the start is in flight the button is disabled, and
+    // even a tap that lands starts nothing new.
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '再生'),
+    );
+    expect(button.onPressed, isNull);
+    await tester.tap(find.text('再生'), warnIfMissed: false);
+    await tester.pump();
+    expect(engine.startCalls, 1);
+
+    engine.startGate!.complete();
+    await tester.pumpAndSettle();
+    expect(engine.startCalls, 1);
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
   });

@@ -18,11 +18,24 @@ import 'wakelock.dart';
 
 final httpClientProvider = Provider<http.Client>((ref) => http.Client());
 
-/// Sleep suppression for the player screen (plan 32): the lock is
-/// held while the player reports playing, so the device does not
-/// idle-sleep mid-playback.
+/// Sleep suppression for the player screen (plan 32, reworked in
+/// plan 35): a hand-rolled platform channel flips the OS switch
+/// and reads it back, so the debug log shows whether the setting
+/// actually stuck.
 final wakelockGuardProvider = Provider<WakelockGuard>(
-  (ref) => const WakelockPlusGuard(),
+  (ref) => NativeWakelockGuard(),
+);
+
+/// The single app-wide wakelock coordinator (plan 35): player
+/// screens open sessions on it, and the OS lock is held while
+/// any session is playing — one screen ending can no longer drop
+/// the lock from under another that is still playing (the
+/// build-13 field log showed exactly that).
+final playbackWakelockProvider = Provider<PlaybackWakelock>(
+  (ref) => PlaybackWakelock(
+    guard: ref.watch(wakelockGuardProvider),
+    diag: ref.watch(diagLogProvider),
+  ),
 );
 
 /// Discovery chain (plan 16.3): SSDP first; when it finds nothing

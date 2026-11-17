@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowManager
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -38,6 +39,22 @@ class MainActivity : FlutterActivity() {
                         releaseMulticastLock()
                         result.success(null)
                     }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WAKELOCK_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setKeepAwake" -> {
+                        val keepAwake = call.argument<Boolean>("keepAwake") ?: false
+                        if (keepAwake) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(isKeepAwakeSet())
+                    }
+                    "getKeepAwake" -> result.success(isKeepAwakeSet())
                     else -> result.notImplemented()
                 }
             }
@@ -116,8 +133,18 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // Sleep suppression during playback (plan 35): the Dart side
+    // gets the flag read back after every set, so the debug log
+    // proves whether the setting actually stuck. Method channel
+    // handlers run on the main thread, so touching the window
+    // here is safe.
+    private fun isKeepAwakeSet(): Boolean =
+        window.attributes.flags and
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
+
     companion object {
         private const val MULTICAST_LOCK_CHANNEL = "com.markun.tmhb/multicast_lock"
+        private const val WAKELOCK_CHANNEL = "com.markun.tmhb/wakelock"
         private const val AKE_SOCKET_CHANNEL = "com.markun.tmhb/ake_socket"
         private const val AKE_SOCKET_EVENTS_CHANNEL = "com.markun.tmhb/ake_socket_events"
     }

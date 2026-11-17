@@ -20,6 +20,11 @@
 /// had the device try to sleep about five minutes into playback).
 /// The lock follows the playing stream exactly and is released
 /// on pause, stop, error and when this screen is disposed.
+///
+/// Plan 35: the screen no longer owns a private controller — it
+/// opens a session on the app-wide [PlaybackWakelock], so two
+/// overlapping player screens cannot drop the OS lock from under
+/// each other (build-13 field log).
 library;
 
 import 'dart:async';
@@ -45,7 +50,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   late final Player _player;
   late final VideoController _videoController;
-  late final PlaybackWakelock _wakelock;
+  late final WakelockSession _wakelockSession;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _watchdog;
   bool _playing = false;
@@ -69,15 +74,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     super.initState();
     _player = Player();
     _videoController = VideoController(_player);
-    _wakelock = PlaybackWakelock(
-      guard: ref.read(wakelockGuardProvider),
-      diag: _diag,
-    );
+    _wakelockSession = ref.read(playbackWakelockProvider).openSession();
     _watchdog = Timer(startTimeout, _onStartTimeout);
     _subscriptions.add(
       _player.stream.playing.listen((playing) {
         _diag(DiagCategory.playback, 'player: playing=$playing');
-        _wakelock.setPlaying(playing);
+        _wakelockSession.setPlaying(playing);
         if (playing) {
           _playing = true;
           _watchdog?.cancel();
@@ -92,7 +94,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     _subscriptions.add(
       _player.stream.error.listen((error) {
         _diag(DiagCategory.playback, 'player: error: $error');
-        _wakelock.setPlaying(false);
+        _wakelockSession.setPlaying(false);
         _watchdog?.cancel();
         if (mounted && _error == null) {
           setState(() => _error = error);
@@ -143,7 +145,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void dispose() {
     _watchdog?.cancel();
-    _wakelock.release();
+    _wakelockSession.release();
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }

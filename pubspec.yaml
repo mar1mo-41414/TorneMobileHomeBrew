@@ -23,8 +23,8 @@ dependencies:
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
-  # Plan 32: sleep suppression during playback.
-  wakelock_plus: ^1.5.2
+  # Sleep suppression during playback (plan 32) is a hand-rolled
+  # platform channel since plan 35 — no package dependency.
 
 dev_dependencies:
   flutter_test:
