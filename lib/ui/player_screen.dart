@@ -42,6 +42,19 @@
 /// unaffected; the live stream is unseekable by design, so the
 /// complaint is logged and ignored (see player_error_policy).
 /// Recorded playback keeps the previous behaviour.
+///
+/// Plan 53: subtitle (caption) and sub-audio controls. Every
+/// stream kind carries its ARIB caption as a separate subtitle
+/// track (measured; see player_track_policy), so the caption
+/// toggle is mpv's subtitle track selection — and because mpv
+/// may auto-select a caption track matching the device
+/// language, the default-off state is forced (sid=no before
+/// open, re-applied when the track list settles) until the
+/// user turns captions on. Dual-audio programmes carry a
+/// second audio track; when two or more audio tracks exist an
+/// audio switcher （主音声 / 副音声） is offered. Both selections
+/// live only in this screen's state — like the quality choice,
+/// nothing is persisted.
 library;
 
 import 'dart:async';
@@ -54,6 +67,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../app/providers.dart';
 import '../core/core.dart';
 import 'player_error_policy.dart';
+import 'player_track_policy.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({
@@ -86,6 +100,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Timer? _watchdog;
   bool _playing = false;
   String? _error;
+
+  /// Tracks the demuxer currently reports, and the selection
+  /// mpv currently holds (plan 53). Both start empty/'auto'
+  /// and settle once the stream is being demuxed.
+  Tracks _tracks = const Tracks();
+  Track _selectedTrack = const Track();
+
+  /// The caption toggle (plan 53). Default off, per the
+  /// owner's spec; kept in this state only, never persisted.
+  bool _subtitlesOn = false;
 
   /// How long playback may take to reach the playing state before
   /// the screen gives up with a timeout error (plan 29). Kept
@@ -120,6 +144,39 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     _subscriptions.add(
       _player.stream.buffering.listen((buffering) {
         _diag(DiagCategory.playback, 'player: buffering=$buffering');
+      }),
+    );
+    _subscriptions.add(
+      _player.stream.tracks.listen((tracks) {
+        _diag(
+          DiagCategory.playback,
+          'player: tracks: video=${tracks.video.length} '
+          'audio=${tracks.audio.length} subtitle=${tracks.subtitle.length}',
+        );
+        for (final track in tracks.audio) {
+          _diag(
+            DiagCategory.playback,
+            'player: audio track: id=${track.id} codec=${track.codec} '
+            'channels=${track.channelscount} language=${track.language}',
+          );
+        }
+        for (final track in tracks.subtitle) {
+          _diag(
+            DiagCategory.playback,
+            'player: subtitle track: id=${track.id} codec=${track.codec} '
+            'language=${track.language}',
+          );
+        }
+        if (mounted) setState(() => _tracks = tracks);
+        // Re-resolve the caption selection against the settled
+        // track list: applies the forced-off default, or the
+        // track the user asked for before the list arrived.
+        _applySubtitleSelection();
+      }),
+    );
+    _subscriptions.add(
+      _player.stream.track.listen((track) {
+        if (mounted) setState(() => _selectedTrack = track);
       }),
     );
     _subscriptions.add(
@@ -160,6 +217,57 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     );
   }
 
+  /// Applies the caption selection for the current toggle
+  /// state (plan 53): the first caption track when on, and
+  /// mpv's no-track selection when off — the off case is what
+  /// keeps mpv's language-based auto-selection from turning
+  /// captions on by itself.
+  Future<void> _applySubtitleSelection() async {
+    final id = subtitleTrackIdToSelect(
+      subtitlesOn: _subtitlesOn,
+      subtitleTrackIds: [for (final track in _tracks.subtitle) track.id],
+    );
+    try {
+      if (id == null) {
+        await _player.setSubtitleTrack(SubtitleTrack.no());
+      } else {
+        await _player.setSubtitleTrack(
+          _tracks.subtitle.firstWhere((track) => track.id == id),
+        );
+      }
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: subtitle selection failed: $e');
+    }
+  }
+
+  void _toggleSubtitles() {
+    setState(() => _subtitlesOn = !_subtitlesOn);
+    _diag(
+      DiagCategory.playback,
+      'player: subtitles ${_subtitlesOn ? 'on' : 'off'} (user toggle)',
+    );
+    _applySubtitleSelection();
+  }
+
+  Future<void> _selectAudioTrack(int index) async {
+    if (index < 0 || index >= _tracks.audio.length) return;
+    final track = _tracks.audio[index];
+    _diag(
+      DiagCategory.playback,
+      'player: audio track -> ${audioTrackLabel(index)} (id=${track.id})',
+    );
+    try {
+      await _player.setAudioTrack(track);
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: audio selection failed: $e');
+    }
+  }
+
+  int get _selectedAudioIndex => selectedAudioIndex(
+    selectedId: _selectedTrack.audio.id,
+    trackIds: [for (final track in _tracks.audio) track.id],
+  );
+
   Future<void> _open() async {
     _diag(DiagCategory.playback, 'player: opening ${widget.session.mediaUri}');
     try {
@@ -174,9 +282,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           'player: mpv network-timeout set to '
           '${mpvNetworkTimeoutSeconds}s',
         );
+        // Captions default to off (plan 53): pin the subtitle
+        // selection to "no track" before the stream opens, so
+        // mpv's auto-selection never gets a say. The tracks
+        // listener re-applies the resolution once the demuxer's
+        // track list settles.
+        await platform.setProperty('sid', 'no');
+        _diag(DiagCategory.playback, 'player: mpv sid pinned to no (default)');
       }
       await _player.open(Media(widget.session.mediaUri.toString()));
       _diag(DiagCategory.playback, 'player: open completed');
+      await _applySubtitleSelection();
     } catch (e) {
       _diag(DiagCategory.playback, 'player: open failed: $e');
       if (!playerErrorIsFatal('$e', live: widget.live)) {
@@ -208,7 +324,34 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          if (canSwitchAudio(_tracks.audio.length))
+            PopupMenuButton<int>(
+              tooltip: '音声',
+              icon: const Icon(Icons.audiotrack),
+              initialValue: _selectedAudioIndex,
+              onSelected: _selectAudioTrack,
+              itemBuilder: (context) => [
+                for (var i = 0; i < _tracks.audio.length; i++)
+                  CheckedPopupMenuItem<int>(
+                    value: i,
+                    checked: i == _selectedAudioIndex,
+                    child: Text(audioTrackLabel(i)),
+                  ),
+              ],
+            ),
+          if (canToggleSubtitles(_tracks.subtitle.length))
+            IconButton(
+              tooltip: '字幕',
+              icon: Icon(
+                _subtitlesOn ? Icons.closed_caption : Icons.closed_caption_off,
+              ),
+              onPressed: _toggleSubtitles,
+            ),
+        ],
+      ),
       body: _error != null
           ? Center(
               child: Padding(
