@@ -126,7 +126,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           keyValueStoreProvider.overrideWithValue(store),
-          documentsDirectoryProvider.overrideWithValue(dir),
+          storeDirectoryProvider.overrideWithValue(dir),
         ],
       );
       addTearDown(container.dispose);

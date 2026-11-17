@@ -42,7 +42,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final registrations = ref.watch(registrationsProvider);
     final selected = ref.watch(selectedRegistrationProvider);
     final debugSettings = ref.watch(debugSettingsProvider);
-    final documentsDir = ref.watch(documentsDirectoryProvider);
+    final storeDir = ref.watch(storeDirectoryProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
       body: ListView(
@@ -210,11 +210,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     .read(debugSettingsProvider.notifier)
                     .setCategory(category, value),
               ),
-            if (documentsDir != null)
+            if (storeDir != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                 child: Text(
-                  '保存先: ${documentsDir.path}/debug_logs/',
+                  '保存先: ${storeDir.path}/debug_logs/',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
