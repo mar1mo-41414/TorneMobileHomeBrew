@@ -225,7 +225,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ],
           // Sharing stays available with the master switch off:
           // the logs that matter are usually already recorded by
-          // the time the user comes here to send them (plan 45).
+          // the time the user comes here to send them (plan 46).
           if (documentsDir != null)
             Builder(
               builder: (tileContext) => ListTile(
@@ -258,7 +258,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   /// Shares the recorded debug logs via the OS share sheet
-  /// (plan 45). The tile's global rect anchors the iPad popover
+  /// (plan 46). The tile's global rect anchors the iPad popover
   /// presentation; Android ignores it.
   Future<void> _shareDebugLogs(BuildContext tileContext) async {
     final sharer = ref.read(debugLogSharerProvider);

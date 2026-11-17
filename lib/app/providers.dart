@@ -185,7 +185,7 @@ final diagLogProvider = Provider<DiagLog>((ref) {
 });
 
 /// Shares the recorded debug logs through the OS share sheet
-/// (plan 45). Null when there is no documents directory (tests /
+/// (plan 46). Null when there is no documents directory (tests /
 /// headless contexts) — the settings screen then hides the share
 /// action, like the log destination display.
 final debugLogSharerProvider = Provider<DebugLogSharer?>((ref) {

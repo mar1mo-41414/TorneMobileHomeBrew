@@ -1,4 +1,4 @@
-/// Debug log sharing (plan 45): hands the recorded debug logs to
+/// Debug log sharing (plan 46): hands the recorded debug logs to
 /// the OS share sheet, so they can leave the device.
 ///
 /// Until now the only way to get a log file out was the

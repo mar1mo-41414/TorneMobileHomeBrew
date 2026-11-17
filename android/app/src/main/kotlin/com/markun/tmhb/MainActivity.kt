@@ -162,7 +162,7 @@ class MainActivity : FlutterActivity() {
         window.attributes.flags and
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
 
-    // Debug log sharing (plan 45): hands the staged log copies in
+    // Debug log sharing (plan 46): hands the staged log copies in
     // the cache dir to the system share sheet. Raw file:// URIs
     // are rejected since API 24, so the files go out as
     // FileProvider content URIs; the provider's paths file exposes

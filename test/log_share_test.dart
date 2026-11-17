@@ -1,4 +1,4 @@
-/// Debug log sharing tests (plan 45): the collection only ever
+/// Debug log sharing tests (plan 46): the collection only ever
 /// picks up `debug_logs/*.log`, staging produces byte-identical
 /// copies under the share staging directory, and the sharer
 /// invokes the platform channel only when there is something to

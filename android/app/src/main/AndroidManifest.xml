@@ -31,7 +31,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- FileProvider for the debug log share sheet (plan 45).
+        <!-- FileProvider for the debug log share sheet (plan 46).
              Its paths file exposes only the share staging
              subdirectory of the cache dir. -->
         <provider

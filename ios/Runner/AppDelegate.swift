@@ -24,7 +24,7 @@ import UIKit
     {
       WakelockHub.shared.register(messenger: wakelockRegistrar.messenger())
     }
-    // Native share sheet channel (plan 45).
+    // Native share sheet channel (plan 46).
     if let shareRegistrar = engineBridge.pluginRegistry.registrar(
       forPlugin: "ShareChannels")
     {
@@ -67,7 +67,7 @@ final class WakelockHub {
   }
 }
 
-/// Native share sheet channel (plan 45): presents
+/// Native share sheet channel (plan 46): presents
 /// UIActivityViewController for the staged debug log copies, so
 /// logs recorded on a directly sideloaded install — whose app
 /// container cannot be pulled off the device the way a
