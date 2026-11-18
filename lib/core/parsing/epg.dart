@@ -114,9 +114,14 @@ List<_Section> _findSections(Uint8List plain, List<Channel> channels) {
           plain[i + 3] == (onid & 0xff)) {
         final s = i - 8;
         final tableId = plain[s];
+        // ARIB STD-B10: 0x60..0x6f is EIT schedule *other TS*.
+        // Preserve the original terrestrial EIT selection; accept the
+        // other-TS forms for the BS guide (not terrestrial).
         final isEit = tableId == 0x4e ||
             tableId == 0x4f ||
-            (tableId >= 0x50 && tableId <= 0x5f);
+            (tableId >= 0x50 && tableId <= 0x5f) ||
+            (ch.broadcastingType == 3 &&
+                tableId >= 0x60 && tableId <= 0x6f);
         if (!isEit) continue;
         if (_u16be(plain, s + 3) != ch.serviceId) continue;
         final total = (((plain[s + 1] & 0x0f) << 8) | plain[s + 2]) + 3;
@@ -133,6 +138,34 @@ List<_Section> _findSections(Uint8List plain, List<Channel> channels) {
     if (out.isEmpty || out.last.offset != s.offset) out.add(s);
   }
   return out;
+}
+
+/// ARIB BS schedule can provide a title in the extended-event "番組名"
+/// item even when there is no short_event_descriptor (0x4d).
+/// Keep the event metadata and only fill an otherwise missing title.
+EpgEvent bsTitleFromExtended(EpgEvent event) {
+  if ((event.title ?? '').trim().isNotEmpty) {
+    return event;
+  }
+  for (final item in event.extendedItems) {
+    if (item.label != '番組名' || item.value.trim().isEmpty) {
+      continue;
+    }
+    return EpgEvent(
+      eventId: event.eventId,
+      start: event.start,
+      duration: event.duration,
+      title: item.value,
+      shortText: event.shortText,
+      description: event.description,
+      cast: event.cast,
+      extendedItems: event.extendedItems,
+      extendedText: event.extendedText,
+      genreLevel1: event.genreLevel1,
+      genreLevel2: event.genreLevel2,
+    );
+  }
+  return event;
 }
 
 /// Parses the EPG plaintext into a guide. Services appear in
@@ -162,7 +195,11 @@ EpgGuide parseEpgGuide(
   for (final ch in channels) {
     final merged = byService[ch.serviceId];
     if (merged == null || merged.isEmpty) continue;
-    final events = merged.values.toList()
+    final events = merged.values
+        .map((event) => broadcastingType == 3
+            ? bsTitleFromExtended(event)
+            : event)
+        .toList()
       ..sort((a, b) {
         final byStart = a.start.compareTo(b.start);
         return byStart != 0 ? byStart : a.eventId.compareTo(b.eventId);
@@ -483,6 +520,62 @@ List<EpgServiceRef> parseEpgVersionServices(List<int> versionTable) {
     offset += epgVersionTableRecordSize;
   }
   return services;
+}
+
+/// BS EPG version-table scanner for satellite services.
+///
+/// The terrestrial table has contiguous 0xc000 records, whereas actual
+/// satellite tables can have gaps and non-0xc000 flag values. Match the
+/// complete service triple to an actual VIDEO channel on this nasne and
+/// keep scanning to the end; do not mistake a gap for end-of-table.
+/// Satellite flags are not yet decoded; no flag is used to infer reception.
+List<EpgServiceRef> parseSatelliteEpgVersionServices(
+    List<int> versionTable, List<Channel> channels) {
+  final known = <(int, int, int)>{
+    for (final ch in channels)
+      if (ch.serviceType == 1)
+        (ch.networkId, ch.transportStreamId, ch.serviceId),
+  };
+  final seen = <(int, int, int)>{};
+  final out = <EpgServiceRef>[];
+  for (var p = epgVersionTableHeaderSize;
+      p + epgVersionTableRecordSize <= versionTable.length;
+      p += epgVersionTableRecordSize) {
+    final key = (
+      _u16be(versionTable, p),
+      _u16be(versionTable, p + 2),
+      _u16be(versionTable, p + 4),
+    );
+    if (known.contains(key) && seen.add(key)) {
+      out.add(EpgServiceRef(key.$1, key.$2, key.$3));
+    }
+  }
+  return out;
+}
+
+/// BS channel columns include channels without an EIT section. The original
+/// parser only lists services with an event; that hides channels entirely
+/// and makes 'missing EPG' indistinguishable from 'missing channel'.
+/// Only applies to BS; terrestrial behaviour and data are not changed.
+EpgGuide completeBsEpgGuide(EpgGuide parsed, List<Channel> channels) {
+  if (parsed.broadcastingType != 3) return parsed;
+  final existing = <(int, int, int), EpgServiceGuide>{
+    for (final service in parsed.services)
+      (
+        service.channel.networkId,
+        service.channel.transportStreamId,
+        service.channel.serviceId,
+      ): service,
+  };
+  return EpgGuide(
+    broadcastingType: parsed.broadcastingType,
+    services: [
+      for (final ch in channels)
+        if (ch.serviceType == 1)
+          existing[(ch.networkId, ch.transportStreamId, ch.serviceId)] ??
+              EpgServiceGuide(channel: ch, events: const []),
+    ],
+  );
 }
 
 /// Header size of an `EPGGet` request body.
