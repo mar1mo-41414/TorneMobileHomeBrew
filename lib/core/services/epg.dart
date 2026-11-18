@@ -77,8 +77,16 @@ class WebApiEpgService {
     // The version table enumerates the services of the unit-side
     // EPG database; the request asks for every segment of each, on
     // both the basic and the extended side (plan 24).
-    final services = parseEpgVersionServices(versionTable);
+    // Terrestrial retains its validated parser. The BS version table may
+    // contain gaps and non-0xc000 records before valid later services.
+    final services = broadcastingType == 3
+        ? parseSatelliteEpgVersionServices(versionTable, channels)
+        : parseEpgVersionServices(versionTable);
     if (services.isEmpty) {
+      if (broadcastingType == 3) {
+        return completeBsEpgGuide(
+          const EpgGuide(broadcastingType: 3, services: []), channels);
+      }
       throw NasneError.parse('webapi:EPGVersionInfoGet',
           cause: 'no service records in version table');
     }
@@ -88,8 +96,11 @@ class WebApiEpgService {
       body: body,
     );
     final plain = inflateEpgResponse(raw);
-    final fresh = parseEpgGuide(plain, channels,
+    final parsed = parseEpgGuide(plain, channels,
         broadcastingType: broadcastingType);
+    final fresh = broadcastingType == 3
+        ? completeBsEpgGuide(parsed, channels)
+        : parsed;
     _diag(
       DiagCategory.epg,
       'epg fetch type=$broadcastingType: ${fresh.services.length} '

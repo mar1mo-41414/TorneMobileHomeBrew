@@ -14,10 +14,12 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app/providers.dart';
 import '../app/state.dart';
+import '../app/bs_epg_providers.dart';
 import '../core/core.dart';
 import 'error_messages.dart';
 import 'format.dart';
 import 'schedule_form.dart';
+import 'epg_subchannel_visibility.dart';
 import 'widgets.dart';
 
 /// Vertical scale of the grid: pixels per broadcast minute.
@@ -99,6 +101,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
   /// DateTime of the JST date fields, like format.dart's helpers).
   DateTime? _selectedDay;
   bool _scrolledToNow = false;
+  int _selectedBand = terrestrialBroadcastingType;
 
   final _rulerController = ScrollController();
   final _bodyController = ScrollController();
@@ -149,8 +152,14 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
               icon: const Icon(Icons.refresh),
               tooltip: '更新',
               onPressed: () {
-                ref.invalidate(epgGuideProvider(reg));
-                ref.invalidate(channelLogosProvider(reg));
+                if (_selectedBand == terrestrialBroadcastingType) {
+                  ref.invalidate(epgGuideProvider(reg));
+                  ref.invalidate(channelLogosProvider(reg));
+                } else {
+                  ref.invalidate(bsChannelsProvider(reg));
+                  ref.invalidate(bsEpgGuideProvider(reg));
+                  ref.invalidate(bsChannelLogosProvider(reg));
+                }
               },
             ),
         ],
@@ -158,46 +167,71 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
       body: reg == null
           ? const Center(
               child: Text('nasne が登録されていません。設定画面で登録してください。'))
-          : ref.watch(epgGuideProvider(reg)).when(
-                loading: () => const LoadingView(),
-                error: (e, _) => ErrorView(
-                  message: userMessageForError(e),
-                  onRetry: () => ref.invalidate(epgGuideProvider(reg)),
-                ),
-                data: (guide) => _GuideView(
-                  reg: reg,
-                  guide: _visibleGuide(
-                      guide, ref.watch(showSubchannelsProvider)),
-                  logos: ref.watch(channelLogosProvider(reg)).value ?? const {},
-                  selectedDay: _selectedDay,
-                  onSelectDay: (day) => setState(() {
-                    _selectedDay = day;
-                    _scrolledToNow = false;
-                  }),
-                  rulerController: _rulerController,
-                  bodyController: _bodyController,
-                  scrolledToNow: _scrolledToNow,
-                  onScrolledToNow: () => _scrolledToNow = true,
-                ),
-              ),
+          : _buildBandGuide(reg),
     );
   }
-}
 
-/// The guide with subchannels removed unless [showSubchannels]
-/// (plan 25: hidden by default; the official app does not show
-/// subchannel titles either, plan 24).
-EpgGuide _visibleGuide(EpgGuide guide, bool showSubchannels) {
-  if (showSubchannels) return guide;
-  final subchannels = subchannelServiceIds(
-      guide.services.map((s) => s.channel).toList());
-  if (subchannels.isEmpty) return guide;
-  return EpgGuide(
-    broadcastingType: guide.broadcastingType,
-    services: guide.services
-        .where((s) => !subchannels.contains(s.channel.serviceId))
-        .toList(),
-  );
+  Widget _buildBandGuide(RegisteredNasne reg) {
+    final isBs = _selectedBand == bsBroadcastingType;
+    final guideAsync = isBs
+        ? ref.watch(bsEpgGuideProvider(reg))
+        : ref.watch(epgGuideProvider(reg));
+    final logos = isBs
+        ? (ref.watch(bsChannelLogosProvider(reg)).value ?? const <int, List<int>>{})
+        : (ref.watch(channelLogosProvider(reg)).value ?? const <int, List<int>>{});
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: SegmentedButton<int>(
+            segments: const [
+              ButtonSegment<int>(value: terrestrialBroadcastingType, label: Text('地デジ')),
+              ButtonSegment<int>(value: bsBroadcastingType, label: Text('BS')),
+            ],
+            selected: {_selectedBand},
+            onSelectionChanged: (selection) => setState(() {
+              _selectedBand = selection.first;
+              _scrolledToNow = false;
+            }),
+          ),
+        ),
+        Expanded(
+          child: guideAsync.when(
+            loading: () => const LoadingView(),
+            error: (e, _) => ErrorView(
+              message: userMessageForError(e),
+              onRetry: () {
+                if (isBs) {
+                  ref.invalidate(bsChannelsProvider(reg));
+                  ref.invalidate(bsEpgGuideProvider(reg));
+                } else {
+                  ref.invalidate(epgGuideProvider(reg));
+                }
+              },
+            ),
+            data: (guide) => _GuideView(
+              reg: reg,
+              guide: guideWithSubchannelSetting(
+                guide,
+                ref.watch(showSubchannelsProvider),
+              ),
+              logos: logos,
+              selectedDay: _selectedDay,
+              onSelectDay: (day) => setState(() {
+                _selectedDay = day;
+                _scrolledToNow = false;
+              }),
+              rulerController: _rulerController,
+              bodyController: _bodyController,
+              scrolledToNow: _scrolledToNow,
+              onScrolledToNow: () => _scrolledToNow = true,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _GuideView extends StatelessWidget {
@@ -240,7 +274,9 @@ class _GuideView extends StatelessWidget {
         d,
     ];
     final today = _EpgScreenState._jstDateOf(DateTime.now());
-    final day = selectedDay ?? (days.contains(today) ? today : days.first);
+    final day = selectedDay != null && days.contains(selectedDay)
+        ? selectedDay!
+        : (days.contains(today) ? today : days.first);
     final dayStart = _EpgScreenState._jstDayStart(day);
     final dayEnd = dayStart.add(const Duration(days: 1));
 
