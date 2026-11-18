@@ -3757,3 +3757,24 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
   - 移動元: `~/Desktop/torne mobile HB 1.4.0.app` (中身は 1.4.1 / ビルド30)
   - 移動先: `~/Applications/torne mobile HB.app` (フォルダ名は版数なしの形)
 - **移動後の検証**: 新しいパスで `codesign --verify --deep --strict` 合格、**Authority = `torne-mobile-hb-signing`**、Designated Requirement は §66.6 と完全に同一、entitlement は `com.apple.security.files.user-selected.read-only` の1件のみ。起動スモークテストも合格 (新しいパスから起動し10秒後もプロセス生存、正常終了を確認)。
+
+## 71. デスクトップ版「ログフォルダを開く」ボタン (2026-11-18、ビルド31)
+
+- 背景: ログ共有 (§46) はモバイルの共有シート専用で、デスクトップでは「このプラットフォームではログを共有できません」と表示されるだけだった。本人から「回避不能か、ファイルブラウザを開くくらいは可能か」と問い合わせがあり (2026-11-18)、選択肢から「ログフォルダを開くボタンを付ける」を選んで実施した。
+- 実装 (コミット `cd84c04`):
+  - `lib/app/log_folder.dart` を新設。プラットフォーム別のファイルマネージャ起動コマンドを決める純関数 `fileManagerCommandFor` と、実行役 `DebugLogFolderOpener` で構成する。コマンドは Windows = `explorer.exe` / macOS = `open` / Linux = `xdg-open`。**explorer.exe はフォルダを開けても終了コード 1 を返す癖があるため、Windows では終了コードを判定に使わず** (プロセス起動自体の失敗だけを見る)、`open` / `xdg-open` は終了コードを検査する。
+  - フォルダが無い場合は先に `debug_logs` を作ってから開く (デバッグモードで一度も記録していない状態でも、押して無反応にならない形)。
+  - 失敗は呼び出し側へ例外として返し、握り潰さない。設定画面は失敗時にスナックバー「ログフォルダを開けませんでした」を出し、診断ログにも残す (§69.5 の申し送りの考え方をこのボタンにも適用)。
+  - プロバイダは共有側と対の `debugLogFolderOpenerProvider` を追加 (保存先ディレクトリが無い文脈では null)。
+  - 設定画面のデバッグ節: **デスクトップ (`isDesktopStorePlatform`) では共有タイルの枠を「ログフォルダを開く」タイルに置き換える**。併設にしなかったのは、デスクトップでは共有タイルが恒常的に行き止まり (押しても「共有できません」) のままで、動くボタンの隣に置くのは画面の整合性を欠くため。モバイルの共有タイルと動作は無変更。
+- テスト: `test/log_folder_test.dart` を新規追加 (9件: コマンド解決 ×4、フォルダ作成+起動、explorer の終了コード1を成功扱い、非ゼロ終了の失敗化、起動失敗の伝播、非対応プラットフォームで何もしない)。**全290件合格** (従来281+新規9)、`flutter analyze` クリーン。
+- 版数: **1.4.1 据え置き、ビルド番号 31** (pubspec.yaml と `lib/core/app_version.dart`、コミット `5aaac36`)。モバイルの成果物は作り直していない (リリース済みビルド30がモバイルの最新)。
+- 成果物 (すべて `5aaac36` からビルド):
+  - **Windows**: marog でビルドし、Desktop の `TorneMobileHomeBrew\` フォルダを差し替えた。exe の版数 1.4.1+31、同梱 libmpv-2.dll は arib2 (43,685,902 B)。起動スモーク合格 (10秒後もプロセス生存)。
+  - **Linux**: tar.gz を作り直し、marnux `~/ダウンロード/` に配置した (同名でビルド30と差し替え)。11,357,770 B、SHA-256 `23c9e0f3da0cbef7af535a623aeb89e28624be184dbcc898e2e8abc4b42799c3`。
+  - **macOS**: Mac クローンで **BUILD SUCCEEDED** (Info.plist で 1.4.1 / 31 を確認)。署名段は従来通り SSH セッション制約 (`errSecInternalComponent`) で停止し、ビルド済み .app はクローンの `build/macos/Build/Products/Release/torne mobile HB.app` に残置した。本人の署名コマンドは §69/§70 と同形式 (--entitlements 付き):
+    ```bash
+    cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=none --entitlements macos/Runner/Signing.entitlements --sign torne-mobile-hb-signing "build/macos/Build/Products/Release/torne mobile HB.app" && codesign --verify --deep --strict "build/macos/Build/Products/Release/torne mobile HB.app" && echo SIGNED-OK
+    ```
+    `SIGNED-OK` の後、署名検証を経て新ルールの配置先 `~/Applications/torne mobile HB.app` (§70.2) へ差し替える。
+- 残件: 本人の実機確認 (各デスクトップ OS でボタンからフォルダが開くこと) と、macOS の署名 + `~/Applications` 差し替え。版数上げは引き続き実機確認の後。
