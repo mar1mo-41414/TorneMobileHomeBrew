@@ -3723,3 +3723,18 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 - **Mac ビルド29: 資格情報画面のピッカーが開き、credentials.env のインポート、その後の再生まで正常動作を確認した。**
 - **キーチェーンパスワード要求は表示されなかった** (ビルド28では1回だけ表示 → ビルド29ではゼロ)。§66 の署名固定化の目的が実機で完全に達成された形。
 - これにより **§67 (env インポート) は iPhone・Mac の両方で実機成立**、**§69 (ピッカー修正) も実機成立**。
+
+## 70. 全プラットフォーム統一と v1.4.1 リリース (2026-11-18、ビルド30)
+
+- 本人決定 (2026-11-18): Windows 再生の解決 (§68 の実機確認 §68.7) を受け、全プラットフォームで機能とバージョンを合わせて 1.4.1 としてリリースする。
+- 版数を **1.4.1+30** に統一した (pubspec.yaml と `lib/core/app_version.dart` の両方、コミット `eac97b6`)。含まれる機能: シーク対応 (§61)、Windows 対応と libmpv arib2 修正 (§64 / §65 / §68)、credentials.env インポート (§67)、macOS ピッカー修正と署名対策 (§66 / §69)、字幕 (Android / iOS / macOS はカスタム libmpv、Windows は arib2、Linux はシステム libmpv 依存)。
+- テスト: **全281件合格**、`flutter analyze` クリーン。
+- 成果物 (すべて同一 HEAD `20c0241` からビルド):
+  - **IPA**: 16,523,141 B、SHA-256 `e7582fe2eb3ec13a43f1cce86b7355864097d342fc7920b2854633841268a1e4`。load command 監査合格 (24 Mach-O / 261 load commands)。marnux `~/tmp/Decrypted-ipa/` に配置し、旧 1.4.0 の IPA は除去。
+  - **APK**: 102,180,393 B、SHA-256 `5b618e0a4e91b39532ba9d665e6bc8ac9410a46ebfc80564ba9a260fe4ac8d19`。versionName 1.4.1 / versionCode 30、配布署名 (証明書 SHA-256 `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5`)、全 ABI の libmpv に aribb24 を確認。marnux `~/ダウンロード/` に配置し、旧 1.4.0 は除去。
+  - **macOS zip**: 38,058,806 B、SHA-256 `e46faf7f011074e015f806a640fddf8c2d8573e620042b028dca05817a25eec6`。ad-hoc 署名 + `Signing.entitlements` (user-selected read-only の1件のみ、keychain-access-groups なし)、Info.plist で 1.4.1 / 30 を確認。
+  - **Windows zip**: 38,956,401 B、SHA-256 `a57110d6ecba564a881cdee986e8a3238061ede9f5033861a8b27dcf1c96d088`。同梱 libmpv-2.dll は arib2 (43,685,902 B)。marog の Desktop 配置はフォルダ1つ (`TorneMobileHomeBrew\`) に統一し、切り分け用に残っていた旧フォルダ `TorneMobileHomeBrew-windows-1.4.0` は除去。起動スモーク合格 (10秒後もプロセス生存)。
+  - **Linux tar.gz**: 11,360,737 B、SHA-256 `7ca624317d177c5af3110cfc49bc70f2f6ca43aff8201bd330a5a959a081de1a`。marnux `~/ダウンロード/` に配置し、旧 1.4.0 は除去。
+- README を v1.4.1 に更新した (コミット `20c0241`: 版数表記、Windows 版のインストール節、シークと env インポートの機能追記、字幕注記への Windows 追加)。
+- **リリース**: タグ `v1.4.1` を `20c0241` に打ち、GitHub リリースを作成した (https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/tag/v1.4.1、公開・非ドラフト・非プレリリース、アセット5点)。**全アセットを未認証で再ダウンロードし、SHA-256 が上記と全て一致**することを確認した。
+- 残作業: Mac の Desktop 配置のみ身元署名待ち。クローン側に残したビルド済み .app (現在は ad-hoc 署名) へ本人が署名 ID のコマンドを実行した後に Desktop 差し替えを行う。リリース自体は ad-hoc 署名のアセットで完結している。
