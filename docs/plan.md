@@ -3746,3 +3746,14 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 - **Desktop 差し替え完了**: 差し替え前の Desktop が §69 の署名済みビルド29であることを確認してから、署名済みビルド30へ差し替え (旧版の退避は本人の新ルールにより行わず)。差し替え後の Desktop コピーでも、版数 1.4.1/30・Authority = `torne-mobile-hb-signing`・同一 DR・entitlement 1件のみ・verify 合格を再確認した。
 - **スモークテスト合格**: Desktop コピーを起動し、10 秒後もプロセス生存 (Desktop パスからの起動、PID 42675) を確認して終了した (osascript の quit が -128 を返すのは §67・§69 と同じ既知の挙動で、プロセスの終了自体は確認できている)。
 - これで **v1.4.1 の全プラットフォーム配置が完結**した。
+
+### 70.2 Mac の配置先変更と Desktop 整理 (2026-11-18)
+
+- **配置ルール変更 (本人指示、2026-11-18)**: Mac 版アプリの配置先は今後 Desktop ではなく **`~/Applications`** とする。
+- **Desktop の不要ファイル削除**: 本人が「配置不要」と明示した2ファイルを削除した。削除前にファイル名とサイズを確認 (§70 の成果物と一致)、削除後に不在を確認した。
+  - `/Users/markun/Desktop/TorneMobileHomeBrew-1.4.1.ipa` (16,523,141 B)
+  - `/Users/markun/Desktop/TorneMobileHomeBrew-macos-1.4.1.zip` (38,058,806 B)
+- **アプリの移動**: §70.1 で Desktop に配置した署名済みビルド30を新ルールの配置先へ移動した。
+  - 移動元: `~/Desktop/torne mobile HB 1.4.0.app` (中身は 1.4.1 / ビルド30)
+  - 移動先: `~/Applications/torne mobile HB.app` (フォルダ名は版数なしの形)
+- **移動後の検証**: 新しいパスで `codesign --verify --deep --strict` 合格、**Authority = `torne-mobile-hb-signing`**、Designated Requirement は §66.6 と完全に同一、entitlement は `com.apple.security.files.user-selected.read-only` の1件のみ。起動スモークテストも合格 (新しいパスから起動し10秒後もプロセス生存、正常終了を確認)。
