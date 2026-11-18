@@ -3876,3 +3876,64 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
   - 第2弾で BS 予約に対応し、投稿者の実機で「スマホから予約作成＋実際に録画開始」まで確認済みと主張している。ファイル名の "verified" は投稿者側の検証の意である。
   - 対象は v1.4.1+32 (当方が第1弾を取り込んだビルド32)。
 - 当方の状態: **未検証・未取り込み**。本節の記録は提供を受けた事実と投稿者の自己申告の記録のみで、パッチ内容の検証・取り込みはまだしていない。本節残件 (BS の実機確認、BS 番組表からの録画予約確認) に対する投稿者側の回答として受理した段階であり、検証は後日行う。
+
+
+## 74. Buffalo 製 nasne 互換性の調査: Issue #1 の3点 (2026-11-18、調査のみ・未対応)
+
+- 経緯: GitHub Issue #1 (起票者 zcomlao、2026-11-18)。Buffalo 製 nasne (デバイス記述の manufacturer = `Buffalo Inc.`、本体の版 4.50。SIE の 2.60 とは別体系) で本アプリが動かない点を、報告者が別の nasne クライアントを作る過程での読み取り専用計測 (SSDP・デバイス記述・PINVerify・SOAP 一覧・Browse) から特定し、現行 main (`9e3b39b` 時点) のコードと照らして報告したもの。修正案の提示まで含む、質の高い技術報告だった。
+- README への先行明記: 対応状況の案内として、README の「動作条件」に「Buffalo 製 nasne について」を追加した (commit `900ce8f`、Gitea → GitHub push 済み)。内容は「現時点では非対応。今後対応させていく方針だが、今はまともに動かない。作者が Buffalo 製を所持していないため対応は大幅に遅くなる見込みで、検証は所持している方の協力に頼ることになる (協力者求む)。対応させる意思はある」という本人の方針どおり。
+- 本節は調査記録であり、**実装はまだしない**。Issue への返信もまだしていない。
+
+### 74.1 発見: modelName の不一致 (コード確認)
+
+- `lib/core/models/device.dart` の `isNasne` は `modelName == 'nasne'` の完全一致のみ。Buffalo 製の記述では `modelName` が `buffalo-nasne` のため不一致になり、発見から落ちる。
+- 使用箇所は2経路: SSDP 発見 (`lib/core/services/discovery.dart`、describe 後に isNasne で濾過) とサブネット走査 (`lib/core/services/discovery_scan.dart` の `_identify`、同じく isNasne で濾過)。
+- Buffalo でも SSDP 応答自体は届く (ST `urn:schemas-upnp-org:device:MediaServer:1`、SERVER に `nasne/1.0`、LOCATION の記述は 200 で取得可) ため、SSDP 経路では describe までは成功し、落ちるのは isNasne 判定だけである (74.2 の走査経路とは事情が違う)。
+
+### 74.2 記述の在りかと ContentDirectory control URL (コード影響範囲)
+
+- 実測差分 (報告者計測):
+
+  | | SIE 製 (§11.2 実測) | Buffalo 製 |
+  |---|---|---|
+  | 記述 LOCATION | `http://<nasne>:58888/` | `http://<nasne>:58888/XD/<uuid>` (`/` は 404) |
+  | ContentDirectory controlURL | `/MediaServer_ContentDirectory/control` | `/UD/<uuid>?0` (ConnectionManager は `?1`) |
+  | XSRS・X_PvrControl (64230) | `/XSRS`・`/X_PvrControl` | 同じ |
+
+- コード側の事情:
+  - `parseDeviceDescription` (discovery.dart) 自体は汎用で、control URL は記述文書の値を LOCATION 基準で解決する。正しい LOCATION から記述を引ければ、Buffalo の control URL も正しく得られる。
+  - SSDP 経路: LOCATION は SSDP 応答由来なので記述は引ける。障壁は 74.1 の isNasne のみ。
+  - 走査経路 `_identify` (discovery_scan.dart): `http://<host>:58888/` を決め打ちで引くため Buffalo では 404 になり、例外を拾って `NasneDevice.direct(host)` にフォールバックする。direct は SIE 実測の既定 URL を埋める (ContentDirectory は `/MediaServer_ContentDirectory/control`) ため、Buffalo では CD control URL が外れて Browse が正しく届かず、**DIDL との結合が 0 件**になる (残りコピー回数・res・番組説明が付かない)。XSRS の URL は一致するので、録画一覧そのものは取れる。
+  - 手入力登録も同じフォールバック経路 (settings_screen.dart の手入力登録、`lib/app/providers.dart` の `describedDevice ?? NasneDevice.direct(...)`) のため同症状になる。
+- 報告者の回避策 (自作クライアントで実証済み): 手入力アドレスで `58888/` が取れなければ、そのアドレスの UDP 1900 番へ**ユニキャスト M-SEARCH** を送り、応答の LOCATION から記述を引く。**MX ヘッダが無いと応答がなく、`MX: 1` で応答する** (HOST はマルチキャスト表記 `239.255.255.250:1900` のまま)。現行の SsdpTransport はマルチキャスト検索のみで、ユニキャスト M-SEARCH の実装は無い。
+
+### 74.3 頁送り: 現行コードの確認と SIE 実測 (最重要)
+
+- 報告: Buffalo では1回の応答に上限がある (`X_GetTitleList` は 200 件、Browse は 50 件)。`NumberReturned` が上限、`TotalMatches` が全件 (件数 API と一致) で、StartingIndex を NumberReturned ずつ進めれば続きが返る。
+- 現行コードには頁送りが**無い** (コード実読):
+  - `lib/core/services/title_catalog.dart`: X_GetTitleList を StartingIndex 0 / RequestedCount 0 で**1回だけ**呼ぶ。
+  - `lib/core/services/metadata.dart` の `DlnaMetadataService.browse`: Browse を StartingIndex 0 / RequestedCount 0 で**1回だけ**呼ぶ。
+  - `NumberReturned` / `TotalMatches` は lib/ のどこでも参照していない (grep 実測で 0 件)。
+  - したがって Buffalo では、録画 200 件超は一覧から脱落し、DIDL 結合は先頭 50 件のみになる。ライブの BS/CS コンテナ (50 件超) の Browse も同じ影響を受ける。
+- **SIE 実測 (2026-11-18、公式 FW 2.60 の当方実機 192.168.11.129、読み取り専用)**: WiFi 実験の HDD 交換で実機が Debian 構成に変わる前に計測した。
+  - Browse `0/video/LiveTuner/BS` (RequestedCount=0): **NumberReturned=78 / TotalMatches=78**。78 件全件が1回で返った。
+  - Browse `0/video/LiveTuner/CS` (RequestedCount=0): **NumberReturned=55 / TotalMatches=55**。同上。
+  - 参考: Browse `0/video/LiveTuner/DTTB` は 24/24、`0/video/all` は 9/9。StartingIndex・RequestedCount が honored なことも確認した (BS で start=50 → 28 件、req=10 → 10 件)。
+  - X_GetTitleList (当方機の録画は 9 件): start=0 / req=0 → NumberReturned=9 / TotalMatches=9。req=3 → 3 件、start=3 → 残り 6 件で、パラメータは honored。ただし 200 件の上限そのものは当方機の件数では検証不能。
+  - **結論: Browse の 50 件上限は SIE には存在しない** (51 件を超える BS 78 件・CS 55 件のコンテナが、RequestedCount=0 の1回で全件返ることを実測)。頁送りの欠如は現行コードでは **Buffalo 固有の不具合**であり、SIE では少なくとも Browse については顕在化しない。X_GetTitleList の 200 件上限が SIE にもあるかは未検証 (200 件超の録画を持つ個体での計測が要る)。報告者からの「SIE 製で 51 件以上のコンテナの Browse で NumberReturned と TotalMatches を見てほしい」という依頼には、本実測が回答になる。
+
+### 74.4 未計測・不足情報
+
+- DTCP-IP 再生系 (58890 の web-video、AKE のポート・振る舞い) は報告者の計測対象外で、Buffalo 製で再生まで通るかは未知数。
+- 報告に型番の記載が無い (manufacturer 文字列と FW 4.50 のみ)。対応判断や追加確認では型番が不足情報になる。
+- 違わなかったこと (報告より): 3倍 res の PN は同一 (`DLNA.ORG_PN=DTCP_AVC_TS_JP_AAC_T`)。モバイル res の PN は相違する (SIE `SONY.COM_PN=DTCP_AVC_TS_SD_30_JP_AAC_T`、Buffalo `DLNA.ORG_PN=DTCP_AVC_TS_MP_SD_AAC_LTP_T`) が、画質判定は res URL の `quality=` で行うため現行実装に影響なし。ライブ `0/video/LiveTuner` の形 (3帯域コンテナ、item id と channelListGet の一致) は SIE と同じ。
+
+### 74.5 修正方針案 (未実施)
+
+報告者の修正案は3点とも筋が通っており、基本線として妥当と評価する:
+
+1. **発見**: `isNasne` で `buffalo-nasne` も認める。未知の modelName を広く受けるのではなく、実測した2名 (`nasne` / `buffalo-nasne`) だけを列挙する形にする (報告者案どおり)。
+2. **記述の取得**: 手入力・走査で `58888/` が取れなければ、ユニキャスト M-SEARCH (MX: 1) で LOCATION を引いて describe する経路を足す。記述が引けた場合は、その文書の control URL を使い、direct の既定 URL フォールバックは最終手段に下げる。
+3. **頁送り**: X_GetTitleList と Browse の両方で、TotalMatches に達するまで StartingIndex を進める (壊れた応答への対策として回数上限を付ける)。Browse は複数ページの items を1つの DidlDocument に結合する変更が要る。SIE では TotalMatches = NumberReturned で即終了するため、従来の挙動は変わらない。
+- 検証の構図: Buffalo 実機は当方に無いため、対応する場合の実機検証は BS 番組表 (§73) のときと同様に、報告者・所持者の環境に委ねることになる。README にはその旨と協力者募集を明記済み。
+- 実装時期は未定。本節は調査と方針の記録のみ。
