@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 import '../core/core.dart';
 import 'ake_socket.dart';
 import 'debug_log.dart';
+import 'log_folder.dart';
 import 'log_share.dart';
 import 'multicast_lock.dart';
 import 'wakelock.dart';
@@ -193,6 +194,17 @@ final debugLogSharerProvider = Provider<DebugLogSharer?>((ref) {
   final dir = ref.watch(storeDirectoryProvider);
   if (dir == null) return null;
   return DebugLogSharer(storeDirectory: dir);
+});
+
+/// Opens the debug log folder in the desktop file manager
+/// (plan 71) — the desktop counterpart of the share action
+/// above. Null under the same conditions as
+/// [debugLogSharerProvider]; the settings screen shows the
+/// folder action on desktop instead of the share action.
+final debugLogFolderOpenerProvider = Provider<DebugLogFolderOpener?>((ref) {
+  final dir = ref.watch(storeDirectoryProvider);
+  if (dir == null) return null;
+  return DebugLogFolderOpener(storeDirectory: dir);
 });
 
 final playbackEngineProvider = Provider<PlaybackEngine>(

@@ -9,9 +9,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app/debug_log.dart';
+import '../app/log_folder.dart';
 import '../app/log_share.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
+import '../app/store_directory.dart';
 import '../core/core.dart';
 import 'dtcp_credential_screen.dart';
 import 'error_messages.dart';
@@ -31,6 +33,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _searchError;
   bool _registering = false;
   bool _sharingLogs = false;
+  bool _openingLogFolder = false;
   final _manualHost = TextEditingController();
 
   @override
@@ -229,16 +232,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // Sharing stays available with the master switch off:
           // the logs that matter are usually already recorded by
           // the time the user comes here to send them (plan 46).
+          // Desktop has no share sheet to send them through;
+          // there the same slot opens the log folder in the file
+          // manager instead (plan 71).
           if (storeDir != null)
-            Builder(
-              builder: (tileContext) => ListTile(
-                leading: const Icon(Icons.share),
-                title: const Text('デバッグログを共有'),
-                subtitle: const Text('保存済みの診断ログファイルを共有シートで送ります'),
-                enabled: !_sharingLogs,
-                onTap: _sharingLogs ? null : () => _shareDebugLogs(tileContext),
+            if (isDesktopStorePlatform)
+              ListTile(
+                leading: const Icon(Icons.folder_open),
+                title: const Text('ログフォルダを開く'),
+                subtitle: const Text('保存済みの診断ログのフォルダをファイルマネージャで開きます'),
+                enabled: !_openingLogFolder,
+                onTap: _openingLogFolder ? null : _openLogFolder,
+              )
+            else
+              Builder(
+                builder: (tileContext) => ListTile(
+                  leading: const Icon(Icons.share),
+                  title: const Text('デバッグログを共有'),
+                  subtitle: const Text('保存済みの診断ログファイルを共有シートで送ります'),
+                  enabled: !_sharingLogs,
+                  onTap: _sharingLogs
+                      ? null
+                      : () => _shareDebugLogs(tileContext),
+                ),
               ),
-            ),
           const Divider(),
           const Padding(
             padding: EdgeInsets.all(16),
@@ -294,6 +311,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .showSnackBar(const SnackBar(content: Text('ログの共有に失敗しました')));
     } finally {
       if (mounted) setState(() => _sharingLogs = false);
+    }
+  }
+
+  /// Opens the debug log folder in the desktop file manager
+  /// (plan 71), the desktop counterpart of the share action.
+  /// Failures are shown, not swallowed: a tap that silently does
+  /// nothing is exactly how the picker failure in plan 69
+  /// presented itself.
+  Future<void> _openLogFolder() async {
+    final opener = ref.read(debugLogFolderOpenerProvider);
+    if (opener == null || _openingLogFolder) return;
+    setState(() => _openingLogFolder = true);
+    try {
+      final outcome = await opener.open();
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'debug log folder open: outcome=${outcome.name}',
+      );
+      if (!mounted) return;
+      if (outcome == DebugLogFolderOpenOutcome.unsupported) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('このプラットフォームではログフォルダを開けません')),
+        );
+      }
+    } catch (e) {
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'debug log folder open failed: $e',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('ログフォルダを開けませんでした')));
+    } finally {
+      if (mounted) setState(() => _openingLogFolder = false);
     }
   }
 
