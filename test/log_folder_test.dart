@@ -33,7 +33,7 @@ void main() {
 
     test('windows normalizes forward slashes for explorer.exe', () {
       // The opener builds the path by interpolating '/' onto the
-      // backslashed store path (plan 78). explorer.exe cannot
+      // backslashed store path (plan 79). explorer.exe cannot
       // resolve that mixed form and opens Documents instead, so
       // the command must carry native separators throughout.
       final command = fileManagerCommandFor(

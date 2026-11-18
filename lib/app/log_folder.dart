@@ -59,7 +59,7 @@ FileManagerCommand? fileManagerCommandFor({
     // log-folder name is interpolated onto it with '/'. Given
     // that mixed form, Explorer silently falls back to opening
     // the user's Documents folder instead of the log folder
-    // (measured on a real machine, plan 78). Dart's own file
+    // (measured on a real machine, plan 79). Dart's own file
     // APIs accept '/', which is why only this hand-off broke.
     // Hand Explorer native separators only.
     return FileManagerCommand('explorer.exe', [
