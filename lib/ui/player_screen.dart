@@ -73,6 +73,17 @@
 /// (plan 54; see player_track_policy), so captions cannot
 /// render until the libmpv builds gain one.
 ///
+/// Plan 80: the seek-freeze fixes. Recorded playback now
+/// runs with mpv's cache on (see player_cache_policy) so
+/// the demuxer's re-reads stop round-tripping the proxy.
+/// And a playback that had started and then dies mid-stream
+/// — a fatal error after the start, or the silent stall of
+/// plan 78, where mpv stopped on the last frame with no
+/// error at all — is surfaced as an interruption over the
+/// frozen frame, with a resume action that re-opens the
+/// same session stream in place, instead of the screen
+/// failing wholesale as if the start had been bad.
+///
 /// Player UI follow-up (after 1.4.0), from the owner's
 /// device feedback: the recorded screen's transport row
 /// gains ±10 s skip buttons, and the seek bar gains a
@@ -99,6 +110,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../app/providers.dart';
 import '../core/core.dart';
+import 'player_cache_policy.dart';
 import 'player_error_policy.dart';
 import 'player_seek_policy.dart';
 import 'player_track_policy.dart';
@@ -134,6 +146,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Timer? _watchdog;
   bool _playing = false;
   String? _error;
+
+  /// Interruption state (plan 80): playback that had started
+  /// stopped mid-stream — a fatal player error after the
+  /// start, or the silent stall of plan 78 — and the notice
+  /// with its resume action is showing over the frozen frame.
+  bool _interrupted = false;
+  String? _interruptDetail;
+  Timer? _stallTimer;
+
+  /// The latest value of the playing stream (unlike
+  /// [_playing], which latches once playback has started),
+  /// and the signals the interruption policy reads: mpv's
+  /// end-of-stream flag, whether buffering was the last
+  /// observed state while playing, and the last position a
+  /// resume should return to.
+  bool _playingNow = false;
+  bool _completed = false;
+  bool _bufferingSincePlaying = false;
+  Duration _lastPosition = Duration.zero;
+
+  /// How long a mid-stream stop may last before it is
+  /// surfaced as an interruption (plan 80): long enough for
+  /// mpv's own recovery and a passing stall, short enough
+  /// that a dead playback does not sit silent.
+  static const Duration stallTimeout = Duration(seconds: 10);
 
   /// Tracks the demuxer currently reports, and the selection
   /// mpv currently holds (plan 53). Both start empty/'auto'
@@ -213,15 +250,48 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _player.stream.playing.listen((playing) {
         _diag(DiagCategory.playback, 'player: playing=$playing');
         _wakelockSession.setPlaying(playing);
+        final wasPlaying = _playingNow;
+        _playingNow = playing;
         if (playing) {
           _playing = true;
           _watchdog?.cancel();
+          // A (re)start clears any interruption state
+          // (plan 80): playback is running again, whether it
+          // recovered on its own or the user resumed it.
+          _stallTimer?.cancel();
+          _bufferingSincePlaying = false;
+          if (_interrupted && mounted) {
+            setState(() {
+              _interrupted = false;
+              _interruptDetail = null;
+            });
+          }
+        } else if (wasPlaying) {
+          _onPlaybackStopped();
         }
       }),
     );
     _subscriptions.add(
       _player.stream.buffering.listen((buffering) {
         _diag(DiagCategory.playback, 'player: buffering=$buffering');
+        if (_playingNow) {
+          // Buffering while mpv is trying to play is the
+          // signature the plan-78 stalls left just before
+          // mpv stopped (plan 80); buffering clearing again
+          // while playing is a recovery and clears it.
+          _bufferingSincePlaying = buffering;
+        }
+      }),
+    );
+    _subscriptions.add(
+      _player.stream.completed.listen((completed) {
+        _diag(DiagCategory.playback, 'player: completed=$completed');
+        _completed = completed;
+      }),
+    );
+    _subscriptions.add(
+      _player.stream.position.listen((position) {
+        _lastPosition = position;
       }),
     );
     _subscriptions.add(
@@ -285,7 +355,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         }
         _wakelockSession.setPlaying(false);
         _watchdog?.cancel();
-        if (mounted && _error == null) {
+        if (!mounted) return;
+        if (_playing) {
+          // The failure arrived after playback had started
+          // (plan 80): an interruption, not a failed start.
+          // Keep the frozen frame and offer the in-place
+          // resume instead of replacing the screen with the
+          // start-failure message.
+          setState(() {
+            _interrupted = true;
+            _interruptDetail = error;
+          });
+        } else if (_error == null) {
           setState(() => _error = error);
         }
       }),
@@ -306,6 +387,83 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           '再生が開始できませんでした (${startTimeout.inSeconds} 秒以内に'
           '映像が届きませんでした)。',
     );
+  }
+
+  /// A playing→stopped transition (plan 80): when the
+  /// policy classes it as a mid-stream death, give mpv a
+  /// grace period to recover on its own before surfacing
+  /// anything.
+  void _onPlaybackStopped() {
+    if (!playbackStoppedEarly(
+      alreadyPlaying: _playing,
+      completed: _completed,
+      bufferedBeforeStop: _bufferingSincePlaying,
+    )) {
+      return;
+    }
+    _diag(
+      DiagCategory.playback,
+      'player: playback stopped after buffering without '
+      'completing; watching for a recovery for '
+      '${stallTimeout.inSeconds} seconds (plan 80)',
+    );
+    _stallTimer?.cancel();
+    _stallTimer = Timer(stallTimeout, _onStallTimeout);
+  }
+
+  void _onStallTimeout() {
+    if (!mounted || _playingNow || _completed || _error != null) {
+      return;
+    }
+    _diag(
+      DiagCategory.playback,
+      'player: playback did not recover; showing the '
+      'interruption notice (plan 80)',
+    );
+    setState(() => _interrupted = true);
+  }
+
+  /// Re-establishes playback after an interruption, in
+  /// place (plan 80): the session — authentication, the
+  /// loopback proxy and all — is still alive (only leaving
+  /// the screen stops it), so resuming re-opens the same
+  /// stream URL on the same player and, for a recording,
+  /// starts from the last observed position. The title is
+  /// never re-opened from the list, and nothing is
+  /// re-asked. The player's properties (cache mode, sid)
+  /// persist across the re-open; the track listener
+  /// re-applies the caption selection when the new track
+  /// list settles, exactly as at the first open.
+  Future<void> _resume() async {
+    _diag(
+      DiagCategory.playback,
+      'player: resuming after an interruption at '
+      '${_lastPosition.inSeconds}s (live=${widget.live})',
+    );
+    _stallTimer?.cancel();
+    setState(() {
+      _interrupted = false;
+      _interruptDetail = null;
+    });
+    try {
+      await _player.open(
+        Media(
+          widget.session.mediaUri.toString(),
+          start: (!widget.live && _lastPosition > Duration.zero)
+              ? _lastPosition
+              : null,
+        ),
+      );
+      _diag(DiagCategory.playback, 'player: resume open completed');
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: resume failed: $e');
+      if (mounted) {
+        setState(() {
+          _interrupted = true;
+          _interruptDetail = '$e';
+        });
+      }
+    }
   }
 
   /// Applies the caption selection for the current toggle
@@ -430,14 +588,32 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         // track list settles.
         await platform.setProperty('sid', 'no');
         _diag(DiagCategory.playback, 'player: mpv sid pinned to no (default)');
-        // No mpv cache (plan 54): with the demuxer cache on,
-        // an audio track switch on this unseekable stream
-        // never re-engages decoding (measured 30 s and
-        // counting); with it off the same switch settles in
-        // ~2 s. The proxy's prefetch queue is the jitter
-        // buffer instead.
-        await platform.setProperty('cache', 'no');
-        _diag(DiagCategory.playback, 'player: mpv cache disabled (plan 54)');
+        // mpv's cache follows the playback kind (plans 54
+        // and 80; see player_cache_policy). Live keeps it
+        // off: with the demuxer cache on, an audio track
+        // switch on the unseekable live stream never
+        // re-engages decoding (measured 30 s and counting),
+        // and the proxy's prefetch queue is the jitter
+        // buffer. Recordings turn it on, sized by the two
+        // demuxer limits, so the demuxer's probe and seek
+        // re-reads (plan 78.1) are absorbed locally instead
+        // of round-tripping the proxy per hop.
+        final cacheMode = mpvCacheMode(live: widget.live);
+        await platform.setProperty('cache', cacheMode);
+        if (!widget.live) {
+          await platform.setProperty(
+            'demuxer-max-bytes',
+            '$recordingDemuxerMaxBytes',
+          );
+          await platform.setProperty(
+            'demuxer-max-back-bytes',
+            '$recordingDemuxerMaxBackBytes',
+          );
+        }
+        _diag(
+          DiagCategory.playback,
+          'player: mpv cache=$cacheMode (live=${widget.live})',
+        );
       }
       await _player.open(Media(widget.session.mediaUri.toString()));
       _diag(DiagCategory.playback, 'player: open completed');
@@ -564,6 +740,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void dispose() {
     _watchdog?.cancel();
+    _stallTimer?.cancel();
     _wakelockSession.release();
     for (final subscription in _subscriptions) {
       subscription.cancel();
@@ -614,15 +791,75 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                 ),
               ),
             )
-          : MaterialVideoControlsTheme(
-              normal: _materialControlsTheme(fullscreen: false),
-              fullscreen: _materialControlsTheme(fullscreen: true),
-              child: MaterialDesktopVideoControlsTheme(
-                normal: _desktopControlsTheme(),
-                fullscreen: _desktopControlsTheme(),
-                child: Video(controller: _videoController),
+          : Stack(
+              children: [
+                MaterialVideoControlsTheme(
+                  normal: _materialControlsTheme(fullscreen: false),
+                  fullscreen: _materialControlsTheme(fullscreen: true),
+                  child: MaterialDesktopVideoControlsTheme(
+                    normal: _desktopControlsTheme(),
+                    fullscreen: _desktopControlsTheme(),
+                    child: Video(controller: _videoController),
+                  ),
+                ),
+                if (_interrupted) _buildInterruptionBanner(),
+              ],
+            ),
+    );
+  }
+
+  /// The interruption notice (plan 80): shown over the
+  /// frozen frame when playback that had started dies
+  /// mid-stream. Resume re-establishes the stream in place
+  /// (see [_resume]); the close button dismisses the notice
+  /// and leaves the stopped frame as it is.
+  Widget _buildInterruptionBanner() {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        color: Colors.black87,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '再生が中断されました',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  if (_interruptDetail != null)
+                    Text(
+                      _interruptDetail!,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
               ),
             ),
+            const SizedBox(width: 12),
+            FilledButton(onPressed: _resume, child: const Text('再開')),
+            IconButton(
+              tooltip: '閉じる',
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: () => setState(() => _interrupted = false),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

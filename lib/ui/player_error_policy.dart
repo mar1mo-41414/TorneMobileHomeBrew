@@ -69,3 +69,27 @@ bool playerErrorIsFatal(
   required bool live,
   bool alreadyPlaying = false,
 }) => !((live || alreadyPlaying) && isUnseekableStreamError(error));
+
+/// Whether a playing→stopped transition means the playback
+/// died mid-stream (plan 80), as opposed to ending normally
+/// or being paused on purpose.
+///
+/// The plan-78 stalls produced no fatal error at all: mpv
+/// waited for data that never came (buffering), then simply
+/// stopped on the last frame — from the screen's side, a
+/// playing→stopped transition with buffering observed since
+/// playback was last running and no end-of-stream signal.
+/// [alreadyPlaying] is whether playback had ever started,
+/// [completed] is mpv's end-of-stream signal, and
+/// [bufferedBeforeStop] is whether buffering was observed
+/// after playback was last running. A stop the user asked
+/// for (a pause) shows no fresh buffering in the ordinary
+/// case and stays unflagged; the exception — pausing in the
+/// middle of a buffering episode — is accepted, because the
+/// interruption notice this gates is dismissible and its
+/// resume action is harmless.
+bool playbackStoppedEarly({
+  required bool alreadyPlaying,
+  required bool completed,
+  required bool bufferedBeforeStop,
+}) => alreadyPlaying && !completed && bufferedBeforeStop;

@@ -117,4 +117,53 @@ void main() {
       );
     });
   });
+
+  group('playbackStoppedEarly (plan 80)', () {
+    test('a stop after buffering, without completing, is an '
+        'interruption', () {
+      expect(
+        playbackStoppedEarly(
+          alreadyPlaying: true,
+          completed: false,
+          bufferedBeforeStop: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a completed playback is a normal end', () {
+      expect(
+        playbackStoppedEarly(
+          alreadyPlaying: true,
+          completed: true,
+          bufferedBeforeStop: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('a stop without fresh buffering is not flagged '
+        '(a deliberate pause)', () {
+      expect(
+        playbackStoppedEarly(
+          alreadyPlaying: true,
+          completed: false,
+          bufferedBeforeStop: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('a stop before playback ever started is not an '
+        'interruption (the start-failure path owns it)', () {
+      expect(
+        playbackStoppedEarly(
+          alreadyPlaying: false,
+          completed: false,
+          bufferedBeforeStop: true,
+        ),
+        isFalse,
+      );
+    });
+  });
 }
