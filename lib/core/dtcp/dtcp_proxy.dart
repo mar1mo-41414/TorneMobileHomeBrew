@@ -319,7 +319,11 @@ class DtcpProxy {
     required DiagLog diag,
     int? totalBytes,
     Duration? totalDuration,
-  }) : _contentUrl = contentUrl, // ignore: prefer_initializing_formals
+    int? windowCapBytesOverride,
+  }) : _window = _WindowCache(
+         capBytes: windowCapBytesOverride ?? windowCapBytes,
+       ),
+       _contentUrl = contentUrl, // ignore: prefer_initializing_formals
        _keyForLabel = keyForLabel, // ignore: prefer_initializing_formals
        _fetcher = fetcher, // ignore: prefer_initializing_formals
        _diag = diag, // ignore: prefer_initializing_formals
@@ -362,11 +366,10 @@ class DtcpProxy {
   Future<void>? _pumpFuture;
 
   // Seekable-mode state (plan 61).
-  final _WindowCache _window = _WindowCache();
+  final _WindowCache _window;
   _SeekMap? _seekMap;
   _Producer? _producer;
   int _serveGeneration = 0;
-  int _pinGeneration = -1;
 
   /// How long the content stream may go without a single byte
   /// before the proxy gives up (plan 29). The reference client
@@ -400,6 +403,25 @@ class DtcpProxy {
   /// establish before failing (plan 61).
   static const Duration seekEstablishTimeout = Duration(seconds: 30);
 
+  /// Upper bound on one pause wait in the seekable pump
+  /// (plan 80): a backstop so a producer paused on the window
+  /// cap re-evaluates its condition periodically even if a
+  /// notification was missed.
+  static const Duration pumpPauseWaitCap = Duration(seconds: 5);
+
+  /// How many times one content open retries the source's
+  /// transient refusal (HTTP 512) before the refusal is
+  /// treated as final (plan 80; the refusal itself is
+  /// analysed in plan 78.3).
+  static const int maxBusyRetries = 3;
+
+  /// Backoff between those retries, by retry number.
+  static const List<Duration> busyRetryDelays = [
+    Duration(milliseconds: 500),
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+  ];
+
   static Future<DtcpProxy> start({
     required Uri contentUrl,
     required Future<Uint8List> Function(int label) keyForLabel,
@@ -407,6 +429,7 @@ class DtcpProxy {
     DiagLog diag = const DiagLog.none(),
     int? totalBytes,
     Duration? totalDuration,
+    int? windowCapBytesOverride,
   }) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final proxy = DtcpProxy._(
@@ -418,6 +441,7 @@ class DtcpProxy {
       diag: diag,
       totalBytes: totalBytes,
       totalDuration: totalDuration,
+      windowCapBytesOverride: windowCapBytesOverride,
     );
     server.listen(proxy._handle);
     if (proxy._seekable) {
@@ -671,11 +695,65 @@ class DtcpProxy {
     _window.notify();
   }
 
+  /// Throws [response] away WITHOUT reading it to the end
+  /// (plan 80). The discard used to drain: an overshoot
+  /// response's remainder can be gigabytes (plan 78.3
+  /// measured a ~3.27 GB one), and while it drains the
+  /// source's stream slot stays occupied — one of the
+  /// conditions behind the HTTP 512 refusals. Cancelling the
+  /// subscription closes the connection and frees the slot
+  /// at once.
   static Future<void> _discardResponse(HttpClientResponse response) async {
     try {
-      await response.drain<void>();
+      await response.listen((_) {}, onError: (_) {}).cancel();
     } catch (_) {
       // The stream is being thrown away either way.
+    }
+  }
+
+  /// Whether [error] is the source's transient refusal
+  /// (HTTP 512, plan 78.3): the source declines a new stream
+  /// while earlier responses from this session are still
+  /// being reaped on its side, so a short backoff and a
+  /// retry succeed where an immediate retry does not.
+  static bool _isBusyRefusal(Object error) =>
+      error is NasneError &&
+      error.category == NasneErrorCategory.http &&
+      error.code == '512';
+
+  /// Runs [open] with backoff retries on the transient
+  /// refusal (plan 80), rethrowing anything else — and the
+  /// refusal itself once the retries are spent — to the
+  /// caller's existing fallback logic.
+  Future<T> _openWithBusyRetry<T>(
+    _Producer producer,
+    Future<T> Function() open,
+    String what,
+  ) async {
+    var retries = 0;
+    while (true) {
+      try {
+        return await open();
+      } on NasneError catch (e) {
+        if (!_isBusyRefusal(e) ||
+            retries >= maxBusyRetries ||
+            producer.cancelled ||
+            _stopRequested) {
+          rethrow;
+        }
+        final delay = busyRetryDelays[retries];
+        retries++;
+        _diag(
+          DiagCategory.playback,
+          'proxy: $what refused with 512; retry $retries of '
+          '$maxBusyRetries after a ${delay.inMilliseconds} ms '
+          'backoff',
+        );
+        await Future<void>.delayed(delay);
+        if (producer.cancelled || _stopRequested) {
+          throw StateError('the producer was superseded');
+        }
+      }
     }
   }
 
@@ -694,7 +772,11 @@ class DtcpProxy {
         final HttpClientResponse response;
         final int startByte;
         if (target == 0 || fellBackToPlain) {
-          response = await _fetcher.openContent(_contentUrl);
+          response = await _openWithBusyRetry(
+            producer,
+            () => _fetcher.openContent(_contentUrl),
+            'a plain GET',
+          );
           startByte = 0;
         } else {
           final map = _seekMap!;
@@ -703,7 +785,11 @@ class DtcpProxy {
           if (requested < 0) requested = 0;
           final TimeSeekResponse tsr;
           try {
-            tsr = await _fetcher.openContentAtTime(_contentUrl, requested);
+            tsr = await _openWithBusyRetry(
+              producer,
+              () => _fetcher.openContentAtTime(_contentUrl, requested),
+              'a time seek',
+            );
           } on NasneError catch (e) {
             // A source that refuses the time seek still serves
             // the plain stream; fetch-and-discard from 0 is slow
@@ -804,7 +890,16 @@ class DtcpProxy {
     try {
       while (!producer.cancelled && !_stopRequested) {
         if (_window.producerShouldPause) {
-          await _window.waitChange();
+          // Bounded wait (plan 80): the pin generation rules
+          // should keep a missed notification from mattering,
+          // but the pause must never be able to outlive its
+          // reason — re-check the condition at least this
+          // often instead of waiting for a change that may
+          // already have happened.
+          await _window.waitChange().timeout(
+            pumpPauseWaitCap,
+            onTimeout: () {},
+          );
           continue;
         }
         if (!await iterator.moveNext()) break;
@@ -912,6 +1007,7 @@ class DtcpProxy {
     // A new GET supersedes the previous one (the player opens a
     // fresh connection per seek and abandons the old one).
     final generation = ++_serveGeneration;
+    _window.currentGeneration = generation;
     _requestCount++;
     final requestNo = _requestCount;
     _diag(
@@ -986,8 +1082,7 @@ class DtcpProxy {
           );
           break;
         }
-        _pinGeneration = generation;
-        _window.pin = pos;
+        _window.setPin(pos, generation);
         final chunk = _window.readChunk(pos, 1024 * 1024);
         if (chunk != null) {
           final take = min(chunk.length, reqEnd - pos + 1);
@@ -1087,10 +1182,7 @@ class DtcpProxy {
         '$servedHere bytes: $e',
       );
     } finally {
-      if (_pinGeneration == generation) {
-        _pinGeneration = -1;
-        _window.pin = null;
-      }
+      _window.releasePin(generation);
       if (!completed) {
         try {
           await response.close();
@@ -1185,15 +1277,54 @@ class _SeekMap {
 /// bounded. Waiters share one change signal and re-check their
 /// own condition, as in [_PlaintextQueue].
 class _WindowCache {
+  _WindowCache({this._capBytes = DtcpProxy.windowCapBytes});
+
+  /// The window bound in force (the production value is
+  /// [DtcpProxy.windowCapBytes]; tests override it so the
+  /// pause/pin behaviour is reachable with small fixtures).
+  final int _capBytes;
+
   final List<Uint8List> _chunks = [];
   int _start = 0;
   int _end = 0;
   bool _closed = false;
   Completer<void>? _changed;
 
-  /// The offset the active reader still needs; eviction never
-  /// crosses it. Null when no reader is attached.
-  int? pin;
+  int? _pin;
+  int _pinGeneration = -1;
+
+  /// The serve generation currently allowed to pin the window,
+  /// kept in step with the proxy's serve counter (plan 80). A
+  /// pin left behind by an older generation belongs to a reader
+  /// that has been superseded — possibly one stuck in a socket
+  /// write it will never finish — and must not pace the
+  /// producer: honouring it after a far re-anchor is what
+  /// deadlocked the producer in plan 78.2.
+  int currentGeneration = 0;
+
+  /// Sets the reader pin for [generation] and wakes the
+  /// waiters. The notification is load-bearing: a pin change
+  /// can unpause the producer, and a producer already waiting
+  /// when the serving handler first pins its position was the
+  /// other half of the plan-78.2 deadlock.
+  void setPin(int? pos, int generation) {
+    _pin = pos;
+    _pinGeneration = generation;
+    _notify();
+  }
+
+  /// Releases the pin if [generation] still owns it.
+  void releasePin(int generation) {
+    if (_pinGeneration != generation) return;
+    _pin = null;
+    _pinGeneration = -1;
+    _notify();
+  }
+
+  /// The pin the producer pacing and eviction must honour:
+  /// the current generation's, or none.
+  int? get effectivePin =>
+      (_pin != null && _pinGeneration == currentGeneration) ? _pin : null;
 
   int get start => _start;
   int get end => _end;
@@ -1201,13 +1332,17 @@ class _WindowCache {
 
   /// Whether the producer should pause: the window already holds
   /// a full cap of not-yet-consumed plaintext.
-  bool get producerShouldPause =>
-      _end - (pin ?? _start) >= DtcpProxy.windowCapBytes;
+  bool get producerShouldPause => _end - (effectivePin ?? _start) >= _capBytes;
 
   /// Re-anchors the window at [offset] (a producer starts there):
   /// bytes from [offset] onward are dropped; a start outside the
-  /// current window discards everything.
+  /// current window discards everything. The reader pin is
+  /// invalidated: it referred to the pre-anchor layout, and the
+  /// serving handler pins its own position when it starts
+  /// consuming (plan 80).
   void anchor(int offset) {
+    _pin = null;
+    _pinGeneration = -1;
     if (offset < _start || offset > _end) {
       _chunks.clear();
       _start = offset;
@@ -1244,10 +1379,10 @@ class _WindowCache {
   }
 
   void _evict() {
-    final limit = pin ?? _start;
-    while (_end - _start > DtcpProxy.windowCapBytes && _start < limit) {
+    final limit = effectivePin ?? _start;
+    while (_end - _start > _capBytes && _start < limit) {
       final first = _chunks.first;
-      final excess = _end - _start - DtcpProxy.windowCapBytes;
+      final excess = _end - _start - _capBytes;
       final droppable = min(first.length, min(excess, limit - _start));
       if (droppable >= first.length) {
         _chunks.removeAt(0);

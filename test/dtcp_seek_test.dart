@@ -14,6 +14,7 @@
 /// estimation and overshoot retry are exercised, not assumed.
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -82,6 +83,30 @@ class FakeNasneSource {
   bool sawRangeHeader = false;
   final List<double> requestedTimes = [];
 
+  /// Test controls (plan 80): refuse the first [refuse512First]
+  /// GETs with HTTP 512 (the transient refusal of plan 78.3),
+  /// and/or trickle the first time-seek response's body out
+  /// slowly, so a discard races a live stream. (The write-side
+  /// counters only show what the source attempted: on loopback
+  /// a closed peer is not observable from here — dart:io and
+  /// kernel buffers absorb the writes regardless.)
+  int refuse512First = 0;
+  int refusedCount = 0;
+  bool slowFirstTimeSeekBody = false;
+  int slowChunksWritten = 0;
+  int slowChunksTotal = 0;
+  bool slowWriteAborted = false;
+
+  /// Write every response body in small flushed chunks
+  /// (plan 80). A single multi-megabyte write can reach the
+  /// proxy as one stream event whose plaintext the pump
+  /// appends in one go, sailing straight past the window cap
+  /// the pause check guards; chunked writes keep the pump's
+  /// pause granularity near the chunk size, which the
+  /// small-window tests rely on.
+  bool chunkedBodyWrites = false;
+  static const int chunkSize = 64 * 1024;
+
   Uri get url => Uri.parse(
     'http://127.0.0.1:${_server!.port}/web/video/pvr?id=seek-test',
   );
@@ -131,6 +156,13 @@ class FakeNasneSource {
         await request.response.close();
         return;
       }
+      if (refuse512First > 0) {
+        refuse512First--;
+        refusedCount++;
+        request.response.statusCode = 512;
+        await request.response.close();
+        return;
+      }
       getCount++;
       final seekHeader = request.headers.value('timeseekrange.dlna.org');
       var startByte = 0;
@@ -152,8 +184,50 @@ class FakeNasneSource {
         );
       }
       request.response.statusCode = HttpStatus.ok;
-      request.response.add(frameFrom(startByte, getCount & 0xFF));
-      await request.response.close();
+      final wire = frameFrom(startByte, getCount & 0xFF);
+      if (seekHeader != null && slowFirstTimeSeekBody && timeSeekCount == 1) {
+        slowChunksTotal = (wire.length + chunkSize - 1) ~/ chunkSize;
+        try {
+          await request.response.flush();
+          var offset = 0;
+          while (offset < wire.length) {
+            final end = offset + chunkSize > wire.length
+                ? wire.length
+                : offset + chunkSize;
+            request.response.add(Uint8List.sublistView(wire, offset, end));
+            await request.response.flush();
+            slowChunksWritten++;
+            offset = end;
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          await request.response.close();
+        } catch (_) {
+          slowWriteAborted = true;
+        }
+        return;
+      }
+      try {
+        if (chunkedBodyWrites) {
+          var offset = 0;
+          while (offset < wire.length) {
+            final end = offset + chunkSize > wire.length
+                ? wire.length
+                : offset + chunkSize;
+            request.response.add(Uint8List.sublistView(wire, offset, end));
+            await request.response.flush();
+            offset = end;
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+          }
+          await request.response.close();
+        } else {
+          request.response.add(wire);
+          await request.response.close();
+        }
+      } catch (_) {
+        // A client that stops reading (a superseded producer, a
+        // discarded overshoot response) tears the connection
+        // down mid-write; a real server sees the same.
+      }
     });
   }
 
@@ -494,5 +568,250 @@ void main() {
         await source.stop();
       }
     }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test(
+      'a far seek is not stalled by a previous reader\'s leftover '
+      'pin (plan 80 regression)',
+      () async {
+        // Fixture sized against the overridden window cap: the
+        // content is ~33.7 MB with a 16 MiB cap, so a reader
+        // pinned near the head leaves the tail anchor more than
+        // a cap behind it — the geometry of the plan-78 stall.
+        // (The reader below can only block in flush() because
+        // the cap exceeds what the loopback socket buffers can
+        // absorb; on this machine that is ~10 MiB at most.)
+        final big = pattern(32 * 1024 * 1024 + 123457, 23);
+        final bigTotal = big.length;
+        final source = FakeNasneSource(
+          plaintext: big,
+          durationSeconds: durationSeconds,
+          mapPoints: [(0.0, 0), (durationSeconds, bigTotal)],
+          exchangeKey: exchangeKey,
+          label: label,
+          encryptionMode: encryptionMode,
+        );
+        await source.start();
+        final fetcher = DtcpMediaFetcher();
+        final proxy = await DtcpProxy.start(
+          contentUrl: source.url,
+          keyForLabel: (_) async => exchangeKey,
+          fetcher: fetcher,
+          totalBytes: bigTotal,
+          totalDuration: const Duration(seconds: 600),
+          windowCapBytesOverride: 16 * 1024 * 1024,
+        );
+        Socket? socketA;
+        try {
+          // Reader A takes the stream from the head and stops
+          // reading after a small prefix: its serve handler
+          // blocks in flush() with its pin left partway into
+          // the content — the state the player leaves behind
+          // when it abandons a connection at a seek (plan 78.2).
+          socketA = await Socket.connect(
+            InternetAddress.loopbackIPv4,
+            proxy.uri.port,
+          );
+          socketA.write(
+            'GET /stream HTTP/1.1\r\n'
+            'Host: 127.0.0.1\r\n'
+            'Range: bytes=0-\r\n'
+            'Connection: close\r\n\r\n',
+          );
+          var receivedA = 0;
+          final prefix = Completer<void>();
+          final subA = socketA.listen((chunk) {
+            receivedA += chunk.length;
+            if (receivedA >= 128 * 1024 && !prefix.isCompleted) {
+              prefix.complete();
+            }
+          });
+          await prefix.future.timeout(const Duration(seconds: 20));
+          subA.pause();
+          // Let A's handler run into the blocked flush and the
+          // producer settle against A's pin.
+          await Future<void>.delayed(const Duration(seconds: 3));
+
+          // Reader B seeks far beyond the window A left behind.
+          // With the leftover pin honoured, the new producer
+          // starts out already "a full window ahead" of the pin
+          // and never reads a byte (plan 78.2); B's fetch then
+          // hangs and this timeout fails the test.
+          const start = 33000000;
+          const end = 33100000;
+          final result = await fetch(
+            proxy.uri,
+            range: 'bytes=$start-$end',
+          ).timeout(const Duration(seconds: 20));
+          expect(result.$1, HttpStatus.partialContent);
+          expect(
+            result.$2.value('content-range'),
+            'bytes $start-$end/$bigTotal',
+          );
+          expect(result.$3, Uint8List.sublistView(big, start, end + 1));
+          await subA.cancel();
+        } finally {
+          socketA?.destroy();
+          await proxy.stop();
+          fetcher.close();
+          await source.stop();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 120)),
+    );
+
+    /// Starts a proxy over [source] with a small window cap so
+    /// a far target stays outside the window deterministically,
+    /// and waits until the primer's initial GET has reached
+    /// the source (after which arming refusals cannot hit it).
+    Future<(DtcpProxy, DtcpMediaFetcher)> startProxySmallWindow(
+      FakeNasneSource source,
+    ) async {
+      source.chunkedBodyWrites = true;
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: source.url,
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+        totalBytes: total,
+        totalDuration: const Duration(seconds: 600),
+        windowCapBytesOverride: 256 * 1024,
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (source.getCount < 1 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(source.getCount, greaterThanOrEqualTo(1));
+      return (proxy, fetcher);
+    }
+
+    test(
+      'a time seek refused with 512 is retried with backoff '
+      '(plan 80)',
+      () async {
+        final source = linearSource();
+        await source.start();
+        final (proxy, fetcher) = await startProxySmallWindow(source);
+        try {
+          source.refuse512First = 2;
+          const start = 2600000;
+          const end = 2700000;
+          final stopwatch = Stopwatch()..start();
+          final (status, headers, body) = await fetch(
+            proxy.uri,
+            range: 'bytes=$start-$end',
+          );
+          expect(status, HttpStatus.partialContent);
+          expect(
+            headers.value('content-range'),
+            'bytes $start-$end/$total',
+          );
+          expect(body, Uint8List.sublistView(plain, start, end + 1));
+          expect(source.refusedCount, 2);
+          expect(source.timeSeekCount, greaterThanOrEqualTo(1));
+          // The 500 ms + 1 s backoffs must have elapsed; an
+          // immediate-retry implementation would finish well
+          // under this bound.
+          expect(
+            stopwatch.elapsedMilliseconds,
+            greaterThanOrEqualTo(1000),
+          );
+        } finally {
+          await proxy.stop();
+          fetcher.close();
+          await source.stop();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'a persistent 512 falls back to a plain GET that is also '
+      'retried (plan 80)',
+      () async {
+        final source = linearSource();
+        await source.start();
+        final (proxy, fetcher) = await startProxySmallWindow(source);
+        try {
+          // Four refusals exhaust the time seek's retries
+          // (initial + 3); two more meet the plain GET's first
+          // attempts before it succeeds.
+          source.refuse512First = 6;
+          const start = 2600000;
+          const end = 2700000;
+          final (status, headers, body) = await fetch(
+            proxy.uri,
+            range: 'bytes=$start-$end',
+          );
+          expect(status, HttpStatus.partialContent);
+          expect(
+            headers.value('content-range'),
+            'bytes $start-$end/$total',
+          );
+          expect(body, Uint8List.sublistView(plain, start, end + 1));
+          expect(source.refusedCount, 6);
+        } finally {
+          await proxy.stop();
+          fetcher.close();
+          await source.stop();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'a slow overshoot response is discarded and the seek '
+      'retried (plan 80)',
+      () async {
+        // The kinked map of the overshoot test: the first
+        // attempt lands past the target. Its body trickles out
+        // slowly, so the discard (plan 80: cancel the
+        // subscription, closing the connection, instead of
+        // draining the body to its end) races a live stream —
+        // the condition the real overshoot of plan 78.3
+        // presented. Whether the source's writes stop is not
+        // assertable on loopback: dart:io and kernel buffers
+        // absorb even tens of megabytes from a closed peer
+        // (probed 2026-11-18), so this test pins the retry's
+        // correctness under that race, and the discard change
+        // itself stands on the proxy no longer reading the
+        // body at all.
+        final kinked = FakeNasneSource(
+          plaintext: plain,
+          durationSeconds: durationSeconds,
+          mapPoints: [
+            (0.0, 0),
+            (300.0, 1800000),
+            (durationSeconds, total),
+          ],
+          exchangeKey: exchangeKey,
+          label: label,
+          encryptionMode: encryptionMode,
+        );
+        kinked.slowFirstTimeSeekBody = true;
+        await kinked.start();
+        final (proxy, fetcher) = await startProxySmallWindow(kinked);
+        try {
+          const start = 2600000;
+          const end = 2700000;
+          final (status, headers, body) = await fetch(
+            proxy.uri,
+            range: 'bytes=$start-$end',
+          );
+          expect(status, HttpStatus.partialContent);
+          expect(
+            headers.value('content-range'),
+            'bytes $start-$end/$total',
+          );
+          expect(body, Uint8List.sublistView(plain, start, end + 1));
+          expect(kinked.timeSeekCount, greaterThanOrEqualTo(2));
+          expect(kinked.slowChunksTotal, greaterThanOrEqualTo(5));
+        } finally {
+          await proxy.stop();
+          fetcher.close();
+          await kinked.stop();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
   });
 }
