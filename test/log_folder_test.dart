@@ -31,6 +31,24 @@ void main() {
       expect(command.exitCodeMatters, isFalse);
     });
 
+    test('windows normalizes forward slashes for explorer.exe', () {
+      // The opener builds the path by interpolating '/' onto the
+      // backslashed store path (plan 78). explorer.exe cannot
+      // resolve that mixed form and opens Documents instead, so
+      // the command must carry native separators throughout.
+      final command = fileManagerCommandFor(
+        isWindows: true,
+        isMacOS: false,
+        isLinux: false,
+        directoryPath:
+            r'C:\Users\markun\AppData\Roaming\com.markun\torne mobile HB/debug_logs',
+      );
+      expect(command, isNotNull);
+      expect(command!.arguments, [
+        r'C:\Users\markun\AppData\Roaming\com.markun\torne mobile HB\debug_logs',
+      ]);
+    });
+
     test('macos opens with open and checks its exit code', () {
       final command = fileManagerCommandFor(
         isWindows: false,

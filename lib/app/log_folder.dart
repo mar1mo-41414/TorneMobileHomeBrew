@@ -53,8 +53,17 @@ FileManagerCommand? fileManagerCommandFor({
   required String directoryPath,
 }) {
   if (isWindows) {
+    // explorer.exe parses its command line with '/' as the switch
+    // prefix, so it cannot resolve the path the way the rest of
+    // the app builds it: the store path carries '\', and the
+    // log-folder name is interpolated onto it with '/'. Given
+    // that mixed form, Explorer silently falls back to opening
+    // the user's Documents folder instead of the log folder
+    // (measured on a real machine, plan 78). Dart's own file
+    // APIs accept '/', which is why only this hand-off broke.
+    // Hand Explorer native separators only.
     return FileManagerCommand('explorer.exe', [
-      directoryPath,
+      directoryPath.replaceAll('/', r'\'),
     ], exitCodeMatters: false);
   }
   if (isMacOS) {
