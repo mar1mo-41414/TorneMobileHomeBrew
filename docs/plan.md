@@ -3778,3 +3778,11 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
     ```
     `SIGNED-OK` の後、署名検証を経て新ルールの配置先 `~/Applications/torne mobile HB.app` (§70.2) へ差し替える。
 - 残件: 本人の実機確認 (各デスクトップ OS でボタンからフォルダが開くこと) と、macOS の署名 + `~/Applications` 差し替え。版数上げは引き続き実機確認の後。
+
+### 71.1 macOS 配置の完了 (2026-11-18)
+
+- 本人がクローン側のビルド済み .app へ身元署名を実行した (2026-11-18、署名時刻 10:03:45 JST、`SIGNED-OK` を確認済みとの連絡)。
+- 署名検証 (クローン側): 版数 **1.4.1 / ビルド 31**、Identifier `com.markun.tmhb`、**Authority = `torne-mobile-hb-signing`** (ad-hoc ではない)。Designated Requirement は `identifier "com.markun.tmhb" and certificate root = H"cc2085f94c17c347e069fe7716d0375eb33f694c"` で **§66.6 と完全に同一** (証明書に紐づくためビルドを跨いで安定)。entitlement は `com.apple.security.files.user-selected.read-only` の1件のみで、keychain-access-groups の混入なし。`codesign --verify --deep --strict` 合格。
+- **`~/Applications` 差し替え完了**: 差し替え前が §70.2 で移動した署名済みビルド30 (1.4.1/30) であることを確認してから、署名済みビルド31へ差し替えた (旧版の退避は本人のルールにより行わず)。差し替え後のコピーでも、版数 1.4.1/31・Authority = `torne-mobile-hb-signing`・同一 DR・entitlement 1件のみ・verify 合格を再確認した。
+- **スモークテスト合格**: `~/Applications` のコピーを起動し、10 秒後もプロセス生存 (`~/Applications` パスからの起動、PID 43161) を確認して終了した (osascript の quit が -128 を返すのは §67・§69・§70.1 と同じ既知の挙動で、プロセスの終了自体は確認できている)。
+- §71 の残件のうち、macOS の署名 + `~/Applications` 差し替えは解消した。本人の実機確認 (各デスクトップ OS でボタンからフォルダが開くこと) は引き続き残件。
