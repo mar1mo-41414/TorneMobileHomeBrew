@@ -3738,3 +3738,11 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 - README を v1.4.1 に更新した (コミット `20c0241`: 版数表記、Windows 版のインストール節、シークと env インポートの機能追記、字幕注記への Windows 追加)。
 - **リリース**: タグ `v1.4.1` を `20c0241` に打ち、GitHub リリースを作成した (https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/tag/v1.4.1、公開・非ドラフト・非プレリリース、アセット5点)。**全アセットを未認証で再ダウンロードし、SHA-256 が上記と全て一致**することを確認した。
 - 残作業: Mac の Desktop 配置のみ身元署名待ち。クローン側に残したビルド済み .app (現在は ad-hoc 署名) へ本人が署名 ID のコマンドを実行した後に Desktop 差し替えを行う。リリース自体は ad-hoc 署名のアセットで完結している。
+
+### 70.1 macOS Desktop 配置の完了 (2026-11-18)
+
+- 本人がクローン側のビルド済み .app へ身元署名を実行した (2026-11-18 09:38 JST、`SIGNED-OK` 相当を確認済みとの連絡)。
+- 署名検証 (クローン側): 版数 **1.4.1 / ビルド 30**、Identifier `com.markun.tmhb`、**Authority = `torne-mobile-hb-signing`** (ad-hoc ではない)。Designated Requirement は `identifier "com.markun.tmhb" and certificate root = H"cc2085f94c17c347e069fe7716d0375eb33f694c"` で **§66.6 と完全に同一** (証明書に紐づくためビルドを跨いで安定)。entitlement は `com.apple.security.files.user-selected.read-only` の1件のみで、keychain-access-groups の混入なし。`codesign --verify --deep --strict` 合格。
+- **Desktop 差し替え完了**: 差し替え前の Desktop が §69 の署名済みビルド29であることを確認してから、署名済みビルド30へ差し替え (旧版の退避は本人の新ルールにより行わず)。差し替え後の Desktop コピーでも、版数 1.4.1/30・Authority = `torne-mobile-hb-signing`・同一 DR・entitlement 1件のみ・verify 合格を再確認した。
+- **スモークテスト合格**: Desktop コピーを起動し、10 秒後もプロセス生存 (Desktop パスからの起動、PID 42675) を確認して終了した (osascript の quit が -128 を返すのは §67・§69 と同じ既知の挙動で、プロセスの終了自体は確認できている)。
+- これで **v1.4.1 の全プラットフォーム配置が完結**した。
