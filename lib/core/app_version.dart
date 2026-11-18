@@ -19,7 +19,7 @@ library;
 const String appVersionName = '1.4.1';
 
 /// Build number from pubspec.yaml (`version:`), e.g. `17`.
-const int appBuildNumber = 31;
+const int appBuildNumber = 32;
 
 /// How the settings screen presents the version.
 const String appVersionLabel = 'バージョン $appVersionName (ビルド $appBuildNumber)';
