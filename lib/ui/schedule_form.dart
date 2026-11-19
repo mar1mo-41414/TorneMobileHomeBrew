@@ -16,11 +16,13 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../app/bs_epg_providers.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
 import 'error_messages.dart';
 import 'format.dart';
+import 'schedule_channel_selection.dart';
 import 'widgets.dart';
 
 enum ScheduleFormMode { create, edit, timeChange }
@@ -108,7 +110,8 @@ class ScheduleFormPage extends ConsumerStatefulWidget {
 
 class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   // create / timeChange fields
-  int? _serviceId;
+  int _selectedBand = terrestrialBroadcastingType;
+  String? _selectedChannelKey;
   late DateTime _date; // JST wall date (fields only)
   late TimeOfDay _time;
   final _durationMinutes = TextEditingController(text: '60');
@@ -136,7 +139,7 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
       _date = DateTime(wall.year, wall.month, wall.day);
       _time = TimeOfDay(hour: wall.hour, minute: wall.minute);
       _durationMinutes.text = '${original.durationSeconds ~/ 60}';
-      _serviceId = original.channel.serviceId;
+      _selectedBand = original.channel.broadcastingType;
     } else {
       _quality = 100;
       _priority = false;
@@ -144,7 +147,8 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
       if (prefill != null) {
         // EPG prefill (plan 28): service, start and duration come
         // from the event; the quality stays the user's choice.
-        _serviceId = prefill.channel.serviceId;
+        _selectedBand = prefill.channel.broadcastingType;
+        _selectedChannelKey = scheduleChannelKey(prefill.channel);
         final wall = jstWallClock(prefill.start);
         _date = DateTime(wall.year, wall.month, wall.day);
         _time = TimeOfDay(hour: wall.hour, minute: wall.minute);
@@ -167,8 +171,7 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   }
 
   String get _title => switch (widget.mode) {
-    ScheduleFormMode.create =>
-      widget.prefill != null ? '番組を予約' : '新規予約',
+    ScheduleFormMode.create => widget.prefill != null ? '番組を予約' : '新規予約',
     ScheduleFormMode.edit => '予約の編集',
     ScheduleFormMode.timeChange => '予約時刻の変更',
   };
@@ -186,7 +189,9 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   // -------------------------------------------------------------------------
 
   Widget _buildCreateForm(BuildContext context) {
-    final channels = ref.watch(channelsProvider(widget.reg));
+    final channels = _selectedBand == bsBroadcastingType
+        ? ref.watch(bsChannelsProvider(widget.reg))
+        : ref.watch(channelsProvider(widget.reg));
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -216,27 +221,66 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
             padding: EdgeInsets.only(bottom: 12),
             child: Text('時刻の変更は、元の予約を削除して新しい予約を作成することで行います。'),
           ),
-        asyncSection(channels, (list) {
-          if (list.isEmpty) {
-            return const Text('チャンネル一覧が空です');
-          }
-          final ids = {for (final c in list) c.serviceId};
-          final value = ids.contains(_serviceId)
-              ? _serviceId
-              : list.first.serviceId;
-          return DropdownButtonFormField<int>(
-            initialValue: value,
-            decoration: const InputDecoration(labelText: 'チャンネル'),
-            items: [
+        SegmentedButton<int>(
+          segments: const [
+            ButtonSegment<int>(
+              value: terrestrialBroadcastingType,
+              label: Text('地デジ'),
+            ),
+            ButtonSegment<int>(value: bsBroadcastingType, label: Text('BS')),
+          ],
+          selected: {_selectedBand},
+          onSelectionChanged: (values) => setState(() {
+            final nextBand = values.first;
+            if (nextBand != _selectedBand) {
+              _selectedBand = nextBand;
+              _selectedChannelKey = null;
+            }
+          }),
+        ),
+        const SizedBox(height: 12),
+        asyncSection(
+          channels,
+          (list) {
+            final choices = [
               for (final c in list)
-                DropdownMenuItem(
-                  value: c.serviceId,
-                  child: Text(c.serviceName),
-                ),
-            ],
-            onChanged: (v) => setState(() => _serviceId = v),
-          );
-        }, onRetry: () => ref.invalidate(channelsProvider(widget.reg))),
+                if (c.broadcastingType == _selectedBand && c.serviceType == 1)
+                  c,
+            ];
+            if (choices.isEmpty) {
+              return const Text('選択できるテレビ局がありません');
+            }
+            final value = initialScheduleChannelKey(
+              choices,
+              _selectedBand,
+              _selectedChannelKey,
+              prefill: widget.prefill?.channel,
+              original: widget.original?.channel,
+              defaultToFirst: widget.prefill == null && widget.original == null,
+            );
+            return DropdownButtonFormField<String>(
+              key: ValueKey('schedule-channel-$_selectedBand-$value'),
+              initialValue: value,
+              hint: const Text('チャンネルを選択'),
+              decoration: const InputDecoration(labelText: 'チャンネル'),
+              items: [
+                for (final c in choices)
+                  DropdownMenuItem(
+                    value: scheduleChannelKey(c),
+                    child: Text(c.serviceName),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _selectedChannelKey = v),
+            );
+          },
+          onRetry: () {
+            if (_selectedBand == bsBroadcastingType) {
+              ref.invalidate(bsChannelsProvider(widget.reg));
+            } else {
+              ref.invalidate(channelsProvider(widget.reg));
+            }
+          },
+        ),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -322,16 +366,24 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
 
   Future<void> _saveCreate() async {
     FocusScope.of(context).unfocus();
-    final channels = ref.read(channelsProvider(widget.reg)).value;
-    Channel? channel;
-    if (channels != null) {
-      for (final c in channels) {
-        if (c.serviceId == (_serviceId ?? channels.firstOrNull?.serviceId)) {
-          channel = c;
-          break;
-        }
-      }
-    }
+    final channels =
+        (_selectedBand == bsBroadcastingType
+                ? ref.read(bsChannelsProvider(widget.reg))
+                : ref.read(channelsProvider(widget.reg)))
+            .value;
+    final choices = <Channel>[
+      for (final c in channels ?? const <Channel>[])
+        if (c.broadcastingType == _selectedBand && c.serviceType == 1) c,
+    ];
+    final selectedKey = initialScheduleChannelKey(
+      choices,
+      _selectedBand,
+      _selectedChannelKey,
+      prefill: widget.prefill?.channel,
+      original: widget.original?.channel,
+      defaultToFirst: widget.prefill == null && widget.original == null,
+    );
+    final channel = resolveScheduleChannel(choices, _selectedBand, selectedKey);
     if (channel == null) {
       showSnack(context, 'チャンネルを選択してください');
       return;
@@ -353,7 +405,13 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
         serviceId: channel.serviceId,
       ),
       networkId: channel.networkId,
-      eventId: widget.prefill?.eventId ?? 0,
+      // Never associate an EPG event with a different selected channel.
+      eventId:
+          widget.prefill != null &&
+              scheduleChannelKey(widget.prefill!.channel) ==
+                  scheduleChannelKey(channel)
+          ? widget.prefill!.eventId
+          : 0,
       desiredQualityMode: _quality,
       priorityFlag: _priority ? 1 : 0,
       // torne's create template pairs the destination with the
@@ -379,7 +437,15 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
       }
       if (conflicts.isNotEmpty) {
         if (!mounted) return;
-        final proceed = await _showConflictWarning(conflicts, channels);
+        final otherChannels = _selectedBand == bsBroadcastingType
+            ? (ref.read(channelsProvider(widget.reg)).value ??
+                  const <Channel>[])
+            : (ref.read(bsChannelsProvider(widget.reg)).value ??
+                  const <Channel>[]);
+        final proceed = await _showConflictWarning(conflicts, [
+          ...choices,
+          ...otherChannels,
+        ]);
         if (proceed != true) {
           setState(() => _saving = false);
           return;

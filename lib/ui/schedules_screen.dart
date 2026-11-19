@@ -7,6 +7,7 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../app/bs_epg_providers.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
@@ -97,7 +98,17 @@ class _ScheduleList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final schedules = ref.watch(schedulesProvider(reg));
-    final channels = ref.watch(channelsProvider(reg)).value;
+    final terrestrial =
+        ref.watch(channelsProvider(reg)).value ?? const <Channel>[];
+    final needsBs =
+        schedules.value?.any(
+          (s) => s.channel.broadcastingType == bsBroadcastingType,
+        ) ??
+        false;
+    final bs = needsBs
+        ? (ref.watch(bsChannelsProvider(reg)).value ?? const <Channel>[])
+        : const <Channel>[];
+    final channels = [...terrestrial, ...bs];
     return asyncSection(schedules, (list) {
       if (list.isEmpty) {
         return const Center(child: Text('予約はありません'));
@@ -201,8 +212,10 @@ class ScheduleDetailView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final channels = ref.watch(channelsProvider(reg)).value;
     final s = schedule;
+    final channels = s.channel.broadcastingType == bsBroadcastingType
+        ? ref.watch(bsChannelsProvider(reg)).value
+        : ref.watch(channelsProvider(reg)).value;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
