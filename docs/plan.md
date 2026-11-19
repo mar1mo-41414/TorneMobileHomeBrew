@@ -4169,3 +4169,58 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 - dev プリリリースも GitHub Actions により 1.4.2+34 (コミット `6329a11`) の資産に更新されたことを確認した (dev.apk はリリース APK と同一サイズ 102,409,769 B)。
 - 残作業: Mac の `~/Applications` 配置のみ身元署名待ち。ビルド済み .app (現在は ad-hoc 署名) は Mac クローンの `build/macos/Build/Products/Release/torne mobile HB.app` に残置した。本人が §71 と同形式の署名コマンド (--entitlements 付き) をローカル Terminal で実行した後に、署名検証を経て `~/Applications` へ差し替える。リリース自体は ad-hoc 署名のアセットで完結している。
 - **Mac `~/Applications` 配置完了 (2026-11-19)**: 本人がローカル Terminal で身元署名コマンド (--entitlements 付き) を実行し `SIGNED-OK` を確認。こちらで署名検証 (`codesign --verify --deep --strict` 合格、Authority=`torne-mobile-hb-signing`) と版数 (1.4.2 / 34) を確認のうえ、`~/Applications/torne mobile HB.app` を旧版 (1.4.1 / ビルド31) から差し替えた。配置先でも署名検証と版数を再確認済み。これで v1.4.2 の全プラットフォーム配置が完了した。
+
+## 82. §62.5 Debian 字幕 libmpv 同梱の実装 (2026-11-19)
+
+§62.5 の決定 (Debian 向けにカスタム libmpv を同梱する) を実装した。本人の指示で次の版に合わせる方針のため、**版数は上げていない (1.4.2 のまま)**。同梱は本節のコミット以降の Linux ビルドから有効になり、利用者への配布は次回リリース時になる。
+
+### 82.1 設計
+
+- 配置は §62.2 の実測に基づき、バンドルの `lib/` へ .so 一式を置く形にした。ただし実際の解決経路は §62.2 の想定 (Dart 側の dlopen) だけでは完結しなかった (82.5)。
+- 同梱対象: 自前ビルドの libmpv、FFmpeg 一式、libaribb24、libplacebo、Debian 12 の libass / libpng16。システム側に残すのは GTK スタック・GL と libpulse / libasound で、後者は Debian の mpv 公式パッケージと同じ音声依存である。
+- glibc 下限: Debian 12 コンテナでビルドし、同梱 .so 全ての最大 GLIBC_ 要求が 2.35 以下 (Debian 12 の 2.36 以下、Ubuntu 22.04 の 2.35 と同等) であることをビルド時に検査する。
+
+### 82.2 ピンと、当初の想定からの変更
+
+- libaribb24: 本家 master `5e9be272f96e00f15a2f3c5f8ba7e124862aec38`、版数ラベル 1.0.4、**libpng 連携あり (DRCS 有効)**。Android / iOS / macOS と同じピン。
+- FFmpeg `n6.1.2` / mpv `v0.38.0`: 当初は Windows と同じ FFmpeg n7.1.5 + mpv v0.39.0 を想定したが、mpv 0.39 は libplacebo 必須で無効化の選択肢が無く、0.38 もビルド時に libplacebo を要求した。libplacebo は通常 Vulkan スタックを引くため、ソースから Vulkan / shaderc / lcms を無効化 (OpenGL のみ) してビルドし同梱することとし、組み合わせは実績のある世代 (Ubuntu 24.04 の mpv 0.37 + FFmpeg 6.1 系) に寄せた。
+- FFmpeg は `--enable-version3 --enable-libaribb24 --enable-decoder=libaribb24` のみを追加し、他は既定構成 (選択的有効化をしない)。§68 の Windows arib1 (選択的有効化で mpegts 等が欠けた) の轍を踏まないよう、ビルド時にコンポーネントチェック (libaribb24 デコーダ / mpegts / mpeg2video / h264 / aac / http / tcp / file が全て有効) を実施し、全て通過した。
+- mpv の meson は Debian のマルチアーキテクチャ libdir (`lib/x86_64-linux-gnu/`) へインストールするため、同梱収集では `lib/` と両方を探す。
+
+### 82.3 ビルド
+
+- marnux 上の Debian 12 Docker コンテナで実施。手順資産は `tool/libmpv/linux/` に収めた (`Dockerfile`、`build-inside.sh`、ホスト側ランナー `build.sh`)。
+- 同梱一式は 23 エントリ (実ファイル 12 + シンボリックリンク 11、展開時約 25 MB): libmpv.so.2.3.0、FFmpeg 6.1 系 7 本 (avcodec 60 / avformat 60 / avutil 58 / swscale 7 / swresample 4 / avfilter 9 / avdevice 60)、libaribb24.so.0、libplacebo.so.338、libass.so.9、libpng16.so.16 とそのリンク群。全て RPATH `$ORIGIN` を付け、strip 済み。
+
+### 82.4 リリース資産
+
+- GitHub リリース `libmpv-linux-v0.38.0-arib1` を新設し、`libmpv-linux-v0.38.0-arib1.tar.gz` (11,190,554 B) を資産化した。最終 SHA-256 は `2a27855f292ebcfce7266e474af790e02606e47f3fb578aefe4e7ff5c19c08f1` で、未認証の再ダウンロードで一致を確認済み。
+- 経緯: 初回アップロード分 (SHA-256 `9fa62041…`) には `libmpv.so` シンボリックリンクが欠けていたため、82.5 の判明を受けて資産を差し替えた。アプリのリリース資産として使われる前の差し替えであり、タグは据え置いた。
+
+### 82.5 組み込みと、解決経路の実測
+
+- `tool/build_linux_desktop.sh` が資産をダウンロードして SHA-256 を検証し、`build/libmpv-linux/` へキャッシュして、ステージングの `lib/` へコピーする。同スクリプトで Linux パッケージを組み直し、tar.gz に同梱一式が含まれることを確認した。
+- 実アプリを展開して Xvfb で起動し、LD_DEBUG で解決経路を実測した。当初の想定と異なった点が 2 つある。
+  1. `libmedia_kit_video_plugin.so` が libmpv.so.2 を DT_NEEDED でリンクしており、起動時のプラグイン読み込みでローダが解決する。このプラグインの RUNPATH にはビルドツリーのパス (flutter ephemeral とビルド用 sysroot) が焼き込まれており、そのままだと利用者環境ではシステムの libmpv に落ち、無い環境ではプラグイン自体が読み込めない。対策として、パッケージング時に patchelf で同プラグインの RUNPATH を `$ORIGIN` に書き換えるようにした (patchelf が無い環境では .deb を展開して使う。sysroot と同じ流儀)。
+  2. media_kit の Dart 側 (media_kit 1.2.6 の `native_library.dart`) は `libmpv.so` → `libmpv.so.2` → `libmpv.so.1` の順に素名 dlopen する。最初に試される `libmpv.so` にも同梱側で応えるため、アーカイブに `libmpv.so` シンボリックリンクを含めた (実体は libmpv.so.2 と同一ファイルで、ローダが同一視する)。
+- 書き換え後の実走確認: LD_DEBUG で libmpv.so.2 が同梱側 (`…/lib/libmpv.so.2`) に解決されることと、起動中プロセスの maps に同梱の libmpv / libavcodec / libaribb24 / libplacebo が載ることを確認した。
+
+### 82.6 検証 (ホストプローブ)
+
+- 検証プローブは `tool/libmpv/probe_libmpv.py` (§68 の Windows 検証と同じ流儀: 同梱 libmpv を ctypes で単体ロードし、ファイルを開いてトラックと字幕イベントを数える)。素材は §57 の host proof 用サンプル TS (`rec_x3_fushigi.ts`、282.9 秒)。
+- 結果: 字幕トラック `codec=arib_caption` を確認し、字幕テキストの復号ができた。FFmpeg CLI での照合では字幕キュー 46 件で、ホスト実証済みの §55 / §57 と一致する。
+  - Debian 12 コンテナ内: 成立 (字幕テキスト 23 件を観測)
+  - Debian 13 実機 nux2 (システムに aribb24 / ffmpeg / mpv なし): 成立 (24 件)。libpulse / libasound が無い環境だったため、.deb を展開したものを LD_LIBRARY_PATH で足して実施した (システムへのインストールはしていない)
+  - Ubuntu 系ホスト marnux: 成立
+- 観測件数の差 (23 / 24) はプローブのポーリング間隔によるもので、キュー総数 46 は CLI 照合で一致している。
+- `flutter test` 319/319 合格、`flutter analyze` クリーン (Dart 側の変更なし)。
+
+### 82.7 利用者向け文書の更新
+
+- README: Linux の実行要件から「システムの libmpv が必要」を外し、同梱の旨と libpulse / libasound の要否を明記した。既知の制限の字幕項は、Linux 版も DRCS 表示可に改めた。
+- `tool/libmpv/README.md` に Linux の節を追加した。
+
+### 82.8 残件・注記
+
+- Debian 環境の実機でのアプリ再生確認は未実施 (nasne は 200 件ためのキャンペーン中で接続しない方針のため、検証はサンプル TS とパッケージ実走での解決確認まで)。次回リリース時の確認項目とする。
+- 実行時依存として libpulse / libasound が残る (Debian の mpv 公式パッケージと同じ)。完全無依存化はしていない。
