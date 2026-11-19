@@ -25,6 +25,17 @@
 # The sysroot is cached under build/linux-sysroot (override with
 # TMHB_LINUX_SYSROOT). The version in the tar name is read from
 # pubspec.yaml.
+#
+# The package also bundles the custom ARIB-capable libmpv (plan
+# 62.5 / 82), so subtitles also work on Debian, whose ffmpeg has
+# no libaribb24 decoder: the archive's libraries are staged into
+# lib/, and libmedia_kit_video_plugin.so — which links libmpv.so.2
+# itself — gets its build-tree RUNPATH rewritten to $ORIGIN so the
+# loader resolves libmpv.so.2 to the bundled copy instead of a
+# system one. The archive comes from this repo's GitHub release
+# and is verified by SHA-256, like the other platforms' libmpv
+# archives. The sysroot above is only about build-time
+# headers/linking and is unaffected by the bundling.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -48,6 +59,39 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -r build/linux/x64/release/bundle/. "$STAGE/"
 cp linux/torne-mobile-hb.desktop "$STAGE/"
+
+LIBMPV_TAG="libmpv-linux-v0.38.0-arib1"
+LIBMPV_SHA256="2a27855f292ebcfce7266e474af790e02606e47f3fb578aefe4e7ff5c19c08f1"
+LIBMPV_CACHE="build/libmpv-linux/$LIBMPV_TAG"
+if [ ! -f "$LIBMPV_CACHE/.done" ]; then
+  mkdir -p "$LIBMPV_CACHE"
+  curl -fsSL -o "$LIBMPV_CACHE/$LIBMPV_TAG.tar.gz" \
+    "https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/download/$LIBMPV_TAG/$LIBMPV_TAG.tar.gz"
+  echo "$LIBMPV_SHA256  $LIBMPV_CACHE/$LIBMPV_TAG.tar.gz" | sha256sum -c -
+  tar xzf "$LIBMPV_CACHE/$LIBMPV_TAG.tar.gz" -C "$LIBMPV_CACHE"
+  touch "$LIBMPV_CACHE/.done"
+fi
+cp -a "$LIBMPV_CACHE"/lib*.so* "$STAGE/lib/"
+
+# libmedia_kit_video_plugin.so links libmpv.so.2 itself, with a
+# RUNPATH baked at build time that points into the build tree (the
+# flutter ephemeral dir and the sysroot above). On a user's machine
+# those paths do not exist and the loader falls back to a system
+# libmpv — or cannot load the plugin at all where none is installed
+# (the Debian case this bundling exists for). Point the plugin at
+# the bundle's own lib/ so it resolves to the copy staged above.
+PATCHELF="$(command -v patchelf || true)"
+if [ -z "$PATCHELF" ]; then
+  # Same no-sudo pattern as the sysroot: fetch the .deb, extract it.
+  PATCHELF_DIR="$SYSROOT/patchelf"
+  if [ ! -x "$PATCHELF_DIR/usr/bin/patchelf" ]; then
+    mkdir -p "$PATCHELF_DIR"
+    (cd "$PATCHELF_DIR" && apt-get download patchelf && dpkg-deb -x patchelf_*.deb .)
+  fi
+  PATCHELF="$PATCHELF_DIR/usr/bin/patchelf"
+fi
+"$PATCHELF" --set-rpath '$ORIGIN' "$STAGE/lib/libmedia_kit_video_plugin.so"
+
 tar czf "build/TorneMobileHomeBrew-linux-${VERSION}.tar.gz" \
   -C build "TorneMobileHomeBrew-linux"
 echo "built: build/TorneMobileHomeBrew-linux-${VERSION}.tar.gz"

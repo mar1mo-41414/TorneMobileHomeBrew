@@ -410,3 +410,61 @@ sub arib_caption) の前後比較を取った。
 再検査する。公式に libaribcaption 入りのビルドが出れば
 自前ビルドは不要になるが、公式リリースは 2023-09-24 で
 止まっているため、当面は本手順が正になる。
+
+## Linux (実施済み、plan §82)
+
+リリース: `libmpv-linux-v0.38.0-arib1`
+(SHA-256: `2a27855f292ebcfce7266e474af790e02606e47f3fb578aefe4e7ff5c19c08f1`)
+
+上流と版数:
+
+- libaribb24: 本家 master `5e9be27`、版数ラベル `1.0.4`、
+  **libpng 連携あり (DRCS 有効)** — Android/iOS/macOS と同じピン
+- FFmpeg: `n6.1.2`。`--enable-version3 --enable-libaribb24
+  --enable-decoder=libaribb24` を付け、他は既定構成 (選択的
+  有効化はしないので、放送 TS に必要な demuxer/decoder は
+  一通り入る。§68 の Windows arib1 の轍を踏まないための確認は
+  ビルド時にコンポーネントチェックで実施)
+- mpv: `v0.38.0` (`-Dlibmpv=true`、GL/EGL のみ。Vulkan・X11・
+  Wayland・DRM・lua・js は無効、音声出力は alsa/pulse)
+- libplacebo: `v6.338.2` をソースからビルドして同梱 (mpv 0.38 は
+  ビルド時に libplacebo が必須のため。Vulkan/shaderc/lcms は
+  無効で OpenGL のみ)
+- libass・libpng16 は Debian 12 のものを同梱
+
+手順 (`linux/` ディレクトリ):
+
+1. `linux/build.sh` を実行する。Debian 12 コンテナ
+   (`linux/Dockerfile`) の中で `linux/build-inside.sh` が
+   aribb24 → FFmpeg → libplacebo → mpv の順にビルドし、
+   必要な .so 一式 (実ファイル 12 + シンボリックリンク 11、
+   `libmpv.so` を含む) を集めて全てに RPATH `$ORIGIN` を付け、
+   `build/libmpv-linux-v0.38.0-arib1.tar.gz` を作る
+2. アーカイブを GitHub リリース `libmpv-linux-v0.38.0-arib1`
+   の資産としてアップロードする
+
+検証:
+
+- `probe_libmpv.py <展開先> <字幕付き TS>`: 同梱 libmpv を
+  ctypes で単体ロードし、サンプル TS から `arib_caption`
+  トラックの存在と字幕テキストの復号を確認する。Debian 12
+  コンテナ内・Debian 13 実機 (nux2、システムに aribb24 なし)・
+  Ubuntu 系ホスト (marnux) で成立を確認済み。なお同梱 libmpv の
+  実行には libpulse / libasound が要る (Debian の mpv 公式
+  パッケージと同じ依存で、アプリ側 README に明記)
+- 実アプリでの解決確認: パッケージを展開して起動し、LD_DEBUG
+  で `libmedia_kit_video_plugin.so` の libmpv.so.2 が同梱側に
+  解決されることと、maps に同梱の libmpv / libavcodec /
+  libaribb24 / libplacebo が載ることを確認済み
+
+配布と組み込み:
+
+- `tool/build_linux_desktop.sh` がリリース資産をダウンロード
+  して SHA-256 を検証し、`lib/` へ展開する
+- あわせて同スクリプトが、libmpv.so.2 をリンクしている
+  `libmedia_kit_video_plugin.so` の RUNPATH (ビルドツリーの
+  パスが焼き込まれている) を patchelf で `$ORIGIN` に書き換える。
+  これをしないとローダはシステムの libmpv を優先し、無い環境
+  ではプラグイン自体が読み込めない (media_kit の Dart 側は
+  `libmpv.so` → `libmpv.so.2` の順に素名 dlopen するため、
+  同梱には `libmpv.so` シンボリックリンクも含めている)

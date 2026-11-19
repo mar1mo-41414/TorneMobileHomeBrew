@@ -53,7 +53,7 @@ Releases から Windows 版の zip をダウンロードし、展開して `Torn
 
 ### Linux (デスクトップ版)
 
-Releases から Linux 版の tar.gz をダウンロードし、展開して `TorneMobileHomeBrew-linux/tmhb` を起動してください。実行にはシステムの libmpv (libmpv.so.2) と libepoxy が必要です。
+Releases から Linux 版の tar.gz をダウンロードし、展開して `TorneMobileHomeBrew-linux/tmhb` を起動してください。字幕対応の libmpv を同梱しているため、libmpv の別途インストールは不要です。実行には libepoxy と、音声出力用の libpulse / libasound が必要です。
 
 ## 使い方
 
@@ -66,7 +66,7 @@ Releases から Linux 版の tar.gz をダウンロードし、展開して `Tor
 - iOS のサイドロード環境では SSDP による発見が動作しないため、「探す」ではサブネット走査が使われます。見つからない場合は手動登録をお試しください。
 - 再生は nasne と同じ LAN での利用を想定しています。VPN 等の低速な経路では、録画のビットレートに転送速度が追いつかず、再生が一時停止することがあります。タイトル詳細で再生画質に「モバイル」を選ぶと、低ビットレート版で再生でき、一時停止を避けやすくなります。
 - 番組表ではサブチャンネルを既定で表示しません (設定の「サブチャンネルを表示」で切り替えできます)。
-- 字幕の DRCS 外字 (放送局独自の外字) は、Android 版では代替表示になります (iOS 版・macOS 版・Windows 版では表示できます)。Linux 版の字幕表示は、システムの libmpv が使う ffmpeg に libaribb24 デコーダが含まれているかどうかに依存します (Ubuntu 系では表示できます。Debian 系の公式 ffmpeg には含まれていません)。
+- 字幕の DRCS 外字 (放送局独自の外字) は、Android 版では代替表示になります (iOS 版・macOS 版・Windows 版・Linux 版では表示できます)。
 - LiveContainer で「マルチタスク」を有効にして起動すると、再生中のスリープ抑止が効かず、再生中でも端末がスリープする場合があります。その場合は、LiveContainer のアプリ設定で torne mobile HB の「マルチタスク」を「いいえ」にして起動してください (LiveContainer 全体のマルチタスク設定は変更不要です)。
 
 ## 技術方式
