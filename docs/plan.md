@@ -4248,3 +4248,15 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 - 残件:
   - BS 予約の実機確認は、受信環境のある利用者による今後の dev ビルド検証待ち (§73 の BS 表示確認と合わせて)。
   - CS (bt=4) の番組表・予約は引き続き未対応 (§73 残件のまま)。
+
+## 84. §69.5 資格情報ピッカーの例外表示 (2026-11-19)
+
+- 経緯: §69.5 の申し送り (ピッカー例外が画面に出ない問題は entitlement 側で根本修正したため残置、Dart 側の防御は別途判断) について、本人の指示 (2026-11-19) で実施した。§69.2 の実測どおり、資格情報画面の `_pickFile()` には try/catch が無く、file_picker が PlatformException を投げると未処理の非同期エラーになって画面に何も出ない — 「押した反応はあるのに無反応」の受け側が残っていた。
+- 実装 (コミット `0ed95da`):
+  1. **`lib/app/file_pick.dart` を新設**: プラットフォームのピック呼び出しを注入可能な関数 (`PlatformPickFiles`) 越しにした実行役 `FileBytesPicker` (§71 の `DebugLogFolderOpener` と同じ分離)。既定の呼び出しは従来どおり `FilePicker.platform.pickFiles(withData: true)`。`pick()` は「選んだファイルのバイト列」を返し、キャンセル・空結果・バイト未読込は null を返す (正常系として扱い、エラーにしない)。**プラットフォーム例外は変換せず呼び出し側へ伝播させる** (§71 の「失敗は例外として返し、握り潰さない」流儀)。
+  2. **プロバイダ**: `fileBytesPickerProvider` を `lib/app/providers.dart` に追加 (保存先ディレクトリ不要のため常時利用可能)。
+  3. **資格情報画面** (`lib/ui/dtcp_credential_screen.dart`): `_pickFile()` がピッカーをプロバイダ経由で呼び、例外時は診断ログ (`DiagCategory.ui`、`credential file pick failed: <例外>`) に残し、画面の既存のエラー表示 (`_error`、赤字) に「ファイル選択に失敗しました: <例外>」を出す。3つのピッカー (env / 証明書 / 秘密鍵) は共通の `_pickFile()` を使うため全てに効く。成功時の SnackBar など既存の表示は無変更。
+- 洗い出し結果: アプリ内の FilePicker 使用箇所は `lib/` 全体で資格情報画面の1箇所のみ (grep で `FilePicker` / `pickFiles` を全数確認)。他に同じ「例外を握り潰す」パターンのピッカー使用は存在しないため、追加修正はなし。
+- 検証: `flutter analyze` クリーン。**全テスト 330 件合格** (従来 325 件 + 新規 5 件)。新規テスト (`test/file_pick_test.dart`): 選んだファイルのバイト列が返ること、キャンセルで null、空結果で null、バイト未読込で null、PlatformException が呼び出し側へ伝播すること。
+- 版数: **1.4.2 据え置き** (次回リリースに載る)。ビルド番号も上げていない。成果物の作り直しはしていない。
+- 残件: 実機確認は次回ビルドの確認項目に含める (現行の entitlement 修正済み環境では例外自体が発生しないため、通常操作では新しいエラー表示は出ないのが正しい状態)。
