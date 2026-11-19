@@ -3384,6 +3384,7 @@ GitHub Release は作成していない。版数は 1.1.0 のまま (実再生�
   配置 (RUNPATH `$ORIGIN/lib`) を軸に、配布形態の
   変更を伴う作業として別途行う。
 - 本追記は判断の記録のみで、実装は未着手。
+- **実施時期の決定 (2026-11-19 追記)**: 本人決定により、同梱の実施は**次のバージョンに合わせる** (2026-11-19 リリースの v1.4.2 には含めない)。v1.4.2 の Linux 版の字幕は引き続きシステム libmpv / ffmpeg の libaribb24 有無に依存し、その旨と「次期バージョンで同梱予定」を v1.4.2 のリリースノートにも明記した (§81)。
 
 ## 63. desktop-subtitle ブランチの main 合流 (2026-11-17)
 
@@ -4152,3 +4153,18 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 - (iv) 短間隔の連続シーク: 約4秒スピンして再生。
 - §78 の症状は**いずれも再現しなかった**: 30〜60秒の producer ストール、末尾 (30:17) 着地での再生終了、HTTP 512、"Error decoding audio."、無言の最終フレーム静止は全て無し。**シーク固まりの修正は Windows 実機で成立**とした。
 - 残る特性: 再生開始直後の遠方シークは約13秒かかる。demuxer の再読連鎖 (§78.1) と、時刻↔バイト対応の学習がまだ無い初回確立の初期コストが残るためで、学習が済んだ後の戻りシーク (約3〜5秒) や通常のドラッグ (約4秒) との差として残る。本人は許容範囲と判断した (総評「問題なし」)。
+
+## 81. v1.4.2 統一リリース (2026-11-19、ビルド34)
+
+- 本人決定 (2026-11-19): BS 番組表 (§73)、Windows ログフォルダ修正 (§79)、シーク修正 (§80、実機確認 §80.7) を含む現行 main を、全プラットフォーム同一バージョンの **1.4.2** としてリリースする。モバイル (ビルド32) と Mac / Linux (ビルド31) と Windows (ビルド33) の足並みを揃える統一リリースで、手順は §70 を踏襲した。あわせて §62.5 の Debian 字幕 libmpv 同梱は**次のバージョンに合わせる**方針が決まった (§62.5 に追記)。
+- 版数を **1.4.2+34** に統一した (pubspec.yaml と `lib/core/app_version.dart` を同一コミット `5218b5a` で同期。§79 の教訓どおり版数ファイルの片寄せはしていない)。README も更新した (コミット `6329a11`: 版数表記、機能一覧の番組表に「地デジ・BS 対応」を明記、Windows 手順のフォルダ名)。リリース HEAD は `6329a11`。
+- テスト: **全319件合格**、`flutter analyze` クリーン。
+- 成果物 (すべて同一 HEAD `6329a11` からビルド):
+  - **APK**: 102,409,769 B、SHA-256 `11732863372b7c92b6c468deb91d136ca446646ccd16816c42c740248ba4783b`。versionName 1.4.2 / versionCode 34、配布署名 (証明書 SHA-256 `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5`、デバッグ署名の混入なし)、全 ABI の libmpv に aribb24 を確認。marnux `~/ダウンロード/` に配置 (ビルド32と差し替え)。
+  - **IPA**: 16,825,866 B、SHA-256 `eb37d051966725d0075c552ccfe3c243015ae9c3be67e19c6c249891bf81bdba`。署名なし。Mac で `flutter build ios --no-codesign --release` → Payload 形式でパッケージ。load command 監査合格 (24 Mach-O / 261 load commands)。Info.plist で 1.4.2 / 34 を確認。marnux `~/tmp/Decrypted-ipa/` に配置 (ビルド32と差し替え)。Mac クローンの取得は今回は Gitea SSH が通った (自宅ネットワーク)。
+  - **macOS zip**: 38,107,893 B、SHA-256 `9346a93b3ab2b52d8ad34243d14cc7c4273b15bd774b22172c4c1a9f05dab325`。ad-hoc 署名 + `Signing.entitlements` (user-selected read-only の1件のみ、keychain-access-groups なし)、Info.plist で 1.4.2 / 34 を確認。ビルド自体は `tool/build_macos_desktop.sh` で BUILD SUCCEEDED したが、身元署名は従来どおり SSH セッション制約 (`errSecInternalComponent`) で停止したため、リリース asset はスクリプトのフォールバックと同じ ad-hoc 署名で作成した (§70 と同一構成)。
+  - **Windows zip**: 38,980,894 B、SHA-256 `588f6ff13b0c63100a557b0b7712e22941af730226476079d0eaba4d1184c603`。同梱 libmpv-2.dll は arib2 (43,685,902 B)。marog の Desktop 配置 (フォルダ形式) も差し替え済み: 起動中インスタンスが無いことを確認してから差し替え、Release との再帰比較で 25 ファイル全一致、起動スモーク合格 (8秒後もプロセス生存)。
+  - **Linux tar.gz**: 11,368,076 B、SHA-256 `a65076aa1abb0b0a660975cdea77e3f497bf97fa2fc0b7a6d9b1b30500d6ebb2`。marnux `~/ダウンロード/` に配置 (ビルド31と差し替え)。なお初回ビルドは `build/linux` の CMake キャッシュに残っていた旧 sysroot パス (`/tmp/mpvdev`) を引いて生成に失敗し、キャッシュ (`build/linux`) を除去してから成功した。
+- **リリース**: タグ `v1.4.2` を `6329a11` に打ち、GitHub リリースを作成した (https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/tag/v1.4.2、公開・非ドラフト・非プレリリース、アセット5点)。**全アセットを未認証で再ダウンロードし、SHA-256 が上記と全て一致**することを確認した。リリースノートには §62.5 の方針 (Debian 字幕の自前 libmpv 同梱は次期バージョンで予定) も明記した。
+- dev プリリリースも GitHub Actions により 1.4.2+34 (コミット `6329a11`) の資産に更新されたことを確認した (dev.apk はリリース APK と同一サイズ 102,409,769 B)。
+- 残作業: Mac の `~/Applications` 配置のみ身元署名待ち。ビルド済み .app (現在は ad-hoc 署名) は Mac クローンの `build/macos/Build/Products/Release/torne mobile HB.app` に残置した。本人が §71 と同形式の署名コマンド (--entitlements 付き) をローカル Terminal で実行した後に、署名検証を経て `~/Applications` へ差し替える。リリース自体は ad-hoc 署名のアセットで完結している。
