@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 import '../core/core.dart';
 import 'ake_socket.dart';
 import 'debug_log.dart';
+import 'file_pick.dart';
 import 'log_folder.dart';
 import 'log_share.dart';
 import 'multicast_lock.dart';
@@ -206,6 +207,13 @@ final debugLogFolderOpenerProvider = Provider<DebugLogFolderOpener?>((ref) {
   if (dir == null) return null;
   return DebugLogFolderOpener(storeDirectory: dir);
 });
+
+/// Picks a file's bytes for the credential import (plan 84).
+/// Unlike the log actions above this needs no store directory,
+/// so it is always available.
+final fileBytesPickerProvider = Provider<FileBytesPicker>(
+  (ref) => FileBytesPicker(),
+);
 
 final playbackEngineProvider = Provider<PlaybackEngine>(
   (ref) => DtcpPlaybackEngine(

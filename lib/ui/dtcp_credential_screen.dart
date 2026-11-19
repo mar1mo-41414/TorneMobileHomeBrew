@@ -9,12 +9,14 @@
 /// Since plan 67 the pair can also be imported from a pydtcpip-style
 /// credentials.env file; that path feeds the same validation + save
 /// as the manual entry kept below it.
+///
+/// Since plan 84 a failed file pick is logged and shown as an
+/// error instead of escaping silently (the plan 69.5 leftover).
 library;
 
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -63,10 +65,26 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
     }
   }
 
+  /// Picks a file through [FileBytesPicker]. A cancelled pick
+  /// returns null and stays silent (a normal outcome); a failed
+  /// pick also returns null, but first leaves a diagnostics
+  /// record and a visible error — the plan 69.5 leftover, where
+  /// a picker exception escaped unhandled and the button looked
+  /// dead. The failure presentation follows plan 71: never
+  /// swallow, log the detail, tell the user.
   Future<Uint8List?> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    if (result == null || result.files.isEmpty) return null;
-    return result.files.first.bytes;
+    try {
+      return await ref.read(fileBytesPickerProvider).pick();
+    } catch (e) {
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'credential file pick failed: $e',
+      );
+      if (mounted) {
+        setState(() => _error = 'ファイル選択に失敗しました: $e');
+      }
+      return null;
+    }
   }
 
   /// Imports from a pydtcpip-style credentials.env file (plan 67):
@@ -201,10 +219,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
             label: const Text('credentials.env を選択'),
           ),
           const SizedBox(height: 16),
-          Text(
-            '証明書・秘密鍵を直接入力',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
+          Text('証明書・秘密鍵を直接入力', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 6),
           _pairFields(
             label: '証明書 (88 バイト)',
