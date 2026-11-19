@@ -1,7 +1,7 @@
 name: tmhb
 description: "torne mobile HomeBrew edition - a homebrew client for nasne (official firmware)."
 publish_to: 'none'
-version: 1.4.1+33
+version: 1.4.2+34
 
 environment:
   sdk: ^3.14.0
