@@ -5,6 +5,8 @@
 /// implementations and can be replaced without touching callers.
 library;
 
+import 'dart:typed_data';
+
 import '../models/device.dart';
 import '../models/didl.dart';
 import '../models/epg.dart';
@@ -85,6 +87,12 @@ abstract interface class TitleCatalogService {
   /// first and keep protected / recording titles away from here
   /// (the UI blocks both before asking).
   Future<void> deleteTitle(String id);
+
+  /// The title's thumbnail image bytes (JPEG or PNG), or null
+  /// when the unit has none or it cannot be extracted
+  /// (plan 86.6). Best-effort decoration: failures come back
+  /// as null, never as an error the list has to handle.
+  Future<Uint8List?> fetchThumbnail(String id);
 }
 
 /// Settings reads and the verified writes (WebAPI, plan 12.1).

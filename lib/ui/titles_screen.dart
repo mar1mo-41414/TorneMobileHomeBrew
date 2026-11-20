@@ -11,6 +11,11 @@
 /// start. Before this the position was display-only (plan 85
 /// item 1).
 ///
+/// Plan 86.6: list rows and the detail view show the title's
+/// thumbnail (recorded/thumbnailMapGet, extracted defensively
+/// by magic bytes) when the unit provides one. Before this the
+/// endpoint was defined but never called (plan 85 item 6).
+///
 /// Plan 86.5: the list can be searched by title, sorted, and
 /// filtered by channel / genre / unwatched; the genre comes
 /// from the DIDL merge (upnp:genre). Before this the list was
@@ -373,14 +378,7 @@ class _TitleListState extends ConsumerState<_TitleList> {
                 final t = view[i];
                 return ListTile(
                   selected: t.id == widget.selectedId,
-                  leading: Icon(
-                    t.recordingFlag
-                        ? Icons.fiber_manual_record
-                        : Icons.movie_outlined,
-                    color: t.recordingFlag
-                        ? Theme.of(context).colorScheme.error
-                        : null,
-                  ),
+                  leading: _TitleLeading(reg: reg, title: t),
                   title: Text(t.title),
                   subtitle: Text(
                     '${t.scheduledStart != null ? formatDateTimeJst(t.scheduledStart!) : ''}'
@@ -442,6 +440,72 @@ class _TitleListState extends ConsumerState<_TitleList> {
           }, onRetry: () => ref.invalidate(titlesProvider(reg))),
         ),
       ],
+    );
+  }
+}
+
+/// A title's leading visual (plan 86.6): the thumbnail when the
+/// unit provides one, else the movie icon. A title still being
+/// recorded keeps the red recording icon — its state matters
+/// more than a picture, and its thumbnail may not exist yet.
+class _TitleLeading extends ConsumerWidget {
+  const _TitleLeading({required this.reg, required this.title});
+
+  final RegisteredNasne reg;
+  final RecordedTitle title;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final fallback = Icon(
+      title.recordingFlag ? Icons.fiber_manual_record : Icons.movie_outlined,
+      color: title.recordingFlag ? Theme.of(context).colorScheme.error : null,
+    );
+    if (title.recordingFlag) return fallback;
+    final bytes = ref
+        .watch(titleThumbnailProvider((reg: reg, titleId: title.id)))
+        .value;
+    if (bytes == null) return fallback;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.memory(
+        bytes,
+        width: 64,
+        height: 36,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback,
+      ),
+    );
+  }
+}
+
+/// The detail view's thumbnail banner (plan 86.6): a 16:9
+/// picture above the title when the unit provides one, and
+/// nothing at all when it does not (no empty box).
+class _TitleThumbnailBanner extends ConsumerWidget {
+  const _TitleThumbnailBanner({required this.reg, required this.titleId});
+
+  final RegisteredNasne reg;
+  final String titleId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bytes = ref
+        .watch(titleThumbnailProvider((reg: reg, titleId: titleId)))
+        .value;
+    if (bytes == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -541,6 +605,7 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (!t.recordingFlag) _TitleThumbnailBanner(reg: reg, titleId: t.id),
         Text(t.title, style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 12),
         if (t.scheduledStart != null)

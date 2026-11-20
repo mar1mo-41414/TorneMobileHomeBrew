@@ -7,6 +7,8 @@
 /// substitute fakes by overriding the composition-root providers.
 library;
 
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/core.dart';
@@ -216,6 +218,18 @@ final schedulesProvider =
 final titlesProvider =
     FutureProvider.family<List<RecordedTitle>, RegisteredNasne>(
       (ref, reg) => ref.watch(deviceServicesProvider(reg)).titles.listTitles(),
+    );
+
+/// A recorded title's thumbnail image (plan 86.6), fetched
+/// lazily per title when its row or detail is shown; null when
+/// the unit offers none. Keyed by a record so the family cache
+/// is per (device, title).
+final titleThumbnailProvider =
+    FutureProvider.family<Uint8List?, ({RegisteredNasne reg, String titleId})>(
+      (ref, key) => ref
+          .watch(deviceServicesProvider(key.reg))
+          .titles
+          .fetchThumbnail(key.titleId),
     );
 
 /// Live bands and channels with the programme currently on air

@@ -5,6 +5,8 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -184,10 +186,12 @@ class FakeSchedules implements ScheduleService {
 }
 
 class FakeTitles implements TitleCatalogService {
-  FakeTitles({List<RecordedTitle>? items})
-    : items = List.of(items ?? defaultItems);
+  FakeTitles({List<RecordedTitle>? items, Map<String, List<int>>? thumbnails})
+    : items = List.of(items ?? defaultItems),
+      thumbnails = thumbnails ?? const {};
 
   final List<RecordedTitle> items;
+  final Map<String, List<int>> thumbnails;
   final List<String> deletedIds = [];
 
   static final defaultItems = [
@@ -234,6 +238,12 @@ class FakeTitles implements TitleCatalogService {
   Future<void> deleteTitle(String id) async {
     deletedIds.add(id);
     items.removeWhere((t) => t.id == id);
+  }
+
+  @override
+  Future<Uint8List?> fetchThumbnail(String id) async {
+    final bytes = thumbnails[id];
+    return bytes == null ? null : Uint8List.fromList(bytes);
   }
 }
 
@@ -395,6 +405,7 @@ class Fixture {
     FakeSchedules? schedules,
     this.titles,
     this.playback,
+    this.thumbnails,
   }) : schedules = schedules ?? FakeSchedules(),
        store = InMemoryRegistrationStore(registrations ?? [testReg]);
 
@@ -402,13 +413,14 @@ class Fixture {
   final InMemoryRegistrationStore store;
   final List<RecordedTitle>? titles;
   final PlaybackEngine? playback;
+  final Map<String, List<int>>? thumbnails;
 
   Widget app() {
     final bundle = DeviceServices(
       deviceInfo: FakeDeviceInfo(),
       settings: FakeSettings(),
       schedules: schedules,
-      titles: FakeTitles(items: titles),
+      titles: FakeTitles(items: titles, thumbnails: thumbnails),
       metadata: FakeMetadata(),
       live: FakeLiveCatalog(),
       playback: playback ?? const UnsupportedPlaybackEngine(),
@@ -610,6 +622,27 @@ void main() {
     expect(find.text('再生は未実装です'), findsOneWidget);
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('title rows show thumbnails when provided (plan 86.6)', (
+    tester,
+  ) async {
+    usePhoneSize(tester);
+    // A 1x1 transparent PNG.
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+      'YAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    );
+    final fixture = Fixture(thumbnails: {'201': png});
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+
+    // Title A (201) has a thumbnail image; title B keeps the icon.
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.byIcon(Icons.movie_outlined), findsOneWidget);
   });
 
   testWidgets('title list search and unwatched filter (plan 86.5)', (

@@ -6,9 +6,12 @@
 /// callers only see the merged [RecordedTitle].
 library;
 
+import 'dart:typed_data';
+
 import '../endpoints.dart';
 import '../errors.dart';
 import '../models/title.dart';
+import '../parsing/thumbnail.dart';
 import '../parsing/xsrs.dart';
 import '../transport/soap_transport.dart';
 import '../transport/webapi_transport.dart';
@@ -89,6 +92,24 @@ class SoapTitleCatalogService implements TitleCatalogService {
       action: 'X_DeleteTitle',
       args: {'TitleID': id},
     );
+  }
+
+  @override
+  Future<Uint8List?> fetchThumbnail(String id) async {
+    // The thumbnail map's container layout is unmeasured
+    // (plan 11.4 / 86.6): the image is located by magic bytes
+    // inside whatever came back. Every failure — transport,
+    // status, an unrecognised payload — is simply "no
+    // thumbnail"; a missing picture must never break the list.
+    try {
+      final raw = await _webApi.getBytes(
+        WebApiEndpoints.thumbnailMapGet,
+        params: {'id': id},
+      );
+      return extractThumbnailImage(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
