@@ -80,6 +80,12 @@
 /// used, so every viewing of a long programme restarted at the
 /// beginning (plan 85 item 1).
 ///
+/// Plan 86 (plan 85 item 7): recorded playback gains a speed
+/// control in the app bar (1.0 / 1.25 / 1.5 / 2.0, applied via
+/// mpv's rate with pitch-corrected audio). Live viewing is
+/// excluded — a live stream has nothing to catch up from
+/// (see player_speed_policy).
+///
 /// Plan 80: the seek-freeze fixes. Recorded playback now
 /// runs with mpv's cache on (see player_cache_policy) so
 /// the demuxer's re-reads stop round-tripping the proxy.
@@ -120,6 +126,7 @@ import '../core/core.dart';
 import 'player_cache_policy.dart';
 import 'player_error_policy.dart';
 import 'player_seek_policy.dart';
+import 'player_speed_policy.dart';
 import 'player_track_policy.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
@@ -210,6 +217,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// The caption toggle (plan 53). Default off, per the
   /// owner's spec; kept in this state only, never persisted.
   bool _subtitlesOn = false;
+
+  /// The playback rate (plan 86, plan 85 item 7): 1.0 is
+  /// normal speed. Offered for recordings only (see
+  /// player_speed_policy); kept in this state only, like the
+  /// caption and audio selections, and never persisted. mpv
+  /// holds the rate on the player instance, so it carries
+  /// over the in-place resume's re-open (plan 80) unchanged.
+  double _playbackRate = 1.0;
 
   /// Whether mpv reports the current stream seekable,
   /// observed from its `seekable` property (player UI
@@ -528,6 +543,25 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
   }
 
+  /// Applies a user-chosen playback rate (plan 86, plan 85
+  /// item 7). mpv pitch-corrects the audio at these rates,
+  /// so speech stays intelligible; the proxy and the stream
+  /// are untouched — the demuxer just consumes faster.
+  Future<void> _selectPlaybackRate(double rate) async {
+    if (rate == _playbackRate) return;
+    setState(() => _playbackRate = rate);
+    _diag(
+      DiagCategory.playback,
+      'player: playback rate -> ${playbackSpeedLabel(rate)} '
+      '(user selection)',
+    );
+    try {
+      await _player.setRate(rate);
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: rate change failed: $e');
+    }
+  }
+
   int get _selectedAudioIndex => selectedAudioIndex(
     selectedId: _selectedTrack.audio.id,
     trackIds: [for (final track in _realAudioTracks) track.id],
@@ -631,7 +665,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           'player: mpv cache=$cacheMode (live=${widget.live})',
         );
       }
-      final start = (!widget.live &&
+      final start =
+          (!widget.live &&
               widget.initialStart != null &&
               widget.initialStart! > Duration.zero)
           ? widget.initialStart
@@ -786,6 +821,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
+          if (canChangePlaybackSpeed(live: widget.live))
+            PopupMenuButton<double>(
+              tooltip: '再生速度',
+              initialValue: _playbackRate,
+              onSelected: _selectPlaybackRate,
+              itemBuilder: (context) => [
+                for (final rate in playbackSpeeds)
+                  CheckedPopupMenuItem<double>(
+                    value: rate,
+                    checked: rate == _playbackRate,
+                    child: Text(playbackSpeedLabel(rate)),
+                  ),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.speed),
+                    if (_playbackRate != 1.0) ...[
+                      const SizedBox(width: 4),
+                      Text(playbackSpeedLabel(_playbackRate)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           if (canSwitchAudio(_realAudioTracks.length))
             PopupMenuButton<int>(
               tooltip: '音声',
