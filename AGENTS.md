@@ -1,6 +1,6 @@
 # AGENTS.md — このリポジトリで作業する人・AI への規約
 
-このリポジトリは、公式ファームウェアの nasne 向け自作クライアント **torne mobile HB**(Flutter 製、iOS / Android)の開発場所。人間向けの概要は [README.md](README.md)、設計と実装の記録は [docs/plan.md](docs/plan.md) が正本。
+このリポジトリは、公式ファームウェアの nasne 向け自作クライアント **torne mobile HB**(Flutter 製、iOS / Android)の開発場所。人間向けの概要は [README.md](README.md)。
 
 ## 1. 名称と呼び方
 
@@ -9,9 +9,9 @@
 
 ## 2. 記録の作法
 
-- 設計・実装・検証の詳細は [docs/plan.md](docs/plan.md) に節を足して残す。要約で済ませず、根拠・実測値・未確定事項まで書く(後から誰が読んでも続きができる水準にする)。
+- 設計・実装・検証の詳細は記録に残す。要約で済ませず、根拠・実測値・未確定事項まで書く(後から誰が読んでも続きができる水準にする)。
 - 観測事実と推測は分けて書く。推測は推測と明記し、事実の顔をさせない。
-- README は利用者向けの使い方と確定情報のみ。開発の経緯や内部の仕組みは plan.md に書く。
+- README は利用者向けの使い方と確定情報のみ。開発の経緯や内部の仕組みは README に書かない。
 
 ## 3. 版数ルール(最重要)
 
@@ -21,7 +21,7 @@
 ## 4. 表記
 
 - アプリ内の表記は、基本的に公式(torne 公式アプリと nasne の公式表記)に準拠する(例: 画質は数値でなく DR / 3 倍 と表示する)。
-- 公式の表記が分からないものは勝手に作らない。実値のフォールバック表示にし、未確定として plan.md に記録する。
+- 公式の表記が分からないものは勝手に作らない。実値のフォールバック表示にし、未確定として記録する。
 
 ## 5. 資格情報(DTCP-IP)の扱い
 
@@ -50,8 +50,8 @@
 
 - main への push と手動実行で、GitHub Actions の `dev-build` ワークフロー (`.github/workflows/dev-build.yml`) が Android APK と署名なし IPA をビルドする。
 - 成果物は Actions の artifact のほか、ローリングな prerelease (タグ `dev`、Releases の「開発版 (dev)」) にも載る。利用者は Actions 画面を開かずにそこから取得できる。テスト用ビルドの案内はそちらへ誘導する。
-- prerelease の資産名は `TorneMobileHomeBrew-dev.apk` / `TorneMobileHomeBrew-dev.ipa` で固定 (plan.md §50)。リリースは作り直さず資産の差し替えで更新するため、ダウンロード URL は常に同じになる。案内にはこの固定 URL を使う。
+- prerelease の資産名は `TorneMobileHomeBrew-dev.apk` / `TorneMobileHomeBrew-dev.ipa` で固定。リリースは作り直さず資産の差し替えで更新するため、ダウンロード URL は常に同じになる。案内にはこの固定 URL を使う。
 - Android の署名は、以下の Secrets が登録されていれば配布用キーストア、なければデバッグ鍵にフォールバックする (ビルド自体は常に通る)。
   - `TMHB_KEYSTORE_BASE64`: 配布用キーストア (release.keystore) を base64 化したもの
   - `TMHB_STORE_PASSWORD` / `TMHB_KEY_ALIAS` / `TMHB_KEY_PASSWORD`: key.properties の同名項目
-- Secrets は登録済み (2026-11-17、オーナー承認のもとで登録、経緯は plan.md §44)。登録・変更はオーナーの管理下でのみ行い、値そのものをコミット・Issue・ログに残さない (§5 と同じ)。
+- Secrets は登録済み (2026-11-17、オーナー承認のもとで登録)。登録・変更はオーナーの管理下でのみ行い、値そのものをコミット・Issue・ログに残さない (§5 と同じ)。

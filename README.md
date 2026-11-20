@@ -4,7 +4,7 @@ Sony のサポート終了後も、公式ファームウェアの nasne をス�
 
 ## 現状
 
-v1.4.3 をリリースしました。配布物 (IPA / APK / Mac 版 / Windows 版 / Linux 版) は GitHub Releases から入手できます。開発の経緯・設計・検証記録は [docs/plan.md](docs/plan.md) にまとめています。
+v1.4.3 をリリースしました。配布物 (IPA / APK / Mac 版 / Windows 版 / Linux 版) は GitHub Releases から入手できます。
 
 ## 機能
 
