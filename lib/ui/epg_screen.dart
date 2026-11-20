@@ -4,6 +4,11 @@
 /// Data comes from MetadataService.getProgrammeGuide (the EPGGet
 /// dataset behind the MetadataService boundary, plan 12.8); the
 /// screen only slices and renders it.
+///
+/// Plan 86 (plan 85 item 8): the app bar gains a programme
+/// search entry point (epg_search_screen), which searches the
+/// same held dataset by keyword and genre; its results open
+/// the shared event detail dialog ([showEpgEventDetail]).
 library;
 
 import 'dart:math' as math;
@@ -16,6 +21,7 @@ import '../app/providers.dart';
 import '../app/state.dart';
 import '../app/bs_epg_providers.dart';
 import '../core/core.dart';
+import 'epg_search_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
 import 'schedule_form.dart';
@@ -151,6 +157,16 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
       appBar: AppBar(
         title: const Text('番組表'),
         actions: [
+          if (reg != null)
+            IconButton(
+              icon: const Icon(Icons.search),
+              tooltip: '番組検索',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => EpgSearchScreen(reg: reg),
+                ),
+              ),
+            ),
           if (reg != null)
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -608,30 +624,12 @@ class _EventTile extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           borderRadius: BorderRadius.circular(3),
-          onTap: () => showDialog<void>(
-            context: context,
-            builder: (dialogContext) => _EventDetailDialog(
-              event: event,
-              channelName: channelName,
-              // Reserve from the guide (plan 28): opens the create
-              // form prefilled with this event, through the same
-              // XSRS create path as a manual reservation. Events
-              // that have already ended cannot be reserved.
-              onReserve: event.end.isAfter(DateTime.now())
-                  ? () {
-                      Navigator.of(dialogContext).pop();
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ScheduleFormPage.fromEpg(
-                            reg,
-                            channel: channel,
-                            event: event,
-                          ),
-                        ),
-                      );
-                    }
-                  : null,
-            ),
+          onTap: () => showEpgEventDetail(
+            context,
+            reg: reg,
+            channel: channel,
+            channelName: channelName,
+            event: event,
           ),
           child: maxTitleLines >= 1
               ? Padding(
@@ -689,8 +687,50 @@ class _EventTile extends StatelessWidget {
   }
 }
 
-class _EventDetailDialog extends StatelessWidget {
-  const _EventDetailDialog({
+/// Shows the programme detail dialog for a guide [event],
+/// with the reservation action wired to the prefilled form
+/// when the event has not ended yet. Shared by the guide
+/// grid's tiles and the programme search results (plan 86),
+/// so both paths offer exactly the same detail and the same
+/// way into a reservation.
+///
+/// Reserve from the guide (plan 28): opens the create form
+/// prefilled with this event, through the same XSRS create
+/// path as a manual reservation. Events that have already
+/// ended cannot be reserved.
+void showEpgEventDetail(
+  BuildContext context, {
+  required RegisteredNasne reg,
+  required Channel channel,
+  required String channelName,
+  required EpgEvent event,
+}) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => EpgEventDetailDialog(
+      event: event,
+      channelName: channelName,
+      onReserve: event.end.isAfter(DateTime.now())
+          ? () {
+              Navigator.of(dialogContext).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ScheduleFormPage.fromEpg(
+                    reg,
+                    channel: channel,
+                    event: event,
+                  ),
+                ),
+              );
+            }
+          : null,
+    ),
+  );
+}
+
+class EpgEventDetailDialog extends StatelessWidget {
+  const EpgEventDetailDialog({
+    super.key,
     required this.event,
     required this.channelName,
     this.onReserve,
