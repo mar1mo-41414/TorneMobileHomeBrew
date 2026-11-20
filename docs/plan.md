@@ -4538,3 +4538,13 @@ zcomlao さん、詳細な計測と、修正案まで含む報告をありがと
 - §85 の上位10件は全て実装済み (86.1〜86.10、ビルド35〜44)。版数は 1.4.2 のまま。
 - 実機確認の宿題はキャンペーン完了後にまとめて行う: #1 レジュームの位置一致、#3 削除の実削除 (引数名 TitleID の確定)、#5 ジャンルの実データ表示、#6 サムネイルの実応答形式、#7 早見の音声ピッチ補正、#8 検索の応答性、#10 色分けの見え方。#3 の保護切り替えは形状未検証のため未実装のまま (86.3 の宿題)。
 - 次版 (1.4.3 想定) への同梱候補は §82 の Debian 字幕バンドルと本節の10件。版数の確定は実機確認後 (版数ルール)。
+
+### 86.12 ビルド44 の全プラットフォームビルドと配置 (2026-11-20)
+
+§86.11 の10件を含むビルド44 (HEAD `46bb1f2`) を全プラットフォームでビルドし、開発用の配置まで行った。**リリースではない** (版数 1.4.2 のまま、タグ・GitHub リリースなし)。実機確認の宿題 (86.11) が済んだ後に、版数確定とリリースを行う。
+
+- **APK**: 102,655,717 B、SHA-256 `5b6e215bc8961cd5b7fdfbaa490ae3fea16c1bb17b9c2a833d22e7559af19c34`。versionName 1.4.2 / versionCode 44、配布署名 (証明書 SHA-256 `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5`) を apksigner で確認。marnux `~/ダウンロード/TMHB/` に配置 (ビルド34と差し替え)。
+- **IPA**: 16,872,059 B、SHA-256 `af82359847f464e26d006e3c46242207de32188d470fc056ec6a5030b26b53c7`。署名なし。Mac で `flutter build ios --no-codesign --release` → Payload 形式でパッケージ。load command 監査合格 (24 Mach-O / 261 load commands、§81 と同数)。Info.plist で 1.4.2 / 44 を確認。marnux `~/tmp/Decrypted-ipa/` に配置 (ビルド34と差し替え)。
+- **Linux tar.gz**: 22,611,322 B、SHA-256 `a26cb55bb7fe40df17f2d7443120c626b40efae2a55991e487649fdfb99d7249`。`tool/build_linux_desktop.sh` で §82 の自前 libmpv 同梱入り (ビルド34の 11.4 MB から増えたのは同梱分)。marnux `~/ダウンロード/TMHB/` に配置 (ビルド34と差し替え)。
+- **Windows**: marog でビルドし、Desktop の `TorneMobileHomeBrew\` フォルダを差し替え (展開形、圧縮なし)。Release との再帰比較で 25 ファイル全一致、起動スモーク合格 (8秒後もプロセス生存)。`tmhb.exe` は 160,256 B、SHA-256 `4c2c676ea8b92d46316bcbad0be46e331aa0471703df2f7200528374ec91a896`。
+- **macOS**: `tool/build_macos_desktop.sh` で BUILD SUCCEEDED。身元署名は従来どおり SSH セッション制約 (`errSecInternalComponent`) で停止したため、ビルド済み .app を ad-hoc 署名 + 検証合格 (1.4.2 / 44、keychain-access-groups なし) の状態で Mac クローンの `build/macos/Build/Products/Release/torne mobile HB.app` に残置した。`~/Applications` への配置は、本人がローカル Terminal で身元署名コマンド (--entitlements 付き、§81 と同形式) を実行した後に、署名検証を経て行う。
