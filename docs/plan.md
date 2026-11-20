@@ -4488,6 +4488,14 @@ zcomlao さん、詳細な計測と、修正案まで含む報告をありがと
   - UI は詳細画面の「このタイトルを削除」ボタンと、一覧の長押しの2経路。共通フロー (`deleteRecordedTitle`) で、保護中・録画中は理由を表示して確認まで進ませない。それ以外は取り消し不可である旨を含む確認ダイアログ → 削除 → 一覧と件数を再取得 → 「削除しました」。失敗時は平易文 (§86.6 でさらに整える対象) + 診断ログ。
 - 判断: 保護の切り替え (保護を外す操作) は今回は実装しない。フェーズ0 の記録に `X_UpdateTitle` 系のリクエスト形状が一切残っておらず、推測で送ると既存タイトルのメタデータを壊す恐れがあるため。保護中タイトルは「保護されているため削除できません」の案内のみとし、保護解除の実機調査は別途の宿題とする。
 - テスト: SOAP 層で `X_DeleteTitle` + `<TitleID>` の送信を確認 (soap_services_test)。UI は保護タイトルの拒否と、未保護タイトルの確認→削除→一覧から消えることまで (ui_test)。全 343 件合格、analyze クリーン。
+- **保護の形状検証 (2026-11-21、runbook stage 3 で実機確認済み)**: 対象はキャンペーンの埋め草タイトル1件 (TitleID `17950995480000000090`、「ＮＨＫスペシャルＰＲ　臨界世界　縦の支配　中国　ショートドラマの光と影」、2026-11-19 23:45:48 録画、recordSize 105、内蔵 HDD)。送受信の生データは tmhb.work `2026-11-21-stage3-protect/` に保存した。
+  - **保護要素は item XML 内の `titleProtectFlag`** (0 = 保護なし、1 = 保護あり)。X_GetTitleList の Result の item に含まれており、要素名の推測は不要だった。
+  - **X_UpdateTitle の Elements の形状が確定した**: 引数は `Elements` のみで、対象タイトルは item の `id` 属性で指定される。Elements は X_GetTitleList の Result と同じ xsrs 文書に対象 item を丸ごと (全要素・属性を一覧の表記のまま) 入れ、`titleProtectFlag` の値だけを書き換えたもの。応答は HTTP 200 で、Result は空の xsrs 文書。ON (0→1)・OFF (1→0) とも初回送信で成立し、一覧側のフラグが追随して変わることを確認した。
+  - 保護 ON の Elements 全文: `<?xml version="1.0"?><xsrs xmlns="urn:schemas-xsrs-org:metadata-1-0/x_srs/"><item id="17950995480000000090"><title>ＮＨＫスペシャルＰＲ　臨界世界　縦の支配　中国　ショートドラマの光と影</title><scheduledStartDateTime>2026-11-19T23:45:48+0900</scheduledStartDateTime><scheduledDuration>55</scheduledDuration><scheduledChannelID broadcastingType="2" channelType="2">0xde00</scheduledChannelID><desiredQualityMode>100</desiredQualityMode><genreID type="2">39</genreID><reservationCreatorID>2000</reservationCreatorID><titleProtectFlag>1</titleProtectFlag><titleNewFlag>1</titleNewFlag><recordingFlag>0</recordingFlag><recordDestinationID>HDD</recordDestinationID><recordSize>105</recordSize><lastPlaybackTime resumePoint="0">notplayed</lastPlaybackTime><portableRecordFile target="MOB" transferPath="IP">11</portableRecordFile></item></xsrs>`
+  - 保護 OFF の Elements は上記とバイト単位で同一で、`<titleProtectFlag>0</titleProtectFlag>` のみが異なる (実ファイル同士の diff で確認済み)。
+  - **保護中の削除は拒否される**: X_DeleteTitle が HTTP 500 の SOAP Fault (faultcode `s:Client`、faultstring `UPnPError`、errorCode **877**、errorDescription `Action X_DeleteTitle failed`) を返し、タイトルは残存して件数も変わらなかった。
+  - **往復の完結**: 保護 ON → 削除拒否 (877) → 保護 OFF → X_DeleteTitle が HTTP 200 で成立。TotalMatches は 200 → **199** になり、recordedContentCountGet (199) でも裏取りした。対象タイトルはこの検証で削除された。
+  - これで #3 の宿題 (実削除・TitleID の確定・保護の形状) は全て消化した。アプリへの保護トグル実装は、この確定形状を入力として別途行う。
 
 ### 86.4 #4 初回導線と発見失敗時の案内 (ビルド38)
 
@@ -4562,6 +4570,7 @@ zcomlao さん、詳細な計測と、修正案まで含む報告をありがと
 - §85 の上位10件は全て実装済み (86.1〜86.10、ビルド35〜44)。版数は 1.4.2 のまま。
 - 実機確認の宿題はキャンペーン完了後にまとめて行う: #1 レジュームの位置一致、#3 削除の実削除 (引数名 TitleID の確定)、#5 ジャンルの実データ表示、#6 サムネイルの実応答形式、#7 早見の音声ピッチ補正、#8 検索の応答性、#10 色分けの見え方。#3 の保護切り替えは形状未検証のため未実装のまま (86.3 の宿題)。
 - 進捗 (2026-11-20): #3 の実削除と TitleID の確定は前倒しで消化済み (詳細は §91 の宿題進捗)。残る宿題は #1・#5・#6・#7・#8・#10 の6件と、#3 の保護切り替え (形状検証)。
+- 進捗 (2026-11-21): #3 の保護切り替えの形状検証を runbook stage 3 で消化した (詳細は §86.3 の保護の形状検証)。残る宿題は #1・#5・#6・#8 の4件と #10 の BS 分。
 - 次版 (1.4.3 想定) への同梱候補は §82 の Debian 字幕バンドルと本節の10件。版数の確定は実機確認後 (版数ルール)。
 
 ### 86.12 ビルド44 の全プラットフォームビルドと配置 (2026-11-20)
@@ -4777,3 +4786,4 @@ pydtcpip の `stream` に録画中タイトルの DR res URL を渡し、読み�
   - **#6「サムネイル」は未消化・要切り分け**: 録画済み一覧 (全164件) のスクショでは全タイトルがプレースホルダ (カチンコアイコン) 表示だった。今夜のデバッグログ群にはサムネイル取得のログが一切なく、「取得を試みて失敗している」のか「一覧表示では取得自体をしていない」のかはコード側の確認が必要。明日の宿題として残す。
   - **タイトル保護の検証は本人の指示で 2026-11-21 に延期** (runbook stage 3 で実施)。
   - これで v1.5.0 の前提条件の残りは #1 (レジューム位置)・#5 (upnp:genre 実データ)・#6 (サムネ形式、上記の切り分け含む)・#8 (EPG 検索の応答性)・#10 の BS 分と、#3 の保護切り替えの形状検証 (stage 3)。消化済みは #3 の実削除・#7・#10 の地デジ分。
+- **宿題の進捗 (2026-11-21、runbook stage 3)**: **#3 の保護切り替えの形状検証を消化した**。保護要素は item XML 内の `titleProtectFlag` (0 = なし、1 = 保護) で、X_UpdateTitle の Elements は X_GetTitleList の Result と同じ xsrs 文書に対象 item を丸ごと入れ、フラグの値だけを書き換える形で確定した (ON / OFF とも初回送信で HTTP 200)。保護中の X_DeleteTitle は errorCode 877 で拒否されることも確認し、保護解除後に削除して件数 200 → 199 を TotalMatches と recordedContentCountGet の両方で裏取りした。詳細は §86.3 の保護の形状検証。これで #3 は実削除・保護とも完了し、v1.5.0 の前提条件の残りは #1 (レジューム位置)・#5 (upnp:genre 実データ)・#6 (サムネ形式)・#8 (EPG 検索の応答性) の4件と #10 の BS 分のみとなった。
