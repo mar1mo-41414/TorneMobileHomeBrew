@@ -4548,3 +4548,11 @@ zcomlao さん、詳細な計測と、修正案まで含む報告をありがと
 - **Linux tar.gz**: 22,611,322 B、SHA-256 `a26cb55bb7fe40df17f2d7443120c626b40efae2a55991e487649fdfb99d7249`。`tool/build_linux_desktop.sh` で §82 の自前 libmpv 同梱入り (ビルド34の 11.4 MB から増えたのは同梱分)。marnux `~/ダウンロード/TMHB/` に配置 (ビルド34と差し替え)。
 - **Windows**: marog でビルドし、Desktop の `TorneMobileHomeBrew\` フォルダを差し替え (展開形、圧縮なし)。Release との再帰比較で 25 ファイル全一致、起動スモーク合格 (8秒後もプロセス生存)。`tmhb.exe` は 160,256 B、SHA-256 `4c2c676ea8b92d46316bcbad0be46e331aa0471703df2f7200528374ec91a896`。
 - **macOS**: `tool/build_macos_desktop.sh` で BUILD SUCCEEDED。身元署名は従来どおり SSH セッション制約 (`errSecInternalComponent`) で停止したため、ビルド済み .app を ad-hoc 署名 + 検証合格 (1.4.2 / 44、keychain-access-groups なし) の状態で Mac クローンの `build/macos/Build/Products/Release/torne mobile HB.app` に残置した。`~/Applications` への配置は、本人がローカル Terminal で身元署名コマンド (--entitlements 付き、§81 と同形式) を実行した後に、署名検証を経て行う。
+
+### 86.13 macOS 版 (ビルド44) の配置完了 (2026-11-20)
+
+§86.12 で本人署名待ちとしていた macOS 版の配置が完了した。
+
+- 本人が Mac のローカル Terminal で身元署名コマンドを実行 (2026-11-20 13:45、§86.12 で提示した `--entitlements` 付きの形式どおり)。
+- 署名対象と配置後の両方で `codesign --verify --deep --strict` 合格。配置先 `~/Applications/torne mobile HB.app` の `codesign -dvvv` で **Authority=torne-mobile-hb-signing** を確認した。版数は Info.plist 実測で 1.4.2 / ビルド44。
+- これで §86 の全プラットフォーム配置が完了した (APK / IPA / Linux / Windows は §86.12 記録どおり配置済みで、macOS が最後の1つだった)。
