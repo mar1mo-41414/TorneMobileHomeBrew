@@ -10,6 +10,12 @@
 /// the beginning, and the choice reaches the player as its open
 /// start. Before this the position was display-only (plan 85
 /// item 1).
+///
+/// Plan 86.3: titles can be deleted from the detail view (and
+/// by long-pressing a list row), behind a confirmation.
+/// Protected and currently-recording titles are refused with
+/// the reason, before any confirmation. Before this the app
+/// had no title deletion at all (plan 85 item 3).
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +24,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
+import 'error_messages.dart';
 import 'format.dart';
 import 'playback_launcher.dart';
 import 'player_screen.dart';
@@ -57,6 +64,75 @@ Future<bool?> showResumeChoiceDialog(
         FilledButton(
           onPressed: () => Navigator.of(context).pop(true),
           child: const Text('続きから再生'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// The title deletion flow (plan 86.3), shared by the detail
+/// view's delete button and the list's long-press. Protected
+/// titles (the unit's guard against accidental deletion) and
+/// titles still being recorded are refused with the reason and
+/// never reach the confirmation. Anything else asks first —
+/// deletion cannot be undone — then deletes, refreshes the
+/// list and counts, and reports. [onDeleted] runs after a
+/// successful deletion (the detail page uses it to go back to
+/// the list; the two-pane layout needs nothing, its selection
+/// simply stops resolving).
+Future<void> deleteRecordedTitle({
+  required BuildContext context,
+  required WidgetRef ref,
+  required RegisteredNasne reg,
+  required RecordedTitle title,
+  VoidCallback? onDeleted,
+}) async {
+  if (title.protectFlag) {
+    await _showDeleteRefusal(
+      context,
+      'このタイトルは保護されているため削除できません。',
+    );
+    return;
+  }
+  if (title.recordingFlag) {
+    await _showDeleteRefusal(context, '録画中のタイトルは削除できません。');
+    return;
+  }
+  final confirmed = await confirmDialog(
+    context,
+    title: 'タイトルを削除',
+    message: '「${title.title}」を削除しますか？\n削除した録画は元に戻せません。',
+    confirmLabel: '削除',
+  );
+  if (!confirmed || !context.mounted) return;
+  try {
+    await ref.read(deviceServicesProvider(reg)).titles.deleteTitle(title.id);
+  } on NasneError catch (e) {
+    ref.read(diagLogProvider)(DiagCategory.ui, 'title delete failed: $e');
+    if (context.mounted) showSnack(context, userMessageForError(e));
+    return;
+  } catch (e) {
+    ref.read(diagLogProvider)(DiagCategory.ui, 'title delete failed: $e');
+    if (context.mounted) showSnack(context, '削除できませんでした');
+    return;
+  }
+  ref.invalidate(titlesProvider(reg));
+  ref.invalidate(titleCountsProvider(reg));
+  if (!context.mounted) return;
+  showSnack(context, '削除しました');
+  onDeleted?.call();
+}
+
+Future<void> _showDeleteRefusal(BuildContext context, String message) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('削除できません'),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('閉じる'),
         ),
       ],
     ),
@@ -183,6 +259,12 @@ class _TitleList extends ConsumerWidget {
                     t,
                     MediaQuery.sizeOf(context).width >= twoPaneBreakpoint,
                   ),
+                  onLongPress: () => deleteRecordedTitle(
+                    context: context,
+                    ref: ref,
+                    reg: reg,
+                    title: t,
+                  ),
                 );
               },
             );
@@ -230,7 +312,13 @@ class TitleDetailPage extends ConsumerWidget {
       appBar: AppBar(title: const Text('タイトルの詳細')),
       body: asyncSection(titles, (list) {
         for (final t in list) {
-          if (t.id == titleId) return TitleDetailView(reg: reg, title: t);
+          if (t.id == titleId) {
+            return TitleDetailView(
+              reg: reg,
+              title: t,
+              onDeleted: () => Navigator.of(context).pop(),
+            );
+          }
         }
         return const Center(child: Text('タイトルが見つかりません'));
       }, onRetry: () => ref.invalidate(titlesProvider(reg))),
@@ -243,10 +331,21 @@ class TitleDetailPage extends ConsumerWidget {
 /// original, a playback quality choice is offered (plan 33); the
 /// default is always the original quality.
 class TitleDetailView extends ConsumerStatefulWidget {
-  const TitleDetailView({super.key, required this.reg, required this.title});
+  const TitleDetailView({
+    super.key,
+    required this.reg,
+    required this.title,
+    this.onDeleted,
+  });
 
   final RegisteredNasne reg;
   final RecordedTitle title;
+
+  /// Runs after this title was deleted from the detail view
+  /// (plan 86.3): the pushed detail page goes back to the list.
+  /// Null in the two-pane layout, where the refreshed list
+  /// simply stops resolving the selection.
+  final VoidCallback? onDeleted;
 
   @override
   ConsumerState<TitleDetailView> createState() => _TitleDetailViewState();
@@ -366,6 +465,24 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           const SizedBox(height: 8),
           const Text('録画の再生には資格情報のインポートが必要です。'),
         ],
+        const SizedBox(height: 24),
+        OutlinedButton.icon(
+          onPressed: () => deleteRecordedTitle(
+            context: context,
+            ref: ref,
+            reg: reg,
+            title: title,
+            onDeleted: widget.onDeleted,
+          ),
+          icon: Icon(
+            Icons.delete_outline,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          label: Text(
+            'このタイトルを削除',
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
       ],
     );
   }

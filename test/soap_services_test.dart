@@ -207,6 +207,24 @@ void main() {
       expect(t1.copyCountRemaining, 9);
       expect(t1.resumePointSeconds, 16);
     });
+
+    test('deleteTitle sends X_DeleteTitle with the list-form id',
+        () async {
+      late String seenBody;
+      final catalog = build(router(
+        {
+          'X_DeleteTitle': (
+            200,
+            '<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>'
+                '<u:X_DeleteTitleResponse xmlns:u="urn:schemas-xsrs-org:service:X_ScheduledRecording:2">'
+                '</u:X_DeleteTitleResponse></s:Body></s:Envelope>'
+          ),
+        },
+        onRequest: (r) => seenBody = r.body,
+      ));
+      await catalog.deleteTitle('10000000000000000001');
+      expect(seenBody, contains('<TitleID>10000000000000000001</TitleID>'));
+    });
   });
 }
 

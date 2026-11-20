@@ -181,9 +181,11 @@ class FakeSchedules implements ScheduleService {
 }
 
 class FakeTitles implements TitleCatalogService {
-  FakeTitles({List<RecordedTitle>? items}) : items = items ?? defaultItems;
+  FakeTitles({List<RecordedTitle>? items})
+      : items = List.of(items ?? defaultItems);
 
   final List<RecordedTitle> items;
+  final List<String> deletedIds = [];
 
   static final defaultItems = [
     RecordedTitle(
@@ -224,6 +226,12 @@ class FakeTitles implements TitleCatalogService {
 
   @override
   Future<int> maxTitles() async => 3000;
+
+  @override
+  Future<void> deleteTitle(String id) async {
+    deletedIds.add(id);
+    items.removeWhere((t) => t.id == id);
+  }
 }
 
 /// Records the res it was asked to play, then fails with a
@@ -599,6 +607,57 @@ void main() {
     expect(find.text('再生は未実装です'), findsOneWidget);
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('a protected title cannot be deleted (plan 86.3)',
+      (tester) async {
+    usePhoneSize(tester);
+    await tester.pumpWidget(Fixture().app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルA'));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('このタイトルを削除'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('削除できません'), findsOneWidget);
+    expect(
+      find.text('このタイトルは保護されているため削除できません。'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('an unprotected title is deleted after confirmation '
+      '(plan 86.3)', (tester) async {
+    usePhoneSize(tester);
+    await tester.pumpWidget(Fixture().app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルB'));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('このタイトルを削除'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('タイトルを削除'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '削除'));
+    await tester.pumpAndSettle();
+
+    // Back on the list, with the title gone and the count updated.
+    expect(find.text('録画タイトルB'), findsNothing);
+    expect(find.text('録画タイトルA'), findsOneWidget);
+    expect(find.textContaining('全 1 件'), findsOneWidget);
   });
 
   testWidgets('title detail with a mobile res offers the quality choice; '

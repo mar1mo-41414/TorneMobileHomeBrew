@@ -75,6 +75,22 @@ class SoapTitleCatalogService implements TitleCatalogService {
   }
 
   @override
+  Future<void> deleteTitle(String id) async {
+    // X_DeleteTitle on the same XSRS service as the title list
+    // (plan 86.3). The TitleID argument name follows the
+    // service's measured ID naming (X_DeleteRecordSchedule
+    // takes RecordScheduleID); a wrong name surfaces as a SOAP
+    // Fault, never as a silent wrong deletion. Device
+    // verification is pending (plan 86.3).
+    await _soap.call(
+      controlUrl: _controlUrl,
+      serviceType: _serviceType,
+      action: 'X_DeleteTitle',
+      args: {'TitleID': id},
+    );
+  }
+
+  @override
   Future<int> countTitles() async {
     final json = await _webApi.getJson(WebApiEndpoints.recordedContentCountGet);
     final count = json['count'];

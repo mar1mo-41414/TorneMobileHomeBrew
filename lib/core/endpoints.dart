@@ -249,6 +249,12 @@ abstract final class SoapServices {
       'X_CreateRecordSchedule': SoapActionDef('X_CreateRecordSchedule'),
       'X_UpdateRecordSchedule': SoapActionDef('X_UpdateRecordSchedule'),
       'X_DeleteRecordSchedule': SoapActionDef('X_DeleteRecordSchedule'),
+      // Title deletion (plan 86.3): the action exists in the
+      // service description obtained in phase 0 (plan 11). Its
+      // TitleID argument follows the service's ID naming
+      // (RecordScheduleID for schedules); the request shape is
+      // not yet device-verified — see plan 86.3.
+      'X_DeleteTitle': SoapActionDef('X_DeleteTitle'),
     },
   );
 

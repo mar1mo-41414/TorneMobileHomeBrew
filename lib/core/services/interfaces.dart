@@ -79,6 +79,12 @@ abstract interface class TitleCatalogService {
   Future<List<RecordedTitle>> listTitles({bool withMetadata = true});
   Future<int> countTitles();
   Future<int> maxTitles();
+
+  /// Deletes a recorded title by its canonical (list-form) id
+  /// (plan 86.3). Irreversible; callers confirm with the user
+  /// first and keep protected / recording titles away from here
+  /// (the UI blocks both before asking).
+  Future<void> deleteTitle(String id);
 }
 
 /// Settings reads and the verified writes (WebAPI, plan 12.1).
