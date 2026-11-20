@@ -3966,6 +3966,52 @@ cd ~/GitTmp/MyClaude/TorneMobileHomeBrew && codesign --force --deep --timestamp=
 - 補充運用 (§74.6 で予告した形): marnux の cron が 15 分毎に `topup.sh` → `fill_titles.py --fill` を回し (crontab 行にタグ `tmhb-200titles-topup`)、録画が終わって枠が空くたびに不足分を補充する。録画 200 件に達したら cron は自分の行を消して終了する (topup.log に記録)。残り 96 件は当初計画と同じイベント群が順次入り、200 件到達は当初見込みどおり 2026-11-21 05:50 頃 (最後の必要録画の開始時点) の見込み。
 - 測定手順は §74.6 のまま: 200 件到達後に `X_GetTitleList` を StartingIndex=0 / RequestedCount=0 で引き、NumberReturned と TotalMatches を比較する。
 
+### 74.8 Issue #1 返信ドラフト (未投稿、2026-11-20 準備、実測値の差し込み待ち)
+
+- 状態: **未投稿**。既存のドラフトファイルは作業場所・リポ内のどこにも無かったため、§74 の調査記録から再構成した。
+- 投稿の手順 (実測後): §74.6 の手順で 200 件時点の測定を行い、下記ドラフトの【差し込み】欄に「実測日時 / X_GetTitleList の NumberReturned / TotalMatches / recordedContentCountGet の値」を入れ、結論は A (上限なし) / B (上限あり) の該当する一方だけを残して他方とマーカー行を消す。それだけで投稿できる形にしてある。
+- 結論の判定: NumberReturned = TotalMatches (200) なら A、NumberReturned = 200 < TotalMatches なら B。
+
+ドラフト本文 (このままコピーして使う):
+
+```markdown
+zcomlao さん、詳細な計測と、修正案まで含む報告をありがとうございます。3 点とも当方のコード確認と SIE 製実機での実測で切り分けができましたので、結果を共有します。
+
+### 1. 発見: modelName の不一致
+
+報告どおりで、`isNasne` は `modelName == 'nasne'` の完全一致のみです。SSDP 経路では応答もデバイス記述も正しく取れており、この判定だけで落ちることをコードで確認しました。修正は、ご提案どおり実測した 2 つの名前 (`nasne` / `buffalo-nasne`) だけを認める形にします (未知の名前を広く受けることはしません)。
+
+### 2. 記述の在りかと ContentDirectory の control URL
+
+こちらも報告どおりの切り分けになりました。記述をパースする処理自体は汎用で、正しい LOCATION から記述を引ければ Buffalo 製の control URL (`/UD/<uuid>?0`) も正しく解決できます。問題は走査・手入力の経路が `58888/` を決め打ちしていて、404 のときに SIE 製の既定 URL を埋めるフォールバックに落ちることで、結果として Browse が正しい宛先に届かず DIDL との結合が 0 件になります。XSRS の URL は一致しているので録画一覧そのものは取れる、という点も当方の確認と一致します。
+
+ユニキャスト M-SEARCH で LOCATION を引く回避策は当方の実装に無い経路で、特に **MX ヘッダが無いと応答しない** 点は重要な実測でした。修正ではこの経路を追加し、既定 URL へのフォールバックは最終手段に下げる方針です。
+
+### 3. 頁送り
+
+現行コードには頁送りが無く、`X_GetTitleList` も `Browse` も StartingIndex 0 で 1 回だけ取得し、`NumberReturned` / `TotalMatches` は参照すらしていないことを確認しました。
+
+ご依頼のあった SIE 製での実測結果は次のとおりです (当方実機、公式 FW 2.60、読み取り専用の計測)。
+
+**Browse には SIE 製側の上限がありませんでした。** `RequestedCount: 0` の 1 回で、ライブ BS コンテナは NumberReturned=78 / TotalMatches=78、CS は 55 / 55 と全件が返りました (地デジ 24 / 24、録画のコンテナ 9 / 9)。StartingIndex と RequestedCount が効くことも確認しています。つまり Browse の 50 件上限は Buffalo 製固有で、頁送りの欠如は SIE 製では (少なくとも Browse については) 顕在化しません。
+
+**X_GetTitleList の上限については、SIE 製の録画を 200 件まで貯めて実測しました。**【差し込み: 実測日時 ____-__-__ __:__ JST / NumberReturned = ____ / TotalMatches = ____ / recordedContentCountGet = ____】
+
+【結論は A / B の一方だけを残す】
+- A (上限なし): NumberReturned は TotalMatches と一致し、200 件全件が 1 回で返りました。X_GetTitleList の上限も SIE 製には無い、という結果です。
+- B (上限あり): NumberReturned は 200 で止まり、TotalMatches は全件数を示しました。X_GetTitleList については SIE 製にも Buffalo 製と同じ 200 件の上限がある、という結果です。
+
+いずれの結果でも、修正では `X_GetTitleList` と `Browse` の両方で TotalMatches に達するまで頁を送るようにします (壊れた応答で終わらないよう、回数に上限を付けます)。SIE 製では 1 回で終わるため、従来の挙動は変わりません。
+
+### 対応方針と、お願い
+
+上記 3 点の修正は実施する方針です (時期は未定ですが、進捗はこの Issue で報告します)。ただし当方は Buffalo 製の実機を所持していないため、修正版の実機確認は所持している方の協力に頼ることになります。README の動作条件にもその旨を明記しました。修正版が出た際には、確認にご協力いただけると助かります。
+
+なお、DTCP-IP の再生系 (58890 / AKE) は Buffalo 製では当方未測定のため、まずは発見と一覧を成立させる範囲で対応します。再生側は別途の切り分けが必要です。
+
+最後に、差し支えなければ Buffalo 製 nasne の型番を教えていただけると対応の参考になります (報告には manufacturer と本体の版 4.50 のみ記載がありました)。
+```
+
 ## 75. Windows 版で録画シークバーを動かすと固まる報告の調査 (2026-11-18、調査のみ・未対応)
 
 - 経緯: 5ch の利用者報告 (2026-11-18 16:57、名無しさん | | Dolby): 「torne mobile homebrewのWin版めっちゃ軽くてええな。PC TV PLUSもこのくらい軽かったらよかったら文句なかったのにな。録画シークバー移動やると固まるのなんとかなりませんかね」。Windows 版で録画再生中にシークバーをドラッグすると固まる、という報告。「固まる」の様態 (映像だけ止まる / スピナーのまま / アプリ全体が無応答) は明記がなく不明。本節はコード精査による候補の洗い出しと検証計画であり、**修正はまだしない** (候補確定が先)。
