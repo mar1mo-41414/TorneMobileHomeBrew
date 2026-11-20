@@ -4569,3 +4569,119 @@ zcomlao さん、詳細な計測と、修正案まで含む報告をありがと
 - 初回配置: GitHub Release v1.4.2 の IPA 資産そのもの (16,825,866 B、SHA-256 `eb37d051966725d0075c552ccfe3c243015ae9c3be67e19c6c249891bf81bdba`、1.4.2 / ビルド34) を配置し、JSON 掲載・アイコン生成 (Assets.car 経由、`.icon_cache` 生成)・ダウンロードの SHA 一致を raspi5-2 ローカルで確認済み。
 - **今後のリリース手順への追加**: リリース時は marnux で `~/GitTmp/IPA-AltSource/scripts/deploy-to-raspi.sh <リリースIPAのパス>` を実行し、raspi5-2 の AltSource へも配置する (scp 配置 + SHA-256 照合 + JSON 掲載確認まで自動)。
 - 公開側の Pangolin リソース登録 (`ipa.markund.f5.si`) は本人が管理 UI から実施する。
+
+## 89. 外付け HDD 対応の調査 (2026-11-20 登録、調査先行・実装は切り分け後)
+
+### 89.1 発端
+
+5ch nasne スレの Dolby の実機報告 (2026-11-20 20:29、>>444)。Mac 最新版を nasne 3 台で検証し、うち 2 台は外付け USB HDD 接続済み。
+
+- 各 nasne の接続・チューナー操作・放送中の番組の受信は問題なし
+- 外付け HDD 接続機では録画まわりが変: 「録画リストには内蔵HDD内のデータしかリストアップされず再生もできない。番組表からの録画はできるが外付HDDに録画されるので直接は見られない (純正 tm では視聴可能)」
+- 外付け HDD が接続されていない環境では録画と再生ができた
+
+投稿文だけでは「外付け側のタイトルが一覧に出ない」のか「出るが再生できない」のかは確定できない。以下の切り分けは両方の読みをカバーする。
+
+### 89.2 コード側の確認 (アプリに保存先フィルタは無い)
+
+- タイトル一覧の主経路は `SoapTitleCatalogService.listTitles` (lib/core/services/title_catalog.dart) で、XSRS `X_GetTitleList` を SearchCriteria='' / Filter='*' / StartingIndex=0 / RequestedCount=0 / SortCriteria='' で **1 回だけ**呼ぶ。ページ送りの実装は無い (§74.6・Issue #1 の積み残しと同根。Buffalo 機では 1 応答 200 件の上限が実測済み)。
+- 応答の全 item を `recordedTitleFromXsrs` で変換してそのまま返す。`recordDestinationID` はモデルに保持されるだけで、値による絞り込みはコードのどこにも無い ('HDD' リテラルでの分岐なし)。DMS Browse (`0/video/all`) の補完は title id で結合するだけで、一致しないタイトルも一覧に残る。
+- 再生可否は詳細画面で res の有無だけが条件 (lib/ui/titles_screen.dart:715、res が空なら「再生可能なコンテンツがありません」)。res は DMS 補完からのみ来る。
+- つまり **外付け側タイトルが見えないとすれば、それはアプリ手前 (機体の応答) で起きている**。アプリ側で混ざり得るのは「ページ送り欠如による切り捨て」と「DIDL 補完の欠落による再生不可」の 2 つだけ。
+
+### 89.3 機体プロトコルの調査 (2026-11-20、単一 HDD 機で読み取り専用実測)
+
+- XSRS の SCPD に保存先を指定する引数は無い。`X_GetTitleList` の引数は SearchCriteria / Filter / StartingIndex / RequestedCount / SortCriteria のみで、Storage / Volume / HDD / Destination の名を持つアクション・引数は X_ScheduledRecording / X_PvrControl の両 SCPD に存在しない。
+- 保存先の語彙は **2 値**: `X_GetMediaInfo(recordDestinationID)` (X_PvrControl) が実在し、`'HDD'` → `<name>hdd0</name><mount>1</mount><remain>351802</remain><total>475426</total>`、`'USBHDD'` → `<mount>0</mount>` の空レコードを返す (未接続でも Fault にならない)。他の候補文字列 ('USB' / 'HDD1' / 'EXTHDD' 等) は全て SOAP Fault。タイトル item の recordDestinationID も当方機では全件 `'HDD'`。
+- **SearchCriteria では保存先を絞り込めない** (実測): `recordDestinationID = "USBHDD"` でも全 164 件が返り、`!= "HDD"` でも全件。述語は無視される (未知プロパティ `recordingFlag` は UPnPError になるので、パースはされているが保存先述語は効かない)。「公式クライアントが魔法の SearchCriteria を渡している」説はこれで棄却。
+- WebAPI には HDD 列挙がある: `status/HDDListGet` (当方機: number=1、id=0 / mountStatus=1 / registerFlag=1) と `status/HDDInfoGet`。公式 torne mobile の静的解析でも HDDRegister / HDDRelease / HDDInfoGet / HDDListGet の存在が確認済み (§11・SonyNasne-DTCP docs/21)。
+- DMS のコンテナ木 (当方機実測): ルート直下は `0/video` `0/music` `0/photo`、`0/video` 配下は genre / date / all / folder / LiveTuner。**ボリューム別コンテナは無い**。ただし外付け HDD 接続時にコンテナが増えるかは未確認。
+
+### 89.4 公式 torne の扱い (公開情報)
+
+- 内蔵と外付けは区別せず 1 つの録画リストとして扱うのが公式の仕様。AV Watch のレビューでは「torne や RECOPLA から見る限り、録画番組は内蔵 HDD か外付け HDD か分からない」「HDD を追加するというより内蔵 HDD の容量を拡張するイメージ」とされ、容量表示も合算。
+- バッファローの公式 FAQ: PS4/PS5 の torne および torne mobile では録画先を選択できない (PC TV Plus のみ指定可能)。録画先は残容量などから自動決定され、利用者は保存先を意識しない。
+- Dolby の「純正 tm では視聴可能」とも一致する。公式の UI に保存先の概念は出てこない。
+
+### 89.5 残る候補 (構造的理由の切り分けは双 HDD 機が要る)
+
+1. **ページ送り欠如による切り捨て** (アプリ側・実在の欠落): 1 応答に上限がある機体で、外付け側タイトルが応答の後段に並ぶと現行実装では永遠に見えない。SIE 機の X_GetTitleList 上限の有無は §74.6 (200 件キャンペーンの実測、2026-11-21 予定) で判明する。
+2. **FW が XSRS 一覧に USBHDD タイトルを含めない** (機体側): その場合でも DMS 側に居る可能性が残る (DLNA の扱いは内蔵と外付けで異なると AV Watch も指摘)。
+3. **DIDL 補完の欠落**: 一覧には出るが `0/video/all` に外付け側 item が無く、res が付かないため再生だけできない形。Dolby の文面の後半はこちらでも説明が付く。
+
+### 89.6 検証手順 (外付け HDD 接続機での読み取り専用計測)
+
+前提: 当方に外付け HDD 環境が無い。nasne の USB HDD 登録はディスク初期化を伴うため、検証用 HDD を用意できる機会 (または外付け環境を持つ利用者の協力) で行う。計測はいずれも読み取り専用:
+
+1. `status/HDDListGet` で USB HDD の登録 (number / registerFlag / mountStatus) を確認
+2. 録画済みタイトルについて、公式 torne mobile で外付け側タイトルが見えることを対照確認
+3. `X_GetTitleList` の TotalMatches と `recordedContentCountGet` の件数を突合 (乖離 = XSRS が全件を数えていない証拠)
+4. StartingIndex を NumberReturned ずつ進めて全ページを回収し、recordDestinationID の内訳を確認 (ページ送りで USBHDD が出てくるか)
+5. DMS Browse: `0/video/all` と `0/video/folder` の TotalMatches と item の内訳を突合 (XSRS に無いタイトルが DMS に居るか)
+6. `X_GetMediaInfo('USBHDD')` で mount=1 と容量を確認
+
+### 89.7 実装方針
+
+- **先行実施 (切り分け不要で正しいもの)**: `X_GetTitleList` と DMS Browse のページ送り実装。NumberReturned < TotalMatches の間 StartingIndex を進める。Buffalo の上限対処 (§74) と一体で進める。
+- 切り分け結果で分岐:
+  - ページ送りで USBHDD タイトルが出る → それで解決。recordDestinationID の表示 (保存先アイコン等) は公式に無いので付けない。
+  - XSRS に居ないが DMS に居る → DIDL から RecordedTitle を組み立てる経路を補完ではなく第二の主経路として追加する設計を別途起こす。
+  - どちらにも居ない → 機体 FW の制約として確定させ、Issue / リリースノートに公式との差分として明記する。
+- 付随: `HDDListGet` / `X_GetMediaInfo` による保存先別残量の表示は、公式にもある情報で使い勝手 (§85 系) の候補になる。対応時に併せて検討する。
+
+## 90. 追っかけ再生の可否調査 (2026-11-20、機体側の成立を実測で確認)
+
+### 90.1 発端
+
+§89 と同じ Dolby の報告 (>>444) に「先でいいので2倍速再生が欲しい」という要望があり、それへの反応 (>>446) で「追っかけ再生なんて HBe で実現できるわけない」と言われた。本人の号令で、実現可否を根拠を持って判定する。なお追っかけ再生は公式 torne の通常機能である (バッファロー公式 FAQ: 「録画中に視聴できるのは、録画中の番組のみです」)。
+
+### 90.2 録画中タイトルの現れ方 (2026-11-20 21:26、キャンペーン録画で実測)
+
+200 件キャンペーンの EPG 予約録画 (21:25–21:30、J:COM チャンネル「絶景九州」) の録画中に、読み取り専用の SOAP クエリのみで実測した。
+
+- **X_GetTitleList**: 録画開始と同時にタイトルが登録され、TotalMatches が 163 → 164 に増えた。item には **recordingFlag='1'** が立ち、recordDestinationID='HDD'、recordSize は増加中の値 (実測 110)。lastPlaybackTime='notplayed'。
+- **scheduledDuration は全長として使えない**: XSRS item の scheduledDuration は 85 で、DIDL の scheduledStartTime/EndTime の差 (300 秒) と一致しない (単位・意味は未確定。録画中タイトルでは「長さ」の取得元にできない)。
+- **X_GetTitleInfo / X_GetTitleDetail** も録画中に正常応答する (チャプター情報、概要、増加中の size / mobileSize)。
+- **DMS Browse (`0/video/all`)**: 録画中タイトルも item として現れ、DR / mobile の res を持つ。ただし通常タイトルと差異がある:
+  - res に **duration 属性が無い** (通常タイトルには `duration="00:06:16"` 形式で付く)
+  - `dlna:cleartextSize` はその時点のスナップショット (実測 92,137,728 バイト、録画中は増加し続ける)
+  - item の restricted="1" (通常は "0")、DLNA.ORG_FLAGS も録画中の形 (0511... / DTCP.COM_FLAGS=00000000)
+
+### 90.3 DTCP-IP ストリームの実測 (録画中タイトルで復号が流れる)
+
+pydtcpip の `stream` に録画中タイトルの DR res URL を渡し、読み取り専用で約 25 秒間だけ受信した (資格情報は従来どおり pydtcpip 本体のみが消費)。
+
+- **AKE は録画中タイトルでも完走**し、復号済み TS が **136,533,504 バイト / 約 17 秒 (8.1 MB/s)** 流れた。cleartextSize のスナップショット (92 MB) を超えても流れ続けた = サーバーは書き込みに追随して出し続ける。
+- ただし実時間の約 3.7 倍速で消費したため書き込み先端に追いつき、最後は PCP フレーミングエラーで切断された。**nasne は追っかけストリームを実時間に絞らない**。1 倍速再生なら先端に追いつかないので継続できるが、先端に追いついた場合の切断への対処が実装課題になる。
+- 受信データは検証後に削除した。タイトル・予約・コピー数への影響は無い (stream は読み取り専用)。
+
+### 90.4 アプリ側の到達点と制約箇所 (コード確認)
+
+- 再生開始の条件は res の有無のみ (lib/ui/titles_screen.dart:715) で、**recordingFlag による再生ブロックはコードのどこにも無い**。削除だけが録画中を拒否する (同ファイル、§86.3)。
+- `DtcpPlaybackService.startPlayback` は res の cleartextSize と duration の両方が揃う場合だけシーク可能モードにし、欠ければ非シークの単一ストリーム (ライブと同じ経路) に落ちる (lib/core/services/dtcp_playback.dart、lib/core/dtcp/dtcp_proxy.dart の `_seekable` 条件)。録画中タイトルは duration が無いため **自動的に非シーク経路になる**。つまり現行ビルドでも、資格情報さえあれば録画中タイトルの再生が始まる可能性が高い (未検証)。
+- そのままでは問題になる箇所:
+  1. プレイヤー画面のシーク UI が duration なしの録画再生をどう扱うか (player_seek_policy の前提確認が要る)
+  2. 倍速再生 (§86 #7) は録画再生に許可されているため、1.25–2 倍で先端に追いついて切断を誘発できる
+  3. レジューム (§86 #1) の「続きから再生」は time-seek 前提で、非シーク経路では位置指定ができない。録画中タイトルの lastPlaybackTime / resumePoint の扱いを決める必要がある
+  4. 追いつき切断をプロキシ / プレイヤーが EOF と区別できるか (現状は PCP エラー = 再生エラー表示になり得る)
+  5. サムネイルは録画中タイトルでスキップされる既存仕様 (titles_screen.dart:608)。追っかけ対応でも当面そのままでよい
+
+### 90.5 判定
+
+**実現可能。** 「HBe では実現できない」という 5ch の言い分はプロトコル実測に反する。録画中タイトルは一覧・DIDL・DTCP-IP の全段で通常タイトルと同格に現れ、復号ストリームも実測で流れた。残る作業は新規プロトコルの発明ではなく、録画中であることを前提にした再生ポリシー (シーク・倍速・レジューム・追いつき) の整備と実機確認である。
+
+### 90.6 実装方針
+
+1. recordingFlag のタイトルは「追っかけ再生」として扱いを分岐する: 非シーク固定を意図的な仕様として明示し、シークバーを無効化、倍速は 1.0 のみ (追いつき防止)、レジューム提案はせず先頭から再生、状態表示に「録画中」を出す。
+2. 追いつき切断への対処は段階的に: まず EOF として穏当に終わらせ「録画の先端に追いつきました。少し待ってから再生すると続きが見られます」と案内する単純形。プロキシ側での待機 + 再接続による自動継続は、その後の改善として別途設計する。
+3. 録画終了を跨いだ再生はそのまま完走できる (実測でスナップショット超過後も流れた)。終了後に一覧を再取得すれば通常タイトルとしてシーク可能になる。
+4. 版数は実機確認が済むまで上げない (従来の前提どおり)。
+
+### 90.7 実機検証項目 (ユーザー機で実施可能)
+
+キャンペーン中は録画中タイトルが日常的に存在するので、アプリ実機で以下を確認する (録画・予約には触らない):
+
+1. 現行ビルド (44) で録画中タイトルを開き、再生が始まるか (コード読みでは始まるはず、の裏取り)
+2. 1 倍速で録画終了まで通し見し、終了を跨いで完走するか
+3. 録画中に倍速 / シーク操作をしたときの現行の振る舞い (実装前の現状記録)
+4. 録画終了直後のタイトルでシーク可能モードに切り替わるか (一覧再取得後)
