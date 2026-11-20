@@ -44,18 +44,17 @@ Future<void> startPlaybackAndShowPlayer({
   } on NasneError catch (e) {
     if (!context.mounted) return;
     if (e.category == NasneErrorCategory.unsupported) {
-      await showPlaybackUnsupportedDialog(
-        context,
-        subject: unsupportedSubject,
-      );
+      await showPlaybackUnsupportedDialog(context, subject: unsupportedSubject);
     } else if (e.category == NasneErrorCategory.validation) {
       await showCredentialGuidanceDialog(context, userMessageForError(e));
     } else {
       // Name the failing stage instead of collapsing everything
-      // into one opaque snack (plan 28): the dialog carries the
-      // classification (category / source / code / detail), and
-      // the failure is recorded under the ui category when debug
-      // mode is on. No credential or key material is included.
+      // into one opaque snack (plan 28): the dialog leads with
+      // the plain explanation and what to do next, and keeps
+      // the classification in its detail section (plan 86).
+      // The failure is also recorded under the ui category
+      // when debug mode is on. No credential or key material
+      // is included.
       ref.read(diagLogProvider)(DiagCategory.ui, 'playback start failed: $e');
       await showPlaybackErrorDialog(context, e);
     }
@@ -69,17 +68,50 @@ Future<void> startPlaybackAndShowPlayer({
   }
 }
 
-/// The classified playback error dialog (plan 28).
+/// The playback start error dialog (plan 28; reworked in
+/// plan 86, plan 85 item 9).
+///
+/// What the viewer sees first is the plain explanation and
+/// what to do next. The classification the plan-28 dialog
+/// used to lead with — category / source / code / detail —
+/// is diagnostic information a viewer cannot act on, so it
+/// now sits in a collapsed 「詳細」 section at the bottom;
+/// the same facts are in the diagnostic log as well, so
+/// nothing is lost by moving them out of the way.
 Future<void> showPlaybackErrorDialog(BuildContext context, NasneError e) {
-  final detail = StringBuffer(userMessageForError(e));
-  detail.write('\n\n分類: ${e.category.name} / 発生元: ${e.source}');
-  if (e.code != null) detail.write(' / コード: ${e.code}');
-  if (e.detail != null) detail.write('\n詳細: ${e.detail}');
+  final nextStep = errorNextStepForError(e);
   return showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('再生を開始できませんでした'),
-      content: Text(detail.toString()),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(userMessageForError(e)),
+            if (nextStep != null) ...[
+              const SizedBox(height: 12),
+              Text(nextStep),
+            ],
+            const SizedBox(height: 8),
+            ExpansionTile(
+              title: const Text('詳細'),
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    errorDetailText(e),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),

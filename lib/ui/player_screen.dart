@@ -86,6 +86,11 @@
 /// excluded — a live stream has nothing to catch up from
 /// (see player_speed_policy).
 ///
+/// Plan 86 (plan 85 item 9): the start-failure view leads
+/// with a plain explanation and what to do next; the raw
+/// player error moves into a collapsed detail section,
+/// matching the playback error dialog (playback_launcher).
+///
 /// Plan 80: the seek-freeze fixes. Recorded playback now
 /// runs with mpv's cache on (see player_cache_policy) so
 /// the demuxer's re-reads stop round-tripping the proxy.
@@ -875,11 +880,39 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       ),
       body: _error != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  '再生を開始できませんでした。\n$_error',
-                  textAlign: TextAlign.center,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text('再生を開始できませんでした。', textAlign: TextAlign.center),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'nasne との接続やネットワークの状態を確認して、'
+                        'もう一度お試しください。',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      // The raw player error (an mpv message, or
+                      // this screen's own timeout wording) is
+                      // diagnostic text, not something a viewer
+                      // can act on: it sits behind the detail
+                      // expander (plan 86, plan 85 item 9), and
+                      // is in the diagnostic log as well.
+                      ExpansionTile(
+                        title: const Text('詳細'),
+                        children: [
+                          Text(
+                            _error!,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             )
