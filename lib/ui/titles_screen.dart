@@ -275,6 +275,9 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   Widget build(BuildContext context) {
     final t = title;
     final channels = ref.watch(channelsProvider(reg)).value;
+    final credentialSummary = ref.watch(credentialSummaryProvider);
+    final credentialsMissing =
+        credentialSummary.hasValue && credentialSummary.value == null;
     final sizeBytes = t.res
         .map((r) => r.cleartextSize)
         .whereType<int>()
@@ -354,8 +357,15 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           icon: const Icon(Icons.play_arrow),
           label: const Text('再生'),
         ),
-        const SizedBox(height: 8),
-        const Text('再生には DTCP-IP の資格情報が必要です (設定画面からインポートできます)。'),
+        // The credential note shows only while no pair is
+        // imported (plan 86.2): as a permanent fixture it told
+        // people who had already imported that they still had
+        // something to do. While the state is loading nothing
+        // is shown, so the text never flickers in and out.
+        if (credentialsMissing) ...[
+          const SizedBox(height: 8),
+          const Text('録画の再生には資格情報のインポートが必要です。'),
+        ],
       ],
     );
   }

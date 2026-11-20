@@ -649,7 +649,7 @@ void main() {
     await tester.tap(find.text('再生'));
     await tester.pumpAndSettle();
     expect(engine.lastRes?.quality, 'dr');
-    expect(find.text('再生について'), findsOneWidget);
+    expect(find.text('資格情報が必要です'), findsOneWidget);
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
 
@@ -807,7 +807,7 @@ void main() {
     expect(engine.liveStartCalls, 1);
     expect(engine.lastLiveChannel?.serviceId, 0xde00);
     expect(engine.lastLiveRes?.quality, 'dr');
-    expect(find.text('再生について'), findsOneWidget);
+    expect(find.text('資格情報が必要です'), findsOneWidget);
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
 

@@ -186,7 +186,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   .when(
                     data: (summary) => summary == null
                         ? '未インポート (再生には資格情報が必要です)'
-                        : 'インポート済み (デバイス ID: ${summary.deviceIdHex})',
+                        : 'インポート済み',
                     loading: () => '確認中…',
                     error: (_, _) => '読み込みエラー',
                   ),

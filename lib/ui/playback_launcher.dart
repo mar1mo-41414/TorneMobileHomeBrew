@@ -13,6 +13,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app/providers.dart';
 import '../core/core.dart';
+import 'dtcp_credential_screen.dart';
 import 'error_messages.dart';
 import 'widgets.dart';
 
@@ -90,6 +91,12 @@ Future<void> showPlaybackErrorDialog(BuildContext context, NasneError e) {
 }
 
 /// Guidance shown when the credential pair has not been imported.
+///
+/// Plan 86.2 (plan 85 item 2): the dialog leads straight to the
+/// import screen. Before this its only action was "close", and
+/// the viewer had to go and find the credential entry in the
+/// settings tab themselves — the step where the playback path
+/// lost people who did not already know the app.
 Future<void> showCredentialGuidanceDialog(
   BuildContext context,
   String message,
@@ -97,12 +104,24 @@ Future<void> showCredentialGuidanceDialog(
   return showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('再生について'),
+      title: const Text('資格情報が必要です'),
       content: Text(message),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final navigator = Navigator.of(context);
+            navigator.pop();
+            navigator.push(
+              MaterialPageRoute<void>(
+                builder: (_) => const DtcpCredentialScreen(),
+              ),
+            );
+          },
+          child: const Text('インポートする'),
         ),
       ],
     ),

@@ -12,6 +12,15 @@
 ///
 /// Since plan 84 a failed file pick is logged and shown as an
 /// error instead of escaping silently (the plan 69.5 leftover).
+///
+/// Plan 86.2 (plan 85 item 2): the surface speaks plainly. The
+/// internal facts a viewer never acts on — byte counts, the
+/// certificate's SHA-1, the device ID in hex, the env file's
+/// variable names — are gone from the text; what remains is
+/// what to prepare, in which order, and what to do when
+/// something fails. Failures are shown as a plain sentence plus
+/// the next action; the raw error goes to the diagnostics log
+/// only. The validation itself is unchanged.
 library;
 
 import 'dart:convert';
@@ -71,7 +80,8 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
   /// record and a visible error — the plan 69.5 leftover, where
   /// a picker exception escaped unhandled and the button looked
   /// dead. The failure presentation follows plan 71: never
-  /// swallow, log the detail, tell the user.
+  /// swallow, log the detail, tell the user. The shown text is
+  /// plain (plan 86.2); the exception itself stays in the log.
   Future<Uint8List?> _pickFile() async {
     try {
       return await ref.read(fileBytesPickerProvider).pick();
@@ -81,16 +91,18 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         'credential file pick failed: $e',
       );
       if (mounted) {
-        setState(() => _error = 'ファイル選択に失敗しました: $e');
+        setState(() => _error = 'ファイル選択に失敗しました。もう一度お試しください。');
       }
       return null;
     }
   }
 
-  /// Imports from a pydtcpip-style credentials.env file (plan 67):
-  /// picking the file is all the user does — the parsed pair goes
-  /// through the exact same validation + vault save as the manual
-  /// entry below.
+  /// Imports from a credentials.env file (plan 67): picking the
+  /// file is all the user does — the parsed pair goes through
+  /// the exact same validation + vault save as the manual entry
+  /// below. A file that does not yield a pair is reported in
+  /// plain words (plan 86.2), with the parse failure itself
+  /// recorded in the diagnostics log.
   Future<void> _importFromEnvFile() async {
     final bytes = await _pickFile();
     if (bytes == null) return;
@@ -98,15 +110,29 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
     try {
       text = utf8.decode(bytes);
     } on FormatException {
-      setState(() => _error = 'credentials.env をテキストとして読み取れませんでした');
+      setState(
+        () => _error = 'ファイルを読み取れませんでした。'
+            '資格情報ファイル (credentials.env) かどうか確認してください。',
+      );
       return;
     }
+    final CredentialsEnv env;
     try {
-      final env = parseCredentialsEnv(text);
-      await _import(certificate: env.certificate, privateKey: env.privateKey);
+      env = parseCredentialsEnv(text);
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'credentials.env parse failed: $e',
+      );
+      if (mounted) {
+        setState(
+          () => _error = 'ファイルから証明書と秘密鍵を取り出せませんでした。'
+              '資格情報ファイル (credentials.env) かどうか確認してください。',
+        );
+      }
+      return;
     }
+    await _import(certificate: env.certificate, privateKey: env.privateKey);
   }
 
   Future<void> _import({Uint8List? certificate, Uint8List? privateKey}) async {
@@ -116,13 +142,40 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
       _error = null;
     });
     try {
-      final certificateBytes =
-          certificate ?? _certFileBytes ?? _decodePasted(_certText.text);
-      final privateKeyBytes =
-          privateKey ?? _keyFileBytes ?? _decodePasted(_keyText.text);
-      await ref
-          .read(credentialStoreProvider)
-          .save(certificate: certificateBytes, privateKey: privateKeyBytes);
+      final Uint8List certificateBytes;
+      final Uint8List privateKeyBytes;
+      try {
+        certificateBytes =
+            certificate ?? _certFileBytes ?? _decodePasted(_certText.text);
+        privateKeyBytes =
+            privateKey ?? _keyFileBytes ?? _decodePasted(_keyText.text);
+      } on NasneError catch (e) {
+        ref.read(diagLogProvider)(
+          DiagCategory.ui,
+          'credential entry decode failed: $e',
+        );
+        setState(
+          () => _error = '貼り付けた内容を読み取れませんでした。'
+              '証明書・秘密鍵の内容がそのまま入っているか確認してください。',
+        );
+        return;
+      }
+      try {
+        await ref
+            .read(credentialStoreProvider)
+            .save(certificate: certificateBytes, privateKey: privateKeyBytes);
+      } catch (e) {
+        ref.read(diagLogProvider)(
+          DiagCategory.ui,
+          'credential pair validation failed: $e',
+        );
+        setState(
+          () => _error = '証明書と秘密鍵のペアとして確認できませんでした。'
+              '同じ機器から取り出したペアになっているか、'
+              '内容が欠けていないか確認してください。',
+        );
+        return;
+      }
       // Clear the entry surfaces immediately; the pair now lives
       // only in the vault.
       _certText.clear();
@@ -134,8 +187,6 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('資格情報を保存しました')));
       }
-    } catch (e) {
-      setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -178,10 +229,20 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-            '録画の再生には、対応機器の DTCP-IP 資格情報 (DTLA 証明書 88 バイトと'
-            '秘密鍵 20 バイト) が必要です。ご自身の機器から取得したペアをここで'
-            'インポートしてください。資格情報は端末の金庫 (Keychain / Keystore) '
-            'にのみ保存され、外部に送信されることはありません。',
+            '録画を再生するには、お持ちの対応機器から取り出した'
+            '「証明書」と「秘密鍵」のペアが必要です。',
+          ),
+          const SizedBox(height: 16),
+          Text('用意のしかた', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          const Text(
+            '1. 対応機器から証明書と秘密鍵を取り出します'
+            ' (このアプリ自体に取り出す機能はありません)。\n'
+            '2. ファイル (credentials.env) で用意できた場合は、'
+            '下の「ファイルから読み込む」から選ぶだけで完了します。\n'
+            '3. テキストで用意した場合は、その下の欄に貼り付けます。\n\n'
+            '取り込んだ内容はこの端末の中にだけ保存され、'
+            '外部に送られることはありません。',
           ),
           const SizedBox(height: 16),
           summary.when(
@@ -190,39 +251,34 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
                     leading: Icon(Icons.info_outline),
                     title: Text('未インポート'),
                   )
-                : ListTile(
-                    leading: const Icon(Icons.verified_user),
-                    title: const Text('インポート済み'),
-                    subtitle: Text(
-                      'デバイス ID: ${value.deviceIdHex}\n'
-                      '証明書 SHA-1: ${value.certificateSha1Hex}',
-                    ),
+                : const ListTile(
+                    leading: Icon(Icons.verified_user),
+                    title: Text('インポート済み'),
                   ),
             loading: () => const ListTile(title: Text('確認中…')),
-            error: (e, _) => ListTile(title: Text('読み込みエラー: $e')),
+            error: (e, _) => const ListTile(title: Text('状態を確認できませんでした')),
           ),
           const Divider(),
           Text(
-            'credentials.env から読み込む',
+            'ファイルから読み込む',
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: 6),
           const Text(
-            'pydtcpip 形式の credentials.env ファイル '
-            '(PYDTCPIP_CERTIFICATE / PYDTCPIP_PRIVATE_KEY) を選ぶと、'
-            'そのまま検証して保存します。',
+            '資格情報ファイル (credentials.env) を選ぶと、'
+            'そのまま確認して保存します。',
           ),
           const SizedBox(height: 6),
           OutlinedButton.icon(
             onPressed: _busy ? null : _importFromEnvFile,
             icon: const Icon(Icons.folder_open),
-            label: const Text('credentials.env を選択'),
+            label: const Text('ファイルを選択'),
           ),
           const SizedBox(height: 16),
-          Text('証明書・秘密鍵を直接入力', style: Theme.of(context).textTheme.titleSmall),
+          Text('テキストで入力する', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 6),
           _pairFields(
-            label: '証明書 (88 バイト)',
+            label: '証明書',
             controller: _certText,
             fileBytes: _certFileBytes,
             onPick: () async {
@@ -233,7 +289,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
           ),
           const SizedBox(height: 16),
           _pairFields(
-            label: '秘密鍵 (20 バイト)',
+            label: '秘密鍵',
             controller: _keyText,
             fileBytes: _keyFileBytes,
             onPick: () async {
@@ -281,7 +337,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         if (fileBytes != null)
           ListTile(
             leading: const Icon(Icons.insert_drive_file),
-            title: Text('ファイルから読み込み済み (${fileBytes.length} バイト)'),
+            title: const Text('ファイルから読み込み済み'),
             trailing: IconButton(
               icon: const Icon(Icons.close),
               onPressed: onClearFile,
@@ -292,7 +348,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
             controller: controller,
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
-              hintText: 'hex または base64 を貼り付け',
+              hintText: '内容をそのまま貼り付け',
             ),
             minLines: 2,
             maxLines: 4,
