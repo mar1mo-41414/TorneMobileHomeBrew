@@ -61,42 +61,44 @@ RecordSchedule sampleSchedule({
 class FakeDeviceInfo implements DeviceInfoService {
   @override
   Future<DeviceInfo> getDeviceInfo() async => const DeviceInfo(
-        name: 'テストnasne',
-        softwareVersion: '0260',
-        currDate: '2026-11-16T15:00:00+09:00',
-        pref: '東京都',
-      );
+    name: 'テストnasne',
+    softwareVersion: '0260',
+    currDate: '2026-11-16T15:00:00+09:00',
+    pref: '東京都',
+  );
 
   @override
-  Future<List<HddEntry>> listHdds() async =>
-      const [HddEntry(id: 0, internal: true, mounted: true, registered: true)];
+  Future<List<HddEntry>> listHdds() async => const [
+    HddEntry(id: 0, internal: true, mounted: true, registered: true),
+  ];
 
   @override
   Future<HddInfo> getHddInfo(int id) async => const HddInfo(
-        id: 0,
-        internal: true,
-        format: 'xfs',
-        name: '内蔵HDD',
-        usedBytes: 300000000000,
-        freeBytes: 200000000000,
-        totalBytes: 500000000000,
-      );
+    id: 0,
+    internal: true,
+    format: 'xfs',
+    name: '内蔵HDD',
+    usedBytes: 300000000000,
+    freeBytes: 200000000000,
+    totalBytes: 500000000000,
+  );
 
   @override
   Future<NetworkInfo> getNetworkInfo() async => const NetworkInfo(
-        macAddr: '00:11:22:33:44:55',
-        ipv4Addr: '192.0.2.10',
-        gateway: '192.0.2.1',
-        dhcpEnabled: true,
-      );
+    macAddr: '00:11:22:33:44:55',
+    ipv4Addr: '192.0.2.10',
+    gateway: '192.0.2.1',
+    dhcpEnabled: true,
+  );
 
   @override
   Future<BcasInfo> getBcasInfo() async =>
       const BcasInfo(cardId: '0000123456789999', status: 'OK');
 
   @override
-  Future<List<Channel>> listChannels(int broadcastingType) async =>
-      const [testChannel];
+  Future<List<Channel>> listChannels(int broadcastingType) async => const [
+    testChannel,
+  ];
 
   @override
   Future<LiveStatus> getLiveStatus() async =>
@@ -111,7 +113,9 @@ class FakeDeviceInfo implements DeviceInfoService {
 
 class FakeSchedules implements ScheduleService {
   FakeSchedules([List<RecordSchedule>? initial])
-      : items = [...initial ?? [sampleSchedule()]];
+    : items = [
+        ...initial ?? [sampleSchedule()],
+      ];
 
   final List<RecordSchedule> items;
   List<RecordSchedule> conflictsToReturn = const [];
@@ -123,8 +127,7 @@ class FakeSchedules implements ScheduleService {
   Future<List<RecordSchedule>> listSchedules({
     int startingIndex = 0,
     int requestedCount = 50,
-  }) async =>
-      [...items];
+  }) async => [...items];
 
   @override
   Future<String> createSchedule(NewRecordSchedule schedule) async {
@@ -163,7 +166,8 @@ class FakeSchedules implements ScheduleService {
       desiredMatchingId: old.desiredMatchingId,
       reservationCreatorId: old.reservationCreatorId,
       priorityFlag: update.priorityFlag,
-      recordDestinationId: update.recordDestinationId ?? old.recordDestinationId,
+      recordDestinationId:
+          update.recordDestinationId ?? old.recordDestinationId,
       title: old.title,
     );
   }
@@ -176,13 +180,12 @@ class FakeSchedules implements ScheduleService {
   @override
   Future<List<RecordSchedule>> checkConflicts(
     NewRecordSchedule candidate,
-  ) async =>
-      conflictsToReturn;
+  ) async => conflictsToReturn;
 }
 
 class FakeTitles implements TitleCatalogService {
   FakeTitles({List<RecordedTitle>? items})
-      : items = List.of(items ?? defaultItems);
+    : items = List.of(items ?? defaultItems);
 
   final List<RecordedTitle> items;
   final List<String> deletedIds = [];
@@ -284,11 +287,12 @@ class RecordingPlaybackEngine implements PlaybackEngine {
 /// mobile resource alongside the original, the second does not.
 class FakeLiveCatalog implements LiveCatalogService {
   static TitleRes liveRes(String svid, String quality) => TitleRes(
-        url: 'http://192.0.2.10:58890/web/video/ch?nid=7880&tsid=7880'
-            '&svid=$svid&quality=$quality',
-        protocolInfo: 'http-get:*:application/x-dtcp1:*',
-        quality: quality,
-      );
+    url:
+        'http://192.0.2.10:58890/web/video/ch?nid=7880&tsid=7880'
+        '&svid=$svid&quality=$quality',
+    protocolInfo: 'http-get:*:application/x-dtcp1:*',
+    quality: quality,
+  );
 
   static final bands = [
     LiveBand(
@@ -350,8 +354,7 @@ class FakeMetadata implements MetadataService {
   Future<EpgGuide> getProgrammeGuide(
     int broadcastingType,
     List<Channel> channels,
-  ) async =>
-      EpgGuide(broadcastingType: broadcastingType, services: const []);
+  ) async => EpgGuide(broadcastingType: broadcastingType, services: const []);
 
   @override
   Future<Map<int, List<int>>> getChannelLogos(int broadcastingType) async =>
@@ -360,8 +363,9 @@ class FakeMetadata implements MetadataService {
 
 class FakeDiscovery implements DiscoveryService {
   @override
-  Future<List<NasneDevice>> discover({Duration? timeout}) async =>
-      [NasneDevice.direct('192.0.2.20')];
+  Future<List<NasneDevice>> discover({Duration? timeout}) async => [
+    NasneDevice.direct('192.0.2.20'),
+  ];
 
   @override
   Future<NasneDevice> describe(Uri location) async =>
@@ -370,13 +374,12 @@ class FakeDiscovery implements DiscoveryService {
 
 class FakeRegistration implements RegistrationService {
   @override
-  Future<RegisteredNasne> register(NasneDevice device) async =>
-      RegisteredNasne(
-        host: device.host,
-        udn: 'uuid:new',
-        friendlyName: 'nasne',
-        macAddr: '00:11:22:33:44:55',
-      );
+  Future<RegisteredNasne> register(NasneDevice device) async => RegisteredNasne(
+    host: device.host,
+    udn: 'uuid:new',
+    friendlyName: 'nasne',
+    macAddr: '00:11:22:33:44:55',
+  );
 
   @override
   Future<bool> verify(RegisteredNasne registration) async => true;
@@ -392,8 +395,8 @@ class Fixture {
     FakeSchedules? schedules,
     this.titles,
     this.playback,
-  })  : schedules = schedules ?? FakeSchedules(),
-        store = InMemoryRegistrationStore(registrations ?? [testReg]);
+  }) : schedules = schedules ?? FakeSchedules(),
+       store = InMemoryRegistrationStore(registrations ?? [testReg]);
 
   final FakeSchedules schedules;
   final InMemoryRegistrationStore store;
@@ -442,8 +445,9 @@ Future<void> pumpFrames(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('home shows device summary, HDD usage and no messages',
-      (tester) async {
+  testWidgets('home shows device summary, HDD usage and no messages', (
+    tester,
+  ) async {
     usePhoneSize(tester);
     await tester.pumpWidget(Fixture().app());
     await tester.pumpAndSettle();
@@ -454,8 +458,7 @@ void main() {
     expect(find.text('録画失敗はありません'), findsOneWidget);
   });
 
-  testWidgets('schedules list shows the existing reservation',
-      (tester) async {
+  testWidgets('schedules list shows the existing reservation', (tester) async {
     usePhoneSize(tester);
     await tester.pumpWidget(Fixture().app());
     await tester.pumpAndSettle();
@@ -525,10 +528,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('予約を削除'), findsOneWidget);
     await tester.tap(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.text('削除'),
-      ),
+      find.descendant(of: find.byType(AlertDialog), matching: find.text('削除')),
     );
     await pumpFrames(tester);
 
@@ -536,8 +536,9 @@ void main() {
     expect(find.text('予約はありません'), findsOneWidget);
   });
 
-  testWidgets('edit flow sends a sparse update with priorityFlag',
-      (tester) async {
+  testWidgets('edit flow sends a sparse update with priorityFlag', (
+    tester,
+  ) async {
     usePhoneSize(tester);
     final fixture = Fixture();
     await tester.pumpWidget(fixture.app());
@@ -561,8 +562,9 @@ void main() {
     expect(fixture.schedules.lastUpdate!.hasChangeField, isTrue);
   });
 
-  testWidgets('time change replaces the reservation (delete + create)',
-      (tester) async {
+  testWidgets('time change replaces the reservation (delete + create)', (
+    tester,
+  ) async {
     usePhoneSize(tester);
     final fixture = Fixture();
     await tester.pumpWidget(fixture.app());
@@ -585,8 +587,9 @@ void main() {
     expect(fixture.schedules.items.single.durationSeconds, 2700);
   });
 
-  testWidgets('titles list shows copy counts; playback shows the notice',
-      (tester) async {
+  testWidgets('titles list shows copy counts; playback shows the notice', (
+    tester,
+  ) async {
     usePhoneSize(tester);
     await tester.pumpWidget(Fixture().app());
     await tester.pumpAndSettle();
@@ -609,8 +612,60 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('a protected title cannot be deleted (plan 86.3)',
-      (tester) async {
+  testWidgets('title list search and unwatched filter (plan 86.5)', (
+    tester,
+  ) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(
+      titles: [
+        RecordedTitle(
+          id: '301',
+          title: 'ニュース番組',
+          scheduledStart: DateTime.parse('2026-11-15T11:00:00+09:00'),
+          channelName: 'テスト放送',
+          genre: 'ニュース／報道',
+        ),
+        RecordedTitle(
+          id: '302',
+          title: 'アニメ番組',
+          scheduledStart: DateTime.parse('2026-11-15T12:00:00+09:00'),
+          channelName: '別放送',
+          genre: 'アニメ／特撮',
+          newFlag: true,
+        ),
+      ],
+    );
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    expect(find.text('ニュース番組'), findsOneWidget);
+    expect(find.text('アニメ番組'), findsOneWidget);
+
+    // Search narrows the list to the matching title.
+    await tester.enterText(find.byType(TextField), 'アニメ');
+    await tester.pumpAndSettle();
+    expect(find.text('ニュース番組'), findsNothing);
+    expect(find.text('アニメ番組'), findsOneWidget);
+    expect(find.text('条件に合うのは 1 件'), findsOneWidget);
+
+    // Clearing the conditions restores both titles.
+    await tester.tap(find.text('条件をクリア'));
+    await tester.pumpAndSettle();
+    expect(find.text('ニュース番組'), findsOneWidget);
+    expect(find.text('アニメ番組'), findsOneWidget);
+
+    // The unwatched-only chip keeps only the new-flagged title.
+    await tester.tap(find.text('未視聴のみ'));
+    await tester.pumpAndSettle();
+    expect(find.text('ニュース番組'), findsNothing);
+    expect(find.text('アニメ番組'), findsOneWidget);
+  });
+
+  testWidgets('a protected title cannot be deleted (plan 86.3)', (
+    tester,
+  ) async {
     usePhoneSize(tester);
     await tester.pumpWidget(Fixture().app());
     await tester.pumpAndSettle();
@@ -626,10 +681,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('削除できません'), findsOneWidget);
-    expect(
-      find.text('このタイトルは保護されているため削除できません。'),
-      findsOneWidget,
-    );
+    expect(find.text('このタイトルは保護されているため削除できません。'), findsOneWidget);
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
   });
@@ -748,8 +800,7 @@ void main() {
   testWidgets('a second tap while a start is in flight does not '
       'start playback twice (plan 35)', (tester) async {
     usePhoneSize(tester);
-    final engine = RecordingPlaybackEngine()
-      ..startGate = Completer<void>();
+    final engine = RecordingPlaybackEngine()..startGate = Completer<void>();
     final fixture = Fixture(playback: engine);
     await tester.pumpWidget(fixture.app());
     await tester.pumpAndSettle();
@@ -780,8 +831,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('settings discovery registers a found device',
-      (tester) async {
+  testWidgets('settings discovery registers a found device', (tester) async {
     usePhoneSize(tester);
     final fixture = Fixture();
     await tester.pumpWidget(fixture.app());
@@ -797,9 +847,7 @@ void main() {
       of: find.text('192.0.2.20'),
       matching: find.byType(ListTile),
     );
-    await tester.tap(
-      find.descendant(of: foundTile, matching: find.text('登録')),
-    );
+    await tester.tap(find.descendant(of: foundTile, matching: find.text('登録')));
     await pumpFrames(tester);
 
     expect(find.textContaining('192.0.2.20'), findsWidgets);
@@ -807,8 +855,9 @@ void main() {
     expect(stored.map((r) => r.host), contains('192.0.2.20'));
   });
 
-  testWidgets('wide layout uses a rail and a two-pane schedule detail',
-      (tester) async {
+  testWidgets('wide layout uses a rail and a two-pane schedule detail', (
+    tester,
+  ) async {
     useTabletSize(tester);
     await tester.pumpWidget(Fixture().app());
     await tester.pumpAndSettle();

@@ -11,6 +11,11 @@
 /// start. Before this the position was display-only (plan 85
 /// item 1).
 ///
+/// Plan 86.5: the list can be searched by title, sorted, and
+/// filtered by channel / genre / unwatched; the genre comes
+/// from the DIDL merge (upnp:genre). Before this the list was
+/// the raw fetch order only (plan 85 item 5).
+///
 /// Plan 86.3: titles can be deleted from the detail view (and
 /// by long-pressing a list row), behind a confirmation.
 /// Protected and currently-recording titles are refused with
@@ -28,6 +33,7 @@ import 'error_messages.dart';
 import 'format.dart';
 import 'playback_launcher.dart';
 import 'player_screen.dart';
+import 'title_list_filter.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
 import 'widgets.dart';
 
@@ -189,7 +195,7 @@ class _TitlesScreenState extends ConsumerState<TitlesScreen> {
   }
 }
 
-class _TitleList extends ConsumerWidget {
+class _TitleList extends ConsumerStatefulWidget {
   const _TitleList({
     required this.reg,
     required this.selectedId,
@@ -201,9 +207,60 @@ class _TitleList extends ConsumerWidget {
   final void Function(RecordedTitle title, bool twoPane) onSelect;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_TitleList> createState() => _TitleListState();
+}
+
+class _TitleListState extends ConsumerState<_TitleList> {
+  final _searchController = TextEditingController();
+  String _query = '';
+  TitleSortOrder _sort = TitleSortOrder.recordedNewest;
+  String? _channelKey;
+  String? _genre;
+  bool _unwatchedOnly = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _searchController.clear();
+      _query = '';
+      _channelKey = null;
+      _genre = null;
+      _unwatchedOnly = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reg = widget.reg;
     final titles = ref.watch(titlesProvider(reg));
     final counts = ref.watch(titleCountsProvider(reg)).value;
+    final allTitles = titles.value ?? const <RecordedTitle>[];
+    final channelChoices = titleChannelChoices(allTitles);
+    final genreChoices = titleGenreChoices(allTitles);
+    // A chosen value can vanish when the list refreshes (its
+    // last title was deleted, say); fall back to "all" instead
+    // of filtering everything out behind the user's back.
+    final channelKey =
+        _channelKey != null && channelChoices.contains(_channelKey)
+        ? _channelKey
+        : null;
+    final genre = _genre != null && genreChoices.contains(_genre)
+        ? _genre
+        : null;
+    final filter = TitleListFilter(
+      query: _query,
+      channelKey: channelKey,
+      genre: genre,
+      unwatchedOnly: _unwatchedOnly,
+    );
+    final filteredCount = filter.isActive
+        ? applyTitleListView(allTitles, filter: filter, sort: _sort).length
+        : null;
     return Column(
       children: [
         if (counts != null)
@@ -214,17 +271,108 @@ class _TitleList extends ConsumerWidget {
               child: Text('全 ${counts.count} 件 (上限 ${counts.max} 件)'),
             ),
           ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: 'タイトルで検索',
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.clear),
+                      tooltip: '検索をクリア',
+                      onPressed: () => setState(() {
+                        _searchController.clear();
+                        _query = '';
+                      }),
+                    ),
+            ),
+            textInputAction: TextInputAction.search,
+            onChanged: (value) => setState(() => _query = value),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                DropdownButton<TitleSortOrder>(
+                  value: _sort,
+                  items: [
+                    for (final order in TitleSortOrder.values)
+                      DropdownMenuItem(value: order, child: Text(order.label)),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setState(() => _sort = value);
+                  },
+                ),
+                DropdownButton<String?>(
+                  value: channelKey,
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('全チャンネル')),
+                    for (final choice in channelChoices)
+                      DropdownMenuItem(value: choice, child: Text(choice)),
+                  ],
+                  onChanged: (value) => setState(() => _channelKey = value),
+                ),
+                DropdownButton<String?>(
+                  value: genre,
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('全ジャンル')),
+                    for (final choice in genreChoices)
+                      DropdownMenuItem(value: choice, child: Text(choice)),
+                  ],
+                  onChanged: (value) => setState(() => _genre = value),
+                ),
+                FilterChip(
+                  label: const Text('未視聴のみ'),
+                  selected: _unwatchedOnly,
+                  onSelected: (value) => setState(() => _unwatchedOnly = value),
+                ),
+                if (filter.isActive) ...[
+                  TextButton(
+                    onPressed: _clearFilters,
+                    child: const Text('条件をクリア'),
+                  ),
+                  if (filteredCount != null) Text('条件に合うのは $filteredCount 件'),
+                ],
+              ],
+            ),
+          ),
+        ),
         Expanded(
           child: asyncSection(titles, (list) {
             if (list.isEmpty) {
               return const Center(child: Text('録画済みのタイトルはありません'));
             }
+            final view = applyTitleListView(list, filter: filter, sort: _sort);
+            if (view.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('条件に合うタイトルがありません'),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _clearFilters,
+                      child: const Text('条件をクリア'),
+                    ),
+                  ],
+                ),
+              );
+            }
             final listView = ListView.builder(
-              itemCount: list.length,
+              itemCount: view.length,
               itemBuilder: (context, i) {
-                final t = list[i];
+                final t = view[i];
                 return ListTile(
-                  selected: t.id == selectedId,
+                  selected: t.id == widget.selectedId,
                   leading: Icon(
                     t.recordingFlag
                         ? Icons.fiber_manual_record
@@ -255,7 +403,7 @@ class _TitleList extends ConsumerWidget {
                         ),
                     ],
                   ),
-                  onTap: () => onSelect(
+                  onTap: () => widget.onSelect(
                     t,
                     MediaQuery.sizeOf(context).width >= twoPaneBreakpoint,
                   ),
@@ -274,8 +422,8 @@ class _TitleList extends ConsumerWidget {
                   return listView;
                 }
                 RecordedTitle? selected;
-                for (final t in list) {
-                  if (t.id == selectedId) selected = t;
+                for (final t in view) {
+                  if (t.id == widget.selectedId) selected = t;
                 }
                 return Row(
                   children: [
@@ -409,6 +557,8 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           label: 'チャンネル',
           value: t.channelName ?? channelDisplayName(channels, t.channel),
         ),
+        if (t.genre != null && t.genre!.isNotEmpty)
+          FieldRow(label: 'ジャンル', value: t.genre!),
         if (t.desiredQualityMode != null)
           FieldRow(
             label: '画質モード',

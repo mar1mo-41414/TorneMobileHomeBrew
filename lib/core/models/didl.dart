@@ -50,6 +50,11 @@ class DidlItem {
     return end < 0 ? rest : rest.substring(0, end);
   }
 
+  /// The first `upnp:genre` text. An item can carry several
+  /// genre elements (primary, secondary, ...); the parser keeps
+  /// the first in [properties], which is the primary genre.
+  String? get genre => properties['upnp:genre'];
+
   final String? date;
   final String? description;
   final String? longDescription;

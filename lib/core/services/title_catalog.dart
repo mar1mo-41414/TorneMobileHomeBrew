@@ -66,6 +66,7 @@ class SoapTitleCatalogService implements TitleCatalogService {
             description: match.description,
             longDescription: match.longDescription,
             channelName: match.channelName,
+            genre: match.genre,
             copyCountRemaining: match.copyCountRemaining,
             res: match.res,
           )
@@ -95,20 +96,25 @@ class SoapTitleCatalogService implements TitleCatalogService {
     final json = await _webApi.getJson(WebApiEndpoints.recordedContentCountGet);
     final count = json['count'];
     if (count is! num) {
-      throw NasneError.parse('webapi:/recorded/recordedContentCountGet',
-          cause: 'missing count');
+      throw NasneError.parse(
+        'webapi:/recorded/recordedContentCountGet',
+        cause: 'missing count',
+      );
     }
     return count.toInt();
   }
 
   @override
   Future<int> maxTitles() async {
-    final json =
-        await _webApi.getJson(WebApiEndpoints.recordedContentMaxCountGet);
+    final json = await _webApi.getJson(
+      WebApiEndpoints.recordedContentMaxCountGet,
+    );
     final count = json['count'];
     if (count is! num) {
-      throw NasneError.parse('webapi:/recorded/recordedContentMaxCountGet',
-          cause: 'missing count');
+      throw NasneError.parse(
+        'webapi:/recorded/recordedContentMaxCountGet',
+        cause: 'missing count',
+      );
     }
     return count.toInt();
   }

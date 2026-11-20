@@ -61,6 +61,7 @@ class RecordedTitle {
     this.description,
     this.longDescription,
     this.channelName,
+    this.genre,
     this.copyCountRemaining,
     this.res = const [],
   });
@@ -95,6 +96,10 @@ class RecordedTitle {
   final String? longDescription;
   final String? channelName;
 
+  /// Genre text from DIDL `upnp:genre` (the primary genre when
+  /// the item carries several).
+  final String? genre;
+
   /// Remaining copy count, DIDL `av:COGCount` (measured value 10).
   final int? copyCountRemaining;
   final List<TitleRes> res;
@@ -103,6 +108,7 @@ class RecordedTitle {
     String? description,
     String? longDescription,
     String? channelName,
+    String? genre,
     int? copyCountRemaining,
     List<TitleRes>? res,
   }) {
@@ -126,6 +132,7 @@ class RecordedTitle {
       description: description ?? this.description,
       longDescription: longDescription ?? this.longDescription,
       channelName: channelName ?? this.channelName,
+      genre: genre ?? this.genre,
       copyCountRemaining: copyCountRemaining ?? this.copyCountRemaining,
       res: res ?? this.res,
     );
