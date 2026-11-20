@@ -4685,3 +4685,19 @@ pydtcpip の `stream` に録画中タイトルの DR res URL を渡し、読み�
 2. 1 倍速で録画終了まで通し見し、終了を跨いで完走するか
 3. 録画中に倍速 / シーク操作をしたときの現行の振る舞い (実装前の現状記録)
 4. 録画終了直後のタイトルでシーク可能モードに切り替わるか (一覧再取得後)
+
+## 91. v1.4.3 リリース (2026-11-20、ビルド45)
+
+- 本人決定 (2026-11-20): §86 の使いやすさ改善 (#1〜#10、ビルド44 で実装し全端末へ配置済み) の中身を公開側にも揃える。版数はまず **1.4.3** とし、§86.11 の宿題7件の実機確認を 2026-11-21 に消化したうえで **1.5.0** を出す二段構え。**v1.5.0 の前提条件は §86.11 宿題7件 (レジューム位置一致、削除の実削除、ジャンル実データ、サムネイル形式、倍速ピッチ、EPG 検索応答性、ジャンル色) の実機確認完了**である。
+- 版数を **1.4.3+45** に上げた (pubspec.yaml と `lib/core/app_version.dart` を同一コミット `7172d22` で同期)。README も更新した (コミット `e913f94`: 版数表記と機能一覧)。リリース HEAD は `e913f94`。
+- テスト: **全405件合格** (タグ前に実走で再確認)。
+- 成果物 (すべて同一 HEAD `e913f94` からビルド):
+  - **APK**: 102,655,717 B、SHA-256 `a12f1acee2601cbac401474eb9c48705edac52e7a5a403d194d149b21353ed99`。versionName 1.4.3 / versionCode 45、配布署名 (証明書 SHA-256 `e60cfedabb6f9e937213a5d1cb32621c806acb09220f7e3271b684d369aad1d5`)。初回ビルドは `TMHB_KEY_PROPERTIES` 未設定でデバッグ署名にフォールバックしていた (証明書 SHA-256 が配布用と異なることで検出) ため、環境変数を設定して再ビルドし、初回分は破棄した。
+  - **IPA**: 16,872,009 B、SHA-256 `a713c24d9441700aea21a117b44829bfef773aa13f90bc7f19808e4b2a43f9b2`。署名なし。Mac の `build/ios/iphoneos/Runner.app` (1.4.3 / 45、無署名) を Payload 形式でパッケージ。Mach-O は24点で 1.4.2 と同一構成、Info.plist で 1.4.3 / 45 を確認。
+  - **macOS zip**: 38,205,676 B、SHA-256 `1973c00c136da9acdacf933f5d8fa27e17bd187363666b83fd9a130a41571b15`。`tool/build_macos_desktop.sh` でビルド (BUILD SUCCEEDED)。身元署名は SSH セッション制約 (`errSecInternalComponent`) で停止したため、§81 と同様にスクリプトのフォールバック相当の ad-hoc 署名 + `Signing.entitlements` (user-selected read-only の1件のみ、keychain-access-groups なし) で作成し、`codesign --verify --deep --strict` 合格。
+  - **Windows zip**: 39,028,885 B、SHA-256 `ad16ba23efcbb1409330ec79c4d77f8b38e17c54e32a9546da79cd232168d3ae`。同梱 libmpv-2.dll は arib2 (43,685,902 B)。marog の Desktop 配置 (フォルダ形式) も差し替え済み: FileVersion 1.4.3+45、25ファイル、起動スモーク合格 (8秒後もプロセス生存)。
+  - **Linux tar.gz**: 22,611,170 B、SHA-256 `79eeaa8f10006f158319fb15b81750f495eb43b7eb3d543f6f461f1190beb2b2`。§82 の自前 libmpv + libaribb24 同梱を含む (v1.4.2 のリリースノートで予告した同梱の実施分)。version.json で 1.4.3 / 45 を確認。
+- **リリース**: タグ `v1.4.3` を `e913f94` に打ち、GitHub リリースを作成した (https://github.com/mar1mo-41414/TorneMobileHomeBrew/releases/tag/v1.4.3、公開・非ドラフト・非プレリリース、アセット5点)。**全アセットを未認証で再ダウンロードし、SHA-256 が上記と全て一致**することを確認した。
+- **配置**: marnux `~/ダウンロード/TMHB/` は 1.4.3 の APK + Linux tar.gz のみに差し替え (ビルド44 の 1.4.2 名義分を除去)。IPA は `~/tmp/Decrypted-ipa/` に配置 (ビルド44 の IPA と差し替え)。raspi5-2 の AltSource (§88) にも `deploy-to-raspi.sh` でリリース IPA を配置し、掲載が **1.4.3 / ビルド45** に切り替わったことを公開 JSON (https://ipa.markund.f5.si/altsource.json) で確認した。
+- dev プリリリース: `e913f94` 向けの GitHub Actions は当初、ローリング prerelease 更新ステップが HTTP 422 (Release.tag_name already exists) で失敗したが、失敗ジョブの再実行で成功し、資産が 1.4.3+45 に更新されたことを確認した (ビルドジョブ自体は初回から成功していた)。
+- 残作業: Mac の `~/Applications` 配置のみ身元署名待ち。ビルド済み .app (現在は ad-hoc 署名) は Mac クローンの `build/macos/Build/Products/Release/torne mobile HB.app` に残置した。本人が §71 と同形式の署名コマンド (--entitlements 付き) をローカル Terminal で実行した後に、署名検証を経て `~/Applications` へ差し替える。リリース自体は ad-hoc 署名のアセットで完結している。
