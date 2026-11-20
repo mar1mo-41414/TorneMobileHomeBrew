@@ -4,7 +4,7 @@ Sony のサポート終了後も、公式ファームウェアの nasne をス�
 
 ## 現状
 
-v1.4.2 をリリースしました。配布物 (IPA / APK / Mac 版 / Windows 版 / Linux 版) は GitHub Releases から入手できます。開発の経緯・設計・検証記録は [docs/plan.md](docs/plan.md) にまとめています。
+v1.4.3 をリリースしました。配布物 (IPA / APK / Mac 版 / Windows 版 / Linux 版) は GitHub Releases から入手できます。開発の経緯・設計・検証記録は [docs/plan.md](docs/plan.md) にまとめています。
 
 ## 機能
 
@@ -16,6 +16,10 @@ v1.4.2 をリリースしました。配布物 (IPA / APK / Mac 版 / Windows �
 - 録画の再生 (DTCP-IP、再生画質の選択: 元画質 / モバイル、シークバーと前後10秒ボタンによるシーク対応)
 - ライブ視聴 (TV視聴): 放送中の番組をチャンネル一覧から選んで視聴 (DTCP-IP、再生画質の選択: 元画質 / モバイル)
 - 再生中の字幕表示 (ARIB 字幕) と、主音声 / 副音声の切り替え
+- 録画タイトルの削除
+- 録画タイトル一覧の検索・並び替え・絞り込みと、サムネイル表示
+- 録画再生のレジューム (中断した位置からの再開) と、早見再生 (1.25 / 1.5 / 2 倍速)
+- 番組表のキーワード・ジャンル検索と、ジャンル別の色分け表示
 
 ### 録画の再生について
 
@@ -49,7 +53,7 @@ Mac 版では再生のたびにキーチェーンのパスワードを聞かれ�
 
 ### Windows (デスクトップ版)
 
-Releases から Windows 版の zip をダウンロードし、展開して `TorneMobileHomeBrew-windows-1.4.2/tmhb.exe` を起動してください。
+Releases から Windows 版の zip をダウンロードし、展開して `TorneMobileHomeBrew-windows-1.4.3/tmhb.exe` を起動してください。
 
 ### Linux (デスクトップ版)
 
