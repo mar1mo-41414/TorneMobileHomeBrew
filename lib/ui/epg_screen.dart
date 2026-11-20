@@ -42,15 +42,19 @@ class _ChannelSnapPhysics extends ScrollPhysics {
 
   @override
   Simulation? createBallisticSimulation(
-      ScrollMetrics position, double velocity) {
+    ScrollMetrics position,
+    double velocity,
+  ) {
     if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
         (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
       return super.createBallisticSimulation(position, velocity);
     }
     final tolerance = toleranceFor(position);
-    final double nearest = ((position.pixels / _channelWidth).round() *
-            _channelWidth)
-        .clamp(position.minScrollExtent, position.maxScrollExtent);
+    final double nearest =
+        ((position.pixels / _channelWidth).round() * _channelWidth).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
     if (velocity.abs() < tolerance.velocity &&
         (position.pixels - nearest).abs() < tolerance.distance) {
       // Already at rest on a boundary: defer to the parent physics,
@@ -165,8 +169,10 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
         ],
       ),
       body: reg == null
-          ? const Center(
-              child: Text('nasne が登録されていません。設定画面で登録してください。'))
+          ? NoDeviceView(
+              onRegister: () =>
+                  ref.read(tabIndexProvider.notifier).select(AppTabs.settings),
+            )
           : _buildBandGuide(reg),
     );
   }
@@ -177,8 +183,10 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
         ? ref.watch(bsEpgGuideProvider(reg))
         : ref.watch(epgGuideProvider(reg));
     final logos = isBs
-        ? (ref.watch(bsChannelLogosProvider(reg)).value ?? const <int, List<int>>{})
-        : (ref.watch(channelLogosProvider(reg)).value ?? const <int, List<int>>{});
+        ? (ref.watch(bsChannelLogosProvider(reg)).value ??
+              const <int, List<int>>{})
+        : (ref.watch(channelLogosProvider(reg)).value ??
+              const <int, List<int>>{});
 
     return Column(
       children: [
@@ -186,7 +194,10 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: SegmentedButton<int>(
             segments: const [
-              ButtonSegment<int>(value: terrestrialBroadcastingType, label: Text('地デジ')),
+              ButtonSegment<int>(
+                value: terrestrialBroadcastingType,
+                label: Text('地デジ'),
+              ),
               ButtonSegment<int>(value: bsBroadcastingType, label: Text('BS')),
             ],
             selected: {_selectedBand},
@@ -266,11 +277,14 @@ class _GuideView extends StatelessWidget {
     }
     final firstDay = _EpgScreenState._jstDateOf(from);
     final lastDay = _EpgScreenState._jstDateOf(
-        to.subtract(const Duration(seconds: 1)));
+      to.subtract(const Duration(seconds: 1)),
+    );
     final days = <DateTime>[
-      for (var d = firstDay;
-          !d.isAfter(lastDay);
-          d = d.add(const Duration(days: 1)))
+      for (
+        var d = firstDay;
+        !d.isAfter(lastDay);
+        d = d.add(const Duration(days: 1))
+      )
         d,
     ];
     final today = _EpgScreenState._jstDateOf(DateTime.now());
@@ -292,7 +306,8 @@ class _GuideView extends StatelessWidget {
           // does not accept drags cleanly (plan 23).
           final target = math.max(0, minutes * _pxPerMinute).toDouble();
           bodyController.jumpTo(
-              math.min(target, bodyController.position.maxScrollExtent));
+            math.min(target, bodyController.position.maxScrollExtent),
+          );
         }
         onScrolledToNow();
       });
@@ -311,9 +326,7 @@ class _GuideView extends StatelessWidget {
                 child: Column(
                   children: [
                     const SizedBox(height: _headerHeight),
-                    Expanded(
-                      child: _TimeRuler(controller: rulerController),
-                    ),
+                    Expanded(child: _TimeRuler(controller: rulerController)),
                   ],
                 ),
               ),
@@ -373,9 +386,11 @@ class _DaySelector extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 6),
               child: ChoiceChip(
-                label: Text(day == today
-                    ? '今日 ${day.month}/${day.day}'
-                    : '${day.month}/${day.day} (${formatWeekdayJst(day.add(const Duration(hours: 9)))})'),
+                label: Text(
+                  day == today
+                      ? '今日 ${day.month}/${day.day}'
+                      : '${day.month}/${day.day} (${formatWeekdayJst(day.add(const Duration(hours: 9)))})',
+                ),
                 selected: day == selected,
                 onSelected: (_) => onSelect(day),
               ),
@@ -483,7 +498,8 @@ class _DayGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dayHeight = 24 * 60 * _pxPerMinute;
-    final isToday = _EpgScreenState._jstDateOf(DateTime.now()) ==
+    final isToday =
+        _EpgScreenState._jstDateOf(DateTime.now()) ==
         _EpgScreenState._jstDateOf(dayStart);
     final nowOffset = isToday
         ? DateTime.now().difference(dayStart).inMinutes * _pxPerMinute
@@ -511,14 +527,15 @@ class _DayGrid extends StatelessWidget {
                     height: dayHeight,
                     child: Stack(
                       children: [
-                        for (final event in services[i]
-                            .events
-                            .where((e) =>
-                                e.end.isAfter(dayStart) &&
-                                e.start.isBefore(dayEnd)))
+                        for (final event in services[i].events.where(
+                          (e) =>
+                              e.end.isAfter(dayStart) &&
+                              e.start.isBefore(dayEnd),
+                        ))
                           _EventTile(
                             key: ValueKey(
-                                '${services[i].channel.serviceId}-${event.eventId}-${event.start}'),
+                              '${services[i].channel.serviceId}-${event.eventId}-${event.start}',
+                            ),
                             event: event,
                             channel: services[i].channel,
                             channelName: services[i].channel.serviceName,
@@ -563,10 +580,8 @@ class _EventTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final startMin = math.max(
-        0, event.start.difference(dayStart).inMinutes);
-    final endMin = math.min(
-        24 * 60, event.end.difference(dayStart).inMinutes);
+    final startMin = math.max(0, event.start.difference(dayStart).inMinutes);
+    final endMin = math.min(24 * 60, event.end.difference(dayStart).inMinutes);
     final top = startMin * _pxPerMinute;
     final height = math.max(10, (endMin - startMin) * _pxPerMinute - 1);
     final title = event.title;
@@ -620,8 +635,10 @@ class _EventTile extends StatelessWidget {
           ),
           child: maxTitleLines >= 1
               ? Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -654,8 +671,10 @@ class _EventTile extends StatelessWidget {
                         Expanded(
                           child: Text(
                             title,
-                            style: theme.textTheme.bodySmall
-                                ?.copyWith(fontSize: 10, height: 1.1),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 10,
+                              height: 1.1,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -723,7 +742,8 @@ class _EventDetailDialog extends StatelessWidget {
               const SizedBox(height: 4),
               Text(item.value),
             ],
-            if (event.extendedText != null && event.extendedText!.isNotEmpty) ...[
+            if (event.extendedText != null &&
+                event.extendedText!.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text(event.extendedText!),
             ],

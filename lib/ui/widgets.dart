@@ -199,6 +199,86 @@ Future<bool> confirmDialog(
   return result ?? false;
 }
 
+/// Cause-based checks for when discovery finds no nasne (plan 86.4).
+/// Written for users who do not know the network vocabulary: each
+/// item names a concrete thing to look at, in roughly the order it
+/// most often turns out to be the cause.
+const List<String> discoveryChecklistItems = [
+  'nasne の電源が入っていて、起動が終わっていること',
+  'この端末が、nasne と同じ Wi-Fi (同じネットワーク) につながっていること',
+  'ルーターの「端末同士の通信を止める」設定 (プライバシーセパレータ、AP アイソレーションなど) がオフになっていること',
+  'このアプリにローカルネットワークへのアクセスが許可されていること (iOS では「設定」アプリから確認できます)',
+];
+
+/// The discovery-failure checklist block (plan 86.4), shared by the
+/// settings screen's "not found" and search-error states.
+class DiscoveryChecklist extends StatelessWidget {
+  const DiscoveryChecklist({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '見つからないときは、次の点を確認してください。',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 6),
+        for (final item in discoveryChecklistItems)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.check, size: 18),
+                const SizedBox(width: 6),
+                Expanded(child: Text(item)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Shared "no nasne registered yet" guidance (plan 86.4): the same
+/// view on every tab, with a button that jumps to the settings tab
+/// where registration happens.
+class NoDeviceView extends StatelessWidget {
+  const NoDeviceView({super.key, required this.onRegister});
+
+  final VoidCallback onRegister;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.tv_off_outlined, size: 48),
+            const SizedBox(height: 16),
+            const Text('nasne が登録されていません'),
+            const SizedBox(height: 8),
+            const Text(
+              '使うには、まず nasne を登録してください。設定画面で探して登録できます。',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onRegister,
+              icon: const Icon(Icons.settings),
+              label: const Text('設定で登録する'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Dismisses the software keyboard when a tap lands outside
 /// the focused text field (plan 54). The app wraps its whole
 /// UI in this (see main.dart): the field screens had no

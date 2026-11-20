@@ -49,7 +49,10 @@ class _LiveScreenState extends ConsumerState<LiveScreen> {
         ],
       ),
       body: reg == null
-          ? const Center(child: Text('nasne が登録されていません。設定画面で登録してください。'))
+          ? NoDeviceView(
+              onRegister: () =>
+                  ref.read(tabIndexProvider.notifier).select(AppTabs.settings),
+            )
           : _LiveList(
               reg: reg,
               selectedId: _selectedId,
@@ -59,8 +62,10 @@ class _LiveScreenState extends ConsumerState<LiveScreen> {
                 } else {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) =>
-                          LiveChannelDetailPage(reg: reg, channelId: channel.id),
+                      builder: (_) => LiveChannelDetailPage(
+                        reg: reg,
+                        channelId: channel.id,
+                      ),
                     ),
                   );
                 }

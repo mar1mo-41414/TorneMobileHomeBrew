@@ -88,10 +88,7 @@ Future<void> deleteRecordedTitle({
   VoidCallback? onDeleted,
 }) async {
   if (title.protectFlag) {
-    await _showDeleteRefusal(
-      context,
-      'このタイトルは保護されているため削除できません。',
-    );
+    await _showDeleteRefusal(context, 'このタイトルは保護されているため削除できません。');
     return;
   }
   if (title.recordingFlag) {
@@ -168,7 +165,10 @@ class _TitlesScreenState extends ConsumerState<TitlesScreen> {
         ],
       ),
       body: reg == null
-          ? const Center(child: Text('nasne が登録されていません。設定画面で登録してください。'))
+          ? NoDeviceView(
+              onRegister: () =>
+                  ref.read(tabIndexProvider.notifier).select(AppTabs.settings),
+            )
           : _TitleList(
               reg: reg,
               selectedId: _selectedId,
@@ -410,7 +410,10 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           value: t.channelName ?? channelDisplayName(channels, t.channel),
         ),
         if (t.desiredQualityMode != null)
-          FieldRow(label: '画質モード', value: qualityModeLabel(t.desiredQualityMode!)),
+          FieldRow(
+            label: '画質モード',
+            value: qualityModeLabel(t.desiredQualityMode!),
+          ),
         if (t.copyCountRemaining != null)
           FieldRow(label: '残コピー回数', value: '${t.copyCountRemaining} 回'),
         FieldRow(label: '保護', value: t.protectFlag ? '保護あり' : 'なし'),

@@ -118,11 +118,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 if (_searchError != null) ...[
                   const SizedBox(height: 8),
                   Text(_searchError!),
+                  const SizedBox(height: 12),
+                  const DiscoveryChecklist(),
                 ],
                 if (_found != null) ...[
                   const SizedBox(height: 8),
                   if (_found!.isEmpty)
-                    const Text('見つかりませんでした。手動登録をお試しください。')
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('見つかりませんでした。'),
+                        const SizedBox(height: 12),
+                        const DiscoveryChecklist(),
+                        const SizedBox(height: 12),
+                        FilledButton.tonal(
+                          onPressed: _searching ? null : _discover,
+                          child: const Text('もう一度探す'),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text('それでも見つからない場合は、下の手動登録も使えます。'),
+                      ],
+                    )
                   else
                     for (final device in _found!)
                       ListTile(
@@ -184,9 +200,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ref
                   .watch(credentialSummaryProvider)
                   .when(
-                    data: (summary) => summary == null
-                        ? '未インポート (再生には資格情報が必要です)'
-                        : 'インポート済み',
+                    data: (summary) =>
+                        summary == null ? '未インポート (再生には資格情報が必要です)' : 'インポート済み',
                     loading: () => '確認中…',
                     error: (_, _) => '読み込みエラー',
                   ),

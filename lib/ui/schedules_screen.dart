@@ -54,7 +54,10 @@ class _SchedulesScreenState extends ConsumerState<SchedulesScreen> {
               label: const Text('新規予約'),
             ),
       body: reg == null
-          ? const _NoDeviceBody()
+          ? NoDeviceView(
+              onRegister: () =>
+                  ref.read(tabIndexProvider.notifier).select(AppTabs.settings),
+            )
           : _ScheduleList(
               reg: reg,
               selectedId: _selectedId,
@@ -72,15 +75,6 @@ class _SchedulesScreenState extends ConsumerState<SchedulesScreen> {
               },
             ),
     );
-  }
-}
-
-class _NoDeviceBody extends StatelessWidget {
-  const _NoDeviceBody();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('nasne が登録されていません。設定画面で登録してください。'));
   }
 }
 

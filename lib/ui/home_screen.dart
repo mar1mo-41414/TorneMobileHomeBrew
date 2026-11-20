@@ -41,47 +41,13 @@ class HomeScreen extends ConsumerWidget {
         ),
         data: (_) {
           if (selected == null) {
-            return _NoDeviceView(
+            return NoDeviceView(
               onRegister: () =>
                   ref.read(tabIndexProvider.notifier).select(AppTabs.settings),
             );
           }
           return _StatusList(reg: selected);
         },
-      ),
-    );
-  }
-}
-
-class _NoDeviceView extends StatelessWidget {
-  const _NoDeviceView({required this.onRegister});
-
-  final VoidCallback onRegister;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.tv_off_outlined, size: 48),
-            const SizedBox(height: 16),
-            const Text('nasne が登録されていません'),
-            const SizedBox(height: 8),
-            const Text(
-              '設定画面で nasne を探して登録するか、アドレスを手動で登録してください。',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: onRegister,
-              icon: const Icon(Icons.settings),
-              label: const Text('設定で登録する'),
-            ),
-          ],
-        ),
       ),
     );
   }
