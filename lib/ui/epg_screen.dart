@@ -21,6 +21,7 @@ import '../app/providers.dart';
 import '../app/state.dart';
 import '../app/bs_epg_providers.dart';
 import '../core/core.dart';
+import 'epg_genre.dart';
 import 'epg_search_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
@@ -616,7 +617,14 @@ class _EventTile extends StatelessWidget {
       right: 1,
       height: height.toDouble(),
       child: Material(
-        color: theme.colorScheme.surfaceContainerHighest,
+        // Tiles are tinted by the event's genre (plan 86,
+        // plan 85 item 10); events without a known genre
+        // keep the neutral colour they have always had.
+        color: epgGenreTileColor(
+          genreLevel1: event.genreLevel1,
+          surface: theme.colorScheme.surface,
+          fallback: theme.colorScheme.surfaceContainerHighest,
+        ),
         borderRadius: BorderRadius.circular(3),
         // Tiles too short for their text must not paint outside
         // their box: spilled glyphs used to bleed into the tile
@@ -746,6 +754,7 @@ class EpgEventDetailDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final genreLabel = epgGenreLabel(event.genreLevel1);
     return AlertDialog(
       title: Text(event.title ?? '番組情報なし'),
       content: SingleChildScrollView(
@@ -754,6 +763,8 @@ class EpgEventDetailDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(channelName, style: theme.textTheme.bodySmall),
+            if (genreLabel != null)
+              Text('ジャンル: $genreLabel', style: theme.textTheme.bodySmall),
             Text(
               '${formatDateTimeWithWeekdayJst(event.start)} 〜 '
               '${formatTimeJst(event.end)}'

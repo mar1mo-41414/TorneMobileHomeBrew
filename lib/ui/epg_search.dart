@@ -19,6 +19,7 @@
 library;
 
 import '../core/core.dart';
+import 'epg_genre.dart';
 
 /// One search hit: an event and the service (channel) it
 /// belongs to, which the result list shows and the detail
@@ -34,27 +35,13 @@ class EpgSearchHit {
 }
 
 /// The ARIB genre level-1 label for the search filter's
-/// choices. (The full genre table — labels and tile colours
-/// — belongs to plan 86 item 10; the names defined there
-/// replace these when it lands.)
-String epgSearchGenreLabel(int genreLevel1) => switch (genreLevel1) {
-  0 => 'ニュース・報道',
-  1 => 'スポーツ',
-  2 => '情報・ワイドショー',
-  3 => 'ドラマ',
-  4 => '音楽',
-  5 => 'バラエティ',
-  6 => '映画',
-  7 => 'アニメ・特撮',
-  8 => 'ドキュメンタリー・教養',
-  9 => '劇場・公演',
-  10 => '趣味・教育',
-  11 => '福祉',
-  12 || 13 => '予備',
-  14 => '拡張',
-  15 => 'その他',
-  _ => 'ジャンル $genreLevel1',
-};
+/// choices. The names resolve through the shared genre
+/// table (epg_genre.dart, plan 86 item 10); a value the
+/// table does not name (the reserved / extension ranges)
+/// falls back to a numbered label, since the filter only
+/// offers genres actually present in the data.
+String epgSearchGenreLabel(int genreLevel1) =>
+    epgGenreLabel(genreLevel1) ?? 'ジャンル $genreLevel1';
 
 /// The genre level-1 values actually present in [guides],
 /// ascending — the filter offers only genres the viewer
