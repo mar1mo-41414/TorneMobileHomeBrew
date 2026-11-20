@@ -4,6 +4,12 @@
 /// PlaybackEngine boundary only; the v1 stub reports "unsupported"
 /// and the UI turns that into the not-implemented notice
 /// (plan 1.2 item 5, 5.7).
+///
+/// Plan 86: when the nasne holds a resume position for a title,
+/// the detail view asks whether to continue from it or start at
+/// the beginning, and the choice reaches the player as its open
+/// start. Before this the position was display-only (plan 85
+/// item 1).
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +23,45 @@ import 'playback_launcher.dart';
 import 'player_screen.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
 import 'widgets.dart';
+
+/// The resume start a title offers (plan 86): the position the
+/// nasne recorded, as a duration, or null when there is nothing
+/// to resume from (never played, or playback reached the start).
+Duration? resumeStartOf(RecordedTitle title) {
+  final seconds = title.resumePointSeconds;
+  if (seconds == null || seconds <= 0) return null;
+  return Duration(seconds: seconds);
+}
+
+/// Asks whether to continue from [resumeStart] or start over
+/// (plan 86). Returns true for "continue", false for "from the
+/// beginning", and null when the dialog was dismissed without a
+/// choice (the caller then does not start playback).
+Future<bool?> showResumeChoiceDialog(
+  BuildContext context,
+  Duration resumeStart,
+) {
+  return showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('前回の続きがあります'),
+      content: Text(
+        '前回は ${formatDurationSeconds(resumeStart.inSeconds)} まで観ました。'
+        '続きから再生しますか？',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('最初から再生'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('続きから再生'),
+        ),
+      ],
+    ),
+  );
+}
 
 class TitlesScreen extends ConsumerStatefulWidget {
   const TitlesScreen({super.key});
@@ -328,14 +373,28 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
     }
     final res =
         (_useMobile ? title.mobileRes : title.originalRes) ?? title.res.first;
+    // Resume (plan 86): a title the viewer stopped midway offers
+    // its recorded position. Ask before starting — beginning a
+    // session is the expensive step, and the choice belongs
+    // before it, not after.
+    var initialStart = resumeStartOf(title);
+    if (initialStart != null) {
+      final resume = await showResumeChoiceDialog(context, initialStart);
+      if (!context.mounted) return;
+      if (resume == null) return;
+      if (!resume) initialStart = null;
+    }
     setState(() => _starting = true);
     try {
       await startPlaybackAndShowPlayer(
         context: context,
         ref: ref,
         start: () => engine.startPlayback(title, res),
-        buildPlayer: (session) =>
-            PlayerScreen(title: title.title, session: session),
+        buildPlayer: (session) => PlayerScreen(
+          title: title.title,
+          session: session,
+          initialStart: initialStart,
+        ),
         unsupportedSubject: '録画の再生',
       );
     } finally {

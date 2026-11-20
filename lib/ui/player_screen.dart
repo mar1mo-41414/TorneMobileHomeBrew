@@ -73,6 +73,13 @@
 /// (plan 54; see player_track_policy), so captions cannot
 /// render until the libmpv builds gain one.
 ///
+/// Plan 86: a recording can open at the resume position the
+/// nasne holds for it ([PlayerScreen.initialStart]); the title
+/// detail asks whether to continue from there or start over.
+/// Before this the position was fetched and displayed but never
+/// used, so every viewing of a long programme restarted at the
+/// beginning (plan 85 item 1).
+///
 /// Plan 80: the seek-freeze fixes. Recorded playback now
 /// runs with mpv's cache on (see player_cache_policy) so
 /// the demuxer's re-reads stop round-tripping the proxy.
@@ -121,6 +128,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
     required this.title,
     required this.session,
     this.live = false,
+    this.initialStart,
   });
 
   /// Display heading: a recording's title, or a live channel's
@@ -133,6 +141,14 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// stream is unseekable by design, so mpv's seek complaint is
   /// non-fatal there (see player_error_policy).
   final bool live;
+
+  /// Where a recording starts playing (plan 86): the resume
+  /// position the nasne recorded for the title, when the viewer
+  /// chose to continue from it. Null (and always null for live)
+  /// starts at the beginning. Handed to mpv as the open start,
+  /// so the proxy's time-seek path establishes the stream at
+  /// that position from the first byte.
+  final Duration? initialStart;
 
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
@@ -615,7 +631,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           'player: mpv cache=$cacheMode (live=${widget.live})',
         );
       }
-      await _player.open(Media(widget.session.mediaUri.toString()));
+      final start = (!widget.live &&
+              widget.initialStart != null &&
+              widget.initialStart! > Duration.zero)
+          ? widget.initialStart
+          : null;
+      if (start != null) {
+        _diag(
+          DiagCategory.playback,
+          'player: opening at the resume position ${start.inSeconds}s '
+          '(plan 86)',
+        );
+      }
+      await _player.open(
+        Media(widget.session.mediaUri.toString(), start: start),
+      );
       _diag(DiagCategory.playback, 'player: open completed');
       await _applySubtitleSelection();
     } catch (e) {
