@@ -4562,3 +4562,10 @@ zcomlao さん、詳細な計測と、修正案まで含む報告をありがと
 - **本人決定 (2026-11-20)**: 今後の積みタスクとして、余計なコード・フォールバック・旧コードを除外していく。背景は 5ch nasne スレの指摘 (Dolby) への本人の同意: AI 開発ではフォールバックや旧コード・変数が「念のため」で残り続け、コードが肥大化してコンテキスト圧迫とバグの温床になる。
 - **判断基準**: 各コードについて「必須なものか？」を検証する。消せるもの・消しても困らないものは消す。ただし、実機で成立確認済みの動作は壊さない (削除の前後でテストと、必要な範囲の実機確認で担保する)。
 - **進め方**: 専用の一括実施はせず、今後の作業で随時適用する。具体的な削減作業は未着手であり、この節は方針の登録のみ。
+
+## 88. raspi5-2 AltSource へのリリース IPA 配置 (2026-11-20)
+
+- raspi5-2 に安定版専用の AltSource サーバーを構築した (詳細は IPA-AltSource リポの `docs/raspi5-2-deploy.md`)。ソース URL は `https://ipa.markund.f5.si/altsource.json` (identifier `sh.markun.ipa.altsource.dev`)、待ち受けは raspi5-2 の 127.0.0.1:8989 で公開は Pangolin が担う。IPA 置き場は raspi5-2 の `~/Server/IPA-AltSource/`。dev ビルドは置かない (marnux の Decrypted-ipa ソースとは役割分担)。
+- 初回配置: GitHub Release v1.4.2 の IPA 資産そのもの (16,825,866 B、SHA-256 `eb37d051966725d0075c552ccfe3c243015ae9c3be67e19c6c249891bf81bdba`、1.4.2 / ビルド34) を配置し、JSON 掲載・アイコン生成 (Assets.car 経由、`.icon_cache` 生成)・ダウンロードの SHA 一致を raspi5-2 ローカルで確認済み。
+- **今後のリリース手順への追加**: リリース時は marnux で `~/GitTmp/IPA-AltSource/scripts/deploy-to-raspi.sh <リリースIPAのパス>` を実行し、raspi5-2 の AltSource へも配置する (scp 配置 + SHA-256 照合 + JSON 掲載確認まで自動)。
+- 公開側の Pangolin リソース登録 (`ipa.markund.f5.si`) は本人が管理 UI から実施する。
