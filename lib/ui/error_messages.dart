@@ -24,6 +24,7 @@ String userMessageForError(Object error) {
       'error.invalidArgs' => '要求の形式が正しくありませんでした。',
       'error.invalidIdFormat' => 'ID の形式が正しくありませんでした。',
       'error.soapFault' => '操作に失敗しました。',
+      'error.titleProtected' => 'このタイトルは保護されているため削除できません。',
       'error.parse' => 'nasne の応答を読み取れませんでした。',
       'error.validation' => error.detail ?? '入力内容を確認してください。',
       'error.unsupported' => 'この機能は未実装です。',

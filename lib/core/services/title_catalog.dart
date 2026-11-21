@@ -56,8 +56,10 @@ class SoapTitleCatalogService implements TitleCatalogService {
       consumePage: (resp) {
         final result = resp.result;
         if (result == null) {
-          throw NasneError.parse('soap:X_GetTitleList',
-              cause: 'missing Result');
+          throw NasneError.parse(
+            'soap:X_GetTitleList',
+            cause: 'missing Result',
+          );
         }
         final page = [
           for (final item in parseXsrsItems(result, 'soap:X_GetTitleList'))
@@ -103,6 +105,33 @@ class SoapTitleCatalogService implements TitleCatalogService {
       serviceType: _serviceType,
       action: 'X_DeleteTitle',
       args: {'TitleID': id},
+    );
+  }
+
+  @override
+  Future<void> setTitleProtection(
+    RecordedTitle title, {
+    required bool protect,
+  }) async {
+    // X_UpdateTitle on the same XSRS service (plan 86.3,
+    // device-verified): the Elements argument is the item
+    // document exactly as listed, with only titleProtectFlag
+    // changed, and the item's id attribute names the target.
+    // A title without its listed document cannot be updated —
+    // guessing a document could rewrite the wrong metadata,
+    // so this refuses instead of reconstructing one.
+    final itemXml = title.sourceItemXml;
+    if (itemXml == null) {
+      throw NasneError.unsupported(
+        'soap:X_UpdateTitle',
+        detail: 'title carries no listed item document',
+      );
+    }
+    await _soap.call(
+      controlUrl: _controlUrl,
+      serviceType: _serviceType,
+      action: 'X_UpdateTitle',
+      args: {'Elements': buildTitleProtectElements(itemXml, protect: protect)},
     );
   }
 

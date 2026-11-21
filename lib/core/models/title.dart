@@ -58,6 +58,7 @@ class RecordedTitle {
     this.recordSizeRaw,
     this.lastPlaybackTime,
     this.resumePointSeconds,
+    this.sourceItemXml,
     this.description,
     this.longDescription,
     this.channelName,
@@ -90,6 +91,13 @@ class RecordedTitle {
   /// Resume position in seconds, from the `resumePoint` attribute of
   /// `lastPlaybackTime` (plan 12.5).
   final int? resumePointSeconds;
+
+  /// The XSRS `item` element exactly as listed, retained so an
+  /// X_UpdateTitle call can send the listed document back with a
+  /// single field changed (the device-verified protection toggle,
+  /// plan 86.3 / 98). Null for titles that did not come from a
+  /// title-list response.
+  final String? sourceItemXml;
 
   // -- DIDL complement --
   final String? description;
@@ -129,6 +137,7 @@ class RecordedTitle {
       recordSizeRaw: recordSizeRaw,
       lastPlaybackTime: lastPlaybackTime,
       resumePointSeconds: resumePointSeconds,
+      sourceItemXml: sourceItemXml,
       description: description ?? this.description,
       longDescription: longDescription ?? this.longDescription,
       channelName: channelName ?? this.channelName,

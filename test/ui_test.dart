@@ -186,13 +186,22 @@ class FakeSchedules implements ScheduleService {
 }
 
 class FakeTitles implements TitleCatalogService {
-  FakeTitles({List<RecordedTitle>? items, Map<String, List<int>>? thumbnails})
-    : items = List.of(items ?? defaultItems),
-      thumbnails = thumbnails ?? const {};
+  FakeTitles({
+    List<RecordedTitle>? items,
+    Map<String, List<int>>? thumbnails,
+    this.deleteRefusesAsProtected = false,
+  }) : items = List.of(items ?? defaultItems),
+       thumbnails = thumbnails ?? const {};
 
   final List<RecordedTitle> items;
   final Map<String, List<int>> thumbnails;
   final List<String> deletedIds = [];
+  final List<(String, bool)> protectionChanges = [];
+
+  /// When true, deleteTitle answers the way the unit answers
+  /// for a title protected after the list was fetched (UPnP
+  /// error 877, plan 86.3).
+  final bool deleteRefusesAsProtected;
 
   static final defaultItems = [
     RecordedTitle(
@@ -236,14 +245,63 @@ class FakeTitles implements TitleCatalogService {
 
   @override
   Future<void> deleteTitle(String id) async {
+    if (deleteRefusesAsProtected) {
+      throw NasneError.soapFault(
+        errorCode: '877',
+        errorDescription: 'Action X_DeleteTitle failed',
+        source: 'soap:X_DeleteTitle',
+      );
+    }
     deletedIds.add(id);
     items.removeWhere((t) => t.id == id);
+  }
+
+  @override
+  Future<void> setTitleProtection(
+    RecordedTitle title, {
+    required bool protect,
+  }) async {
+    protectionChanges.add((title.id, protect));
+    final i = items.indexWhere((t) => t.id == title.id);
+    if (i >= 0) items[i] = items[i].withProtectFlag(protect);
   }
 
   @override
   Future<Uint8List?> fetchThumbnail(String id) async {
     final bytes = thumbnails[id];
     return bytes == null ? null : Uint8List.fromList(bytes);
+  }
+}
+
+/// A copy of this title with only the protection flag changed
+/// (the fake's answer to a protection update).
+extension RecordedTitleProtectCopy on RecordedTitle {
+  RecordedTitle withProtectFlag(bool protect) {
+    return RecordedTitle(
+      id: id,
+      title: title,
+      scheduledStart: scheduledStart,
+      scheduledDurationSeconds: scheduledDurationSeconds,
+      channel: channel,
+      desiredQualityMode: desiredQualityMode,
+      genreId: genreId,
+      genreType: genreType,
+      reservationCreatorId: reservationCreatorId,
+      protectFlag: protect,
+      newFlag: newFlag,
+      recordingFlag: recordingFlag,
+      recordDestinationId: recordDestinationId,
+      recordSizeRaw: recordSizeRaw,
+      lastPlaybackTime: lastPlaybackTime,
+      resumePointSeconds: resumePointSeconds,
+      sourceItemXml: sourceItemXml,
+      description: description,
+      longDescription: longDescription,
+      channelName: channelName,
+      genre: genre,
+      copyCountRemaining: copyCountRemaining,
+      res: res,
+    );
   }
 }
 
@@ -410,21 +468,29 @@ class Fixture {
     this.titles,
     this.playback,
     this.thumbnails,
+    this.titlesDeleteRefusesAsProtected = false,
   }) : schedules = schedules ?? FakeSchedules(),
-       store = InMemoryRegistrationStore(registrations ?? [testReg]);
+       store = InMemoryRegistrationStore(registrations ?? [testReg]),
+       titlesService = FakeTitles(
+         items: titles,
+         thumbnails: thumbnails,
+         deleteRefusesAsProtected: titlesDeleteRefusesAsProtected,
+       );
 
   final FakeSchedules schedules;
   final InMemoryRegistrationStore store;
   final List<RecordedTitle>? titles;
   final PlaybackEngine? playback;
   final Map<String, List<int>>? thumbnails;
+  final bool titlesDeleteRefusesAsProtected;
+  final FakeTitles titlesService;
 
   Widget app() {
     final bundle = DeviceServices(
       deviceInfo: FakeDeviceInfo(),
       settings: FakeSettings(),
       schedules: schedules,
-      titles: FakeTitles(items: titles, thumbnails: thumbnails),
+      titles: titlesService,
       metadata: FakeMetadata(),
       live: FakeLiveCatalog(),
       playback: playback ?? const UnsupportedPlaybackEngine(),
@@ -747,6 +813,75 @@ void main() {
     expect(find.text('録画タイトルB'), findsNothing);
     expect(find.text('録画タイトルA'), findsOneWidget);
     expect(find.textContaining('全 1 件'), findsOneWidget);
+  });
+
+  testWidgets('protection can be switched on from the detail (plan 98)', (
+    tester,
+  ) async {
+    usePhoneSize(tester);
+    final fixture = Fixture();
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルB'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('なし'), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    expect(fixture.titlesService.protectionChanges, [('202', true)]);
+    // The detail resynced from the refreshed list.
+    expect(find.text('保護あり'), findsOneWidget);
+    expect(find.text('保護しました'), findsOneWidget);
+  });
+
+  testWidgets('protection can be switched off from the detail (plan 98)', (
+    tester,
+  ) async {
+    usePhoneSize(tester);
+    final fixture = Fixture();
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルA'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('保護あり'), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    expect(fixture.titlesService.protectionChanges, [('201', false)]);
+    expect(find.text('なし'), findsOneWidget);
+    expect(find.text('保護を解除しました'), findsOneWidget);
+  });
+
+  testWidgets('a delete the unit refuses with 877 is explained as protection '
+      '(plan 98)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(titlesDeleteRefusesAsProtected: true);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルB'));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('このタイトルを削除'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '削除'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('削除できません'), findsOneWidget);
+    expect(find.text('このタイトルは保護されているため削除できません。'), findsOneWidget);
+    expect(fixture.titlesService.deletedIds, isEmpty);
   });
 
   testWidgets('title detail with a mobile res offers the quality choice; '

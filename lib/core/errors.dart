@@ -105,10 +105,14 @@ class NasneError implements Exception {
     //  803               -> id format wrong (the create-response "0x" id
     //                       used for delete). Prevented by model
     //                       normalisation; if it surfaces it is a bug.
+    //  877               -> the title is protected (plan 86.3:
+    //                       X_DeleteTitle on a protected title is
+    //                       refused with this code).
     //  500 / others      -> interpret together with errorDescription.
     final key = switch (errorCode) {
       '402' => 'error.invalidArgs',
       '803' => 'error.invalidIdFormat',
+      '877' => 'error.titleProtected',
       _ => 'error.soapFault',
     };
     return NasneError(

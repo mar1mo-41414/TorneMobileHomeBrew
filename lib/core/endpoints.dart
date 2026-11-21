@@ -40,7 +40,9 @@ class WebApiEndpoint {
 /// WebAPI endpoint definitions, measured in phase 0 (plan 11.4 / 11.5).
 abstract final class WebApiEndpoints {
   // -- status: reads (GET, no auth) --
-  static const softwareVersionGet = WebApiEndpoint('/status/softwareVersionGet');
+  static const softwareVersionGet = WebApiEndpoint(
+    '/status/softwareVersionGet',
+  );
   static const updateCheck = WebApiEndpoint('/status/updateCheck');
   static const isFinishSetup = WebApiEndpoint('/status/isFinishSetup');
   static const boxNameGet = WebApiEndpoint('/status/boxNameGet');
@@ -58,18 +60,24 @@ abstract final class WebApiEndpoints {
   static const bcasInfoGet = WebApiEndpoint('/status/BCASInfoGet');
   static const networkIfInfoGet = WebApiEndpoint('/status/networkIfInfoGet');
   static const recNgListGet = WebApiEndpoint('/status/recNgListGet');
-  static const liveStreamStatusListGet =
-      WebApiEndpoint('/status/liveStreamStatusListGet');
-  static const dtcpipClientListGet =
-      WebApiEndpoint('/status/dtcpipClientListGet');
-  static const parentalRatingInfoGet =
-      WebApiEndpoint('/status/parentalRatingInfoGet');
-  static const mobileBitrateInfoGet =
-      WebApiEndpoint('/status/mobileBitrateInfoGet');
-  static const dmsStreamStopReasonListGet =
-      WebApiEndpoint('/status/dmsStreamStopReasonListGet');
-  static const requestClientInfoGet =
-      WebApiEndpoint('/status/requestClientInfoGet');
+  static const liveStreamStatusListGet = WebApiEndpoint(
+    '/status/liveStreamStatusListGet',
+  );
+  static const dtcpipClientListGet = WebApiEndpoint(
+    '/status/dtcpipClientListGet',
+  );
+  static const parentalRatingInfoGet = WebApiEndpoint(
+    '/status/parentalRatingInfoGet',
+  );
+  static const mobileBitrateInfoGet = WebApiEndpoint(
+    '/status/mobileBitrateInfoGet',
+  );
+  static const dmsStreamStopReasonListGet = WebApiEndpoint(
+    '/status/dmsStreamStopReasonListGet',
+  );
+  static const requestClientInfoGet = WebApiEndpoint(
+    '/status/requestClientInfoGet',
+  );
   static const epgVersionInfoGet = WebApiEndpoint(
     '/status/EPGVersionInfoGet',
     requiredParams: ['broadcastingType'],
@@ -77,10 +85,12 @@ abstract final class WebApiEndpoints {
   );
 
   // -- recorded: counts (GET, no auth) --
-  static const recordedContentCountGet =
-      WebApiEndpoint('/recorded/recordedContentCountGet');
-  static const recordedContentMaxCountGet =
-      WebApiEndpoint('/recorded/recordedContentMaxCountGet');
+  static const recordedContentCountGet = WebApiEndpoint(
+    '/recorded/recordedContentCountGet',
+  );
+  static const recordedContentMaxCountGet = WebApiEndpoint(
+    '/recorded/recordedContentMaxCountGet',
+  );
 
   // -- recorded: binary maps (GET, no auth) --
   static const thumbnailMapGet = WebApiEndpoint(
@@ -116,8 +126,9 @@ abstract final class WebApiEndpoints {
   );
 
   // -- config: progress reads (GET, no auth) --
-  static const internalHddInitializeProgressGet =
-      WebApiEndpoint('/config/internalHDDInitializeProgressGet');
+  static const internalHddInitializeProgressGet = WebApiEndpoint(
+    '/config/internalHDDInitializeProgressGet',
+  );
   static const hddRegisterProgressGet = WebApiEndpoint(
     '/config/HDDRegisterProgressGet',
     requiredParams: ['id'],
@@ -240,12 +251,18 @@ abstract final class SoapServices {
     defaultPort: 64230,
     fallbackControlPaths: ['/XSRS', '/xsrs/control/X_ScheduledRecording'],
     actions: {
-      'X_GetRecordScheduleList':
-          SoapActionDef('X_GetRecordScheduleList', resultKind: SoapResultKind.xsrs),
-      'X_GetTitleList':
-          SoapActionDef('X_GetTitleList', resultKind: SoapResultKind.xsrs),
-      'X_GetConflictList':
-          SoapActionDef('X_GetConflictList', resultKind: SoapResultKind.xsrs),
+      'X_GetRecordScheduleList': SoapActionDef(
+        'X_GetRecordScheduleList',
+        resultKind: SoapResultKind.xsrs,
+      ),
+      'X_GetTitleList': SoapActionDef(
+        'X_GetTitleList',
+        resultKind: SoapResultKind.xsrs,
+      ),
+      'X_GetConflictList': SoapActionDef(
+        'X_GetConflictList',
+        resultKind: SoapResultKind.xsrs,
+      ),
       'X_CreateRecordSchedule': SoapActionDef('X_CreateRecordSchedule'),
       'X_UpdateRecordSchedule': SoapActionDef('X_UpdateRecordSchedule'),
       'X_DeleteRecordSchedule': SoapActionDef('X_DeleteRecordSchedule'),
@@ -255,6 +272,11 @@ abstract final class SoapServices {
       // (RecordScheduleID for schedules); the request shape is
       // not yet device-verified — see plan 86.3.
       'X_DeleteTitle': SoapActionDef('X_DeleteTitle'),
+      // Title update (plan 86.3 / 98): carries only an
+      // `Elements` argument — the listed item document with the
+      // changed fields. The protection toggle built on it was
+      // device-verified in plan 86.3.
+      'X_UpdateTitle': SoapActionDef('X_UpdateTitle'),
     },
   );
 

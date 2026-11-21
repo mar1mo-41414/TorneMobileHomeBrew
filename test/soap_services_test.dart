@@ -270,6 +270,64 @@ void main() {
       await catalog.deleteTitle('10000000000000000001');
       expect(seenBody, contains('<TitleID>10000000000000000001</TitleID>'));
     });
+
+    test('setTitleProtection sends X_UpdateTitle with the listed item, '
+        'flag flipped (plan 86.3 / 98)', () async {
+      final bodies = <String>[];
+      final catalog = build(
+        router({
+          'X_GetTitleList': (200, soapFixture('title_list.xml')),
+          'X_UpdateTitle': (
+            200,
+            '<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>'
+                '<u:X_UpdateTitleResponse xmlns:u="urn:schemas-xsrs-org:service:X_ScheduledRecording:2">'
+                '</u:X_UpdateTitleResponse></s:Body></s:Envelope>',
+          ),
+        }, onRequest: (r) => bodies.add(r.body)),
+      );
+      final titles = await catalog.listTitles();
+      final t1 = titles.firstWhere((t) => t.id == '10000000000000000001');
+      expect(t1.protectFlag, isFalse);
+      await catalog.setTitleProtection(t1, protect: true);
+      final updateBody = bodies.last;
+      expect(updateBody, contains('<u:X_UpdateTitle '));
+      // The Elements value is the listed item document, escaped
+      // for transport, with only the flag changed.
+      expect(
+        updateBody,
+        contains('&lt;titleProtectFlag&gt;1&lt;/titleProtectFlag&gt;'),
+      );
+      expect(
+        updateBody,
+        isNot(contains('&lt;titleProtectFlag&gt;0&lt;/titleProtectFlag&gt;')),
+      );
+      expect(
+        updateBody,
+        contains('&lt;item id="10000000000000000001"&gt;'),
+      );
+      expect(updateBody, contains('&lt;portableRecordFile'));
+      expect(updateBody, contains('&lt;recordSize&gt;521&lt;/recordSize&gt;'));
+    });
+
+    test(
+      'setTitleProtection refuses a title with no listed document',
+      () async {
+        final catalog = build(router({}));
+        await expectLater(
+          catalog.setTitleProtection(
+            const RecordedTitle(id: '9', title: 'x'),
+            protect: true,
+          ),
+          throwsA(
+            isA<NasneError>().having(
+              (e) => e.category,
+              'category',
+              NasneErrorCategory.unsupported,
+            ),
+          ),
+        );
+      },
+    );
   });
 }
 

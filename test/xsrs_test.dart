@@ -12,8 +12,10 @@ String soapFixture(String name) =>
 /// Extracts the (entity-escaped) Result of a fixture envelope and
 /// un-escapes it the same way the SOAP transport does via innerText.
 String resultOf(String envelope) {
-  final match = RegExp(r'<Result>(.*?)</Result>', dotAll: true)
-      .firstMatch(envelope);
+  final match = RegExp(
+    r'<Result>(.*?)</Result>',
+    dotAll: true,
+  ).firstMatch(envelope);
   final raw = match!.group(1)!;
   return raw
       .replaceAll('&lt;', '<')
@@ -26,14 +28,17 @@ void main() {
   group('schedule list parsing', () {
     test('empty list fixture parses to zero items', () {
       final items = parseXsrsItems(
-          resultOf(soapFixture('record_schedule_list_empty.xml')),
-          'test');
+        resultOf(soapFixture('record_schedule_list_empty.xml')),
+        'test',
+      );
       expect(items, isEmpty);
     });
 
     test('one-item fixture converts with measured semantics', () {
       final items = parseXsrsItems(
-          resultOf(soapFixture('schedule_list_one.xml')), 'test');
+        resultOf(soapFixture('schedule_list_one.xml')),
+        'test',
+      );
       expect(items.length, 1);
       final s = recordScheduleFromXsrs(items.single, source: 'test');
       expect(s.id, '10000000000000000004');
@@ -52,8 +57,10 @@ void main() {
 
   group('title list parsing', () {
     test('two items with resume points and genres', () {
-      final items =
-          parseXsrsItems(resultOf(soapFixture('title_list.xml')), 'test');
+      final items = parseXsrsItems(
+        resultOf(soapFixture('title_list.xml')),
+        'test',
+      );
       expect(items.length, 2);
       final t1 = recordedTitleFromXsrs(items[0], source: 'test');
       expect(t1.id, '10000000000000000001');
@@ -72,41 +79,130 @@ void main() {
 
   group('id normalisation (the 803 trap, plan 11.7)', () {
     test('strips the literal 0x prefix over the decimal id', () {
-      expect(normalizeScheduleId('0x10000000000000000003'),
-          '10000000000000000003');
-      expect(normalizeScheduleId('10000000000000000003'),
-          '10000000000000000003');
+      expect(
+        normalizeScheduleId('0x10000000000000000003'),
+        '10000000000000000003',
+      );
+      expect(
+        normalizeScheduleId('10000000000000000003'),
+        '10000000000000000003',
+      );
     });
   });
 
   group('builders', () {
-    test('create item is the full torne template (no title element)',
-        () {
-      final xml = buildCreateItemXml(NewRecordSchedule(
-        start: DateTime.parse('2026-11-18T04:00:00+09:00'),
-        durationSeconds: 300,
-        channel: const ScheduleChannel(
-            broadcastingType: 2, channelType: 2, serviceId: 56832),
-        networkId: 30848,
-      ));
-      expect(xml, contains('<scheduledStartDateTime>2026-11-18T04:00:00+09:00</scheduledStartDateTime>'));
-      expect(xml, contains('<scheduledChannelID broadcastingType="2" channelType="2">0xde00</scheduledChannelID>'));
-      expect(xml, contains('<desiredMatchingID type="SI_PROGRAMID">,,0x7880,0x0000</desiredMatchingID>'));
+    test('create item is the full torne template (no title element)', () {
+      final xml = buildCreateItemXml(
+        NewRecordSchedule(
+          start: DateTime.parse('2026-11-18T04:00:00+09:00'),
+          durationSeconds: 300,
+          channel: const ScheduleChannel(
+            broadcastingType: 2,
+            channelType: 2,
+            serviceId: 56832,
+          ),
+          networkId: 30848,
+        ),
+      );
+      expect(
+        xml,
+        contains(
+          '<scheduledStartDateTime>2026-11-18T04:00:00+09:00</scheduledStartDateTime>',
+        ),
+      );
+      expect(
+        xml,
+        contains(
+          '<scheduledChannelID broadcastingType="2" channelType="2">0xde00</scheduledChannelID>',
+        ),
+      );
+      expect(
+        xml,
+        contains(
+          '<desiredMatchingID type="SI_PROGRAMID">,,0x7880,0x0000</desiredMatchingID>',
+        ),
+      );
       expect(xml, contains('<scheduledConditionID></scheduledConditionID>'));
       expect(xml, isNot(contains('<title>')));
     });
 
     test('update item is sparse with mandatory priorityFlag', () {
-      final xml = buildUpdateItemXml(const ScheduleUpdate(
-        id: '42',
-        conditionId: '1',
-        priorityFlag: 1,
-      ));
+      final xml = buildUpdateItemXml(
+        const ScheduleUpdate(id: '42', conditionId: '1', priorityFlag: 1),
+      );
       expect(xml, contains('<item id="42">'));
       expect(xml, contains('<scheduledConditionID>1</scheduledConditionID>'));
       expect(xml, contains('<priorityFlag>1</priorityFlag>'));
       expect(xml, isNot(contains('scheduledStartDateTime')));
       expect(xml, isNot(contains('desiredQualityMode')));
+    });
+  });
+
+  group('title protection update (plan 86.3 / 98)', () {
+    test('parsing retains the listed item document', () {
+      final items = parseXsrsItems(
+        resultOf(soapFixture('title_list.xml')),
+        'test',
+      );
+      expect(items[0].rawXml, contains('<item id="10000000000000000001">'));
+      expect(
+        items[0].rawXml,
+        contains('<titleProtectFlag>0</titleProtectFlag>'),
+      );
+      expect(items[0].rawXml, contains('<portableRecordFile'));
+      final t1 = recordedTitleFromXsrs(items[0], source: 'test');
+      expect(t1.sourceItemXml, items[0].rawXml);
+    });
+
+    test('protect flips only the flag in the listed document', () {
+      final items = parseXsrsItems(
+        resultOf(soapFixture('title_list.xml')),
+        'test',
+      );
+      final elements = buildTitleProtectElements(
+        items[0].rawXml,
+        protect: true,
+      );
+      expect(
+        elements,
+        startsWith(
+          '<?xml version="1.0"?>'
+          '<xsrs xmlns="urn:schemas-xsrs-org:metadata-1-0/x_srs/">',
+        ),
+      );
+      expect(elements, contains('<titleProtectFlag>1</titleProtectFlag>'));
+      expect(
+        elements,
+        isNot(contains('<titleProtectFlag>0</titleProtectFlag>')),
+      );
+      // Everything else of the listed item rides along unchanged.
+      expect(elements, contains('<item id="10000000000000000001">'));
+      expect(elements, contains('<recordSize>521</recordSize>'));
+      expect(elements, contains('<portableRecordFile'));
+      expect(elements, endsWith('</xsrs>'));
+    });
+
+    test('unprotect flips the flag back to 0', () {
+      const itemXml =
+          '<item id="7"><title>x</title>'
+          '<titleProtectFlag>1</titleProtectFlag></item>';
+      final elements = buildTitleProtectElements(itemXml, protect: false);
+      expect(elements, contains('<titleProtectFlag>0</titleProtectFlag>'));
+      expect(
+        elements,
+        isNot(contains('<titleProtectFlag>1</titleProtectFlag>')),
+      );
+    });
+
+    test('a listed item without the flag element gains one', () {
+      const itemXml = '<item id="7"><title>x</title></item>';
+      final elements = buildTitleProtectElements(itemXml, protect: true);
+      expect(
+        elements,
+        contains(
+          '<title>x</title><titleProtectFlag>1</titleProtectFlag></item>',
+        ),
+      );
     });
   });
 }

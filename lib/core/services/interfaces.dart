@@ -88,6 +88,14 @@ abstract interface class TitleCatalogService {
   /// (the UI blocks both before asking).
   Future<void> deleteTitle(String id);
 
+  /// Sets or clears a title's protection (plan 98; the
+  /// X_UpdateTitle shape was device-verified in plan 86.3).
+  /// The update sends the title's listed item document back
+  /// with only `titleProtectFlag` changed, so [title] must be
+  /// one obtained from [listTitles]. A protected title refuses
+  /// deletion on the unit itself (UPnP error 877).
+  Future<void> setTitleProtection(RecordedTitle title, {required bool protect});
+
   /// The title's thumbnail image bytes (JPEG or PNG), or null
   /// when the unit has none or it cannot be extracted
   /// (plan 86.6). Best-effort decoration: failures come back

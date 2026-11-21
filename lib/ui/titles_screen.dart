@@ -29,6 +29,13 @@
 /// Protected and currently-recording titles are refused with
 /// the reason, before any confirmation. Before this the app
 /// had no title deletion at all (plan 85 item 3).
+///
+/// Plan 98: the detail view's protection switch flips the
+/// unit's titleProtectFlag (X_UpdateTitle, the shape verified
+/// in plan 86.3). A delete the unit still refuses with error
+/// 877 — the title was protected after the list in hand was
+/// fetched — is explained as protection and resynced, not
+/// reported as a generic failure.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -120,7 +127,18 @@ Future<void> deleteRecordedTitle({
     await ref.read(deviceServicesProvider(reg)).titles.deleteTitle(title.id);
   } on NasneError catch (e) {
     ref.read(diagLogProvider)(DiagCategory.ui, 'title delete failed: $e');
-    if (context.mounted) showSnack(context, userMessageForError(e));
+    if (!context.mounted) return;
+    if (e.code == '877') {
+      // The unit refused: the title is protected there even
+      // though the list in hand said otherwise (plan 86.3 —
+      // protection can be set from another client after the
+      // list was fetched). Resync the list and explain it the
+      // same way as the up-front refusal.
+      ref.invalidate(titlesProvider(reg));
+      await _showDeleteRefusal(context, 'このタイトルは保護されているため削除できません。');
+      return;
+    }
+    showSnack(context, userMessageForError(e));
     return;
   } catch (e) {
     ref.read(diagLogProvider)(DiagCategory.ui, 'title delete failed: $e');
@@ -132,6 +150,39 @@ Future<void> deleteRecordedTitle({
   if (!context.mounted) return;
   showSnack(context, '削除しました');
   onDeleted?.call();
+}
+
+/// The protection toggle flow (plan 98), driven by the title
+/// detail's switch: sends the X_UpdateTitle the unit expects
+/// (the shape verified in plan 86.3), then refreshes the list.
+/// The detail views resolve their title from the list, so the
+/// switch settles on the unit's answer rather than on the
+/// request. A failure keeps the listed state and surfaces the
+/// error.
+Future<void> setRecordedTitleProtection({
+  required BuildContext context,
+  required WidgetRef ref,
+  required RegisteredNasne reg,
+  required RecordedTitle title,
+  required bool protect,
+}) async {
+  try {
+    await ref
+        .read(deviceServicesProvider(reg))
+        .titles
+        .setTitleProtection(title, protect: protect);
+  } on NasneError catch (e) {
+    ref.read(diagLogProvider)(DiagCategory.ui, 'title protect failed: $e');
+    if (context.mounted) showSnack(context, userMessageForError(e));
+    return;
+  } catch (e) {
+    ref.read(diagLogProvider)(DiagCategory.ui, 'title protect failed: $e');
+    if (context.mounted) showSnack(context, '保護を変更できませんでした');
+    return;
+  }
+  ref.invalidate(titlesProvider(reg));
+  if (!context.mounted) return;
+  showSnack(context, protect ? '保護しました' : '保護を解除しました');
 }
 
 Future<void> _showDeleteRefusal(BuildContext context, String message) {
@@ -520,6 +571,40 @@ class _TitleThumbnailBanner extends ConsumerWidget {
   }
 }
 
+/// The protection row of the title detail (plan 98): the
+/// state in the same label/value shape as the other rows,
+/// plus the switch that flips it on the unit. [onChanged] is
+/// null while an update is in flight, which disables the
+/// switch.
+class _ProtectionRow extends StatelessWidget {
+  const _ProtectionRow({required this.protect, required this.onChanged});
+
+  final bool protect;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 104,
+            child: Text(
+              '保護',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(child: Text(protect ? '保護あり' : 'なし')),
+          Switch(value: protect, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
 /// Detail page for narrow layouts.
 class TitleDetailPage extends ConsumerWidget {
   const TitleDetailPage({super.key, required this.reg, required this.titleId});
@@ -589,8 +674,29 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   /// re-entrancy-guarded.
   bool _starting = false;
 
+  /// A protection update is in flight (plan 98). The switch is
+  /// disabled meanwhile: a second flip would be built from the
+  /// same listed document as the first, and the two updates
+  /// have no order between them worth having.
+  bool _protectBusy = false;
+
   RegisteredNasne get reg => widget.reg;
   RecordedTitle get title => widget.title;
+
+  Future<void> _toggleProtection(bool protect) async {
+    setState(() => _protectBusy = true);
+    try {
+      await setRecordedTitleProtection(
+        context: context,
+        ref: ref,
+        reg: reg,
+        title: title,
+        protect: protect,
+      );
+    } finally {
+      if (mounted) setState(() => _protectBusy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -641,7 +747,18 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           ),
         if (t.copyCountRemaining != null)
           FieldRow(label: '残コピー回数', value: '${t.copyCountRemaining} 回'),
-        FieldRow(label: '保護', value: t.protectFlag ? '保護あり' : 'なし'),
+        // The protection row (plan 98): a switch for finished
+        // titles. A title still being recorded keeps the static
+        // display — the verified update shape covers finished
+        // titles, and a recording's listed item is still
+        // changing under the unit.
+        if (t.recordingFlag)
+          FieldRow(label: '保護', value: t.protectFlag ? '保護あり' : 'なし')
+        else
+          _ProtectionRow(
+            protect: t.protectFlag,
+            onChanged: _protectBusy ? null : _toggleProtection,
+          ),
         if (t.recordingFlag) const FieldRow(label: '状態', value: '録画中'),
         if (sizeBytes != null)
           FieldRow(label: 'サイズ', value: formatBytes(sizeBytes)),

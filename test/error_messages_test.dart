@@ -30,6 +30,15 @@ void main() {
         '操作に失敗しました。',
       );
     });
+
+    test('a protected-title refusal (877) names the protection', () {
+      expect(
+        userMessageForError(
+          NasneError.soapFault(errorCode: '877', source: 'soap:X_DeleteTitle'),
+        ),
+        'このタイトルは保護されているため削除できません。',
+      );
+    });
   });
 
   group('errorNextStepForError', () {

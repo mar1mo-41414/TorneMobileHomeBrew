@@ -21,6 +21,7 @@ class XsrsItem {
     required this.id,
     required this.fields,
     required this.attributes,
+    this.rawXml = '',
   });
 
   final String id;
@@ -30,6 +31,12 @@ class XsrsItem {
 
   /// Child element local name -> (attribute name -> value).
   final Map<String, Map<String, String>> attributes;
+
+  /// The `item` element's XML exactly as listed, retained for
+  /// the updates that must send the listed document back with a
+  /// single field changed (X_UpdateTitle, plan 86.3 / 98). Empty
+  /// for items constructed without a source document.
+  final String rawXml;
 
   String? operator [](String name) => fields[name];
 
@@ -60,11 +67,14 @@ List<XsrsItem> parseXsrsItems(String xmlText, String source) {
         };
       }
     }
-    items.add(XsrsItem(
-      id: item.getAttribute('id') ?? '',
-      fields: fields,
-      attributes: attributes,
-    ));
+    items.add(
+      XsrsItem(
+        id: item.getAttribute('id') ?? '',
+        fields: fields,
+        attributes: attributes,
+        rawXml: item.toXmlString(),
+      ),
+    );
   }
   return items;
 }
@@ -76,8 +86,30 @@ String buildXsrsDocument(String itemsXml) {
       '$itemsXml</xsrs>';
 }
 
-int _intField(XsrsItem item, String name, String source,
-    {int fallback = 0}) {
+final RegExp _protectFlagElement = RegExp(
+  r'<titleProtectFlag>.*?</titleProtectFlag>',
+);
+
+/// Builds the `Elements` document for an X_UpdateTitle call that
+/// sets a recorded title's protection (plan 86.3, device-verified;
+/// plan 98). The verified shape is the item document exactly as
+/// listed, with only the `titleProtectFlag` value changed — the
+/// unit takes the target from the item's `id` attribute and the
+/// call carries no other argument. [itemXml] is the listed item
+/// element (see [XsrsItem.rawXml]); a listed item without the
+/// flag element gains one just before `</item>`.
+String buildTitleProtectElements(String itemXml, {required bool protect}) {
+  final flag = '<titleProtectFlag>${protect ? '1' : '0'}</titleProtectFlag>';
+  final String updated;
+  if (_protectFlagElement.hasMatch(itemXml)) {
+    updated = itemXml.replaceFirst(_protectFlagElement, flag);
+  } else {
+    updated = itemXml.replaceFirst('</item>', '$flag</item>');
+  }
+  return buildXsrsDocument(updated);
+}
+
+int _intField(XsrsItem item, String name, String source, {int fallback = 0}) {
   final text = item[name];
   if (text == null) return fallback;
   final value = int.tryParse(text.trim());
@@ -94,9 +126,15 @@ ScheduleChannel _channelOf(XsrsItem item, String source) {
   }
   return ScheduleChannel(
     broadcastingType:
-        int.tryParse(item.attribute('scheduledChannelID', 'broadcastingType') ?? '') ?? 2,
+        int.tryParse(
+          item.attribute('scheduledChannelID', 'broadcastingType') ?? '',
+        ) ??
+        2,
     channelType:
-        int.tryParse(item.attribute('scheduledChannelID', 'channelType') ?? '') ?? 2,
+        int.tryParse(
+          item.attribute('scheduledChannelID', 'channelType') ?? '',
+        ) ??
+        2,
     serviceId: ScheduleChannel.parseServiceId(text),
   );
 }
@@ -149,14 +187,18 @@ String buildCreateItemXml(NewRecordSchedule s) {
 String buildUpdateItemXml(ScheduleUpdate u) {
   final b = StringBuffer('<item id="${escapeXmlAttribute(u.id)}">');
   if (u.conditionId != null) {
-    b.write('<scheduledConditionID>${escapeXmlText(u.conditionId!)}</scheduledConditionID>');
+    b.write(
+      '<scheduledConditionID>${escapeXmlText(u.conditionId!)}</scheduledConditionID>',
+    );
   }
   if (u.desiredQualityMode != null) {
     b.write('<desiredQualityMode>${u.desiredQualityMode}</desiredQualityMode>');
   }
   b.write('<priorityFlag>${u.priorityFlag}</priorityFlag>');
   if (u.recordDestinationId != null) {
-    b.write('<recordDestinationID>${escapeXmlText(u.recordDestinationId!)}</recordDestinationID>');
+    b.write(
+      '<recordDestinationID>${escapeXmlText(u.recordDestinationId!)}</recordDestinationID>',
+    );
   }
   b.write('</item>');
   return b.toString();
@@ -191,7 +233,9 @@ RecordedTitle recordedTitleFromXsrs(XsrsItem item, {required String source}) {
         ? null
         : int.tryParse(item['recordSize']!.trim()),
     lastPlaybackTime: parseNasneDateTime(lastPlayback),
-    resumePointSeconds:
-        int.tryParse(item.attribute('lastPlaybackTime', 'resumePoint') ?? ''),
+    resumePointSeconds: int.tryParse(
+      item.attribute('lastPlaybackTime', 'resumePoint') ?? '',
+    ),
+    sourceItemXml: item.rawXml.isEmpty ? null : item.rawXml,
   );
 }
