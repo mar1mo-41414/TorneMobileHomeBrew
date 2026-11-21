@@ -147,6 +147,41 @@ class RecordedTitle {
     );
   }
 
+  /// A copy of this title with only the protection flag changed.
+  ///
+  /// Used to reflect a successful protection update in the loaded
+  /// list at once (plan 102): the unit accepted the new flag, so
+  /// the copy the UI holds can be brought in line without waiting
+  /// for a refetch — the unit's own title list can keep answering
+  /// with the pre-update flag for a while.
+  RecordedTitle withProtectFlag(bool protect) {
+    return RecordedTitle(
+      id: id,
+      title: title,
+      scheduledStart: scheduledStart,
+      scheduledDurationSeconds: scheduledDurationSeconds,
+      channel: channel,
+      desiredQualityMode: desiredQualityMode,
+      genreId: genreId,
+      genreType: genreType,
+      reservationCreatorId: reservationCreatorId,
+      protectFlag: protect,
+      newFlag: newFlag,
+      recordingFlag: recordingFlag,
+      recordDestinationId: recordDestinationId,
+      recordSizeRaw: recordSizeRaw,
+      lastPlaybackTime: lastPlaybackTime,
+      resumePointSeconds: resumePointSeconds,
+      sourceItemXml: sourceItemXml,
+      description: description,
+      longDescription: longDescription,
+      channelName: channelName,
+      genre: genre,
+      copyCountRemaining: copyCountRemaining,
+      res: res,
+    );
+  }
+
   /// The original-quality resource (plan 33; selection logic in
   /// [TitleResListSelection], shared with live channels).
   TitleRes? get originalRes => res.originalRes;

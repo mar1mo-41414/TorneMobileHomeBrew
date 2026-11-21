@@ -242,13 +242,54 @@ final schedulesProvider =
 /// stage is the whole list; consumers that search, filter or
 /// sort (whole-set operations) must treat an incomplete stage
 /// as provisional.
-final titlesProvider =
-    StreamProvider.family<TitleListProgress, RegisteredNasne>(
-      (ref, reg) => ref
-          .watch(deviceServicesProvider(reg))
-          .titles
-          .listTitlesProgressively(),
+///
+/// A notifier rather than a plain stream provider so a
+/// successful protection update can rewrite the one title's
+/// flag in the loaded list (plan 102, [TitlesNotifier.applyProtection])
+/// instead of refetching the whole list: the refetch cost grows
+/// with the library, and the unit's own list can lag the update
+/// anyway.
+class TitlesNotifier extends StreamNotifier<TitleListProgress> {
+  TitlesNotifier(this.reg);
+
+  final RegisteredNasne reg;
+
+  @override
+  Stream<TitleListProgress> build() => ref
+      .watch(deviceServicesProvider(reg))
+      .titles
+      .listTitlesProgressively();
+
+  /// Rewrites the protection flag of the loaded title [titleId]
+  /// in place, after the unit accepted the update (plan 102).
+  ///
+  /// The list the UI holds becomes the up-to-date one at once:
+  /// the row's lock icon and the detail's switch both read this
+  /// state, so neither waits for — or is clobbered by — a
+  /// refetch. A later stream stage or an explicit refresh still
+  /// replaces the state with what the unit answers; that is the
+  /// unit's list catching up, not a state this patch defends.
+  /// Does nothing while no stage has loaded, or when the title
+  /// is not in the loaded stage.
+  void applyProtection(String titleId, bool protect) {
+    final stage = state.value;
+    if (stage == null) return;
+    final i = stage.titles.indexWhere((t) => t.id == titleId);
+    if (i < 0 || stage.titles[i].protectFlag == protect) return;
+    final titles = [...stage.titles];
+    titles[i] = titles[i].withProtectFlag(protect);
+    state = AsyncData(
+      TitleListProgress(titles, complete: stage.complete),
     );
+  }
+}
+
+final titlesProvider =
+    StreamNotifierProvider.family<
+      TitlesNotifier,
+      TitleListProgress,
+      RegisteredNasne
+    >(TitlesNotifier.new);
 
 /// A recorded title's thumbnail image (plan 86.6), fetched
 /// lazily per title when its row or detail is shown; null when
