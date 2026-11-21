@@ -235,6 +235,20 @@ class SoapTitleCatalogService implements TitleCatalogService {
   }
 
   @override
+  Future<void> setResumePosition(String id, Duration position) async {
+    // The media-service call behind the interface contract
+    // (plan 102): the form carries the position in
+    // milliseconds. A negative position is rejected by the
+    // unit (errorcode 803, measured), so clamp at zero — the
+    // cleared point — instead of sending one.
+    final clamped = position.isNegative ? Duration.zero : position;
+    await _webApi.postJson(
+      WebApiEndpoints.recordedContentResumePositionSet,
+      form: {'id': id, 'position': '${clamped.inMilliseconds}'},
+    );
+  }
+
+  @override
   Future<int> countTitles() async {
     final json = await _webApi.getJson(WebApiEndpoints.recordedContentCountGet);
     final count = json['count'];

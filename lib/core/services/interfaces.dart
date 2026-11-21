@@ -110,6 +110,21 @@ abstract interface class TitleCatalogService {
   /// (plan 86.6). Best-effort decoration: failures come back
   /// as null, never as an error the list has to handle.
   Future<Uint8List?> fetchThumbnail(String id);
+
+  /// Reports where playback of a title stopped, so the unit's
+  /// resume point (the XSRS `lastPlaybackTime` resumePoint the
+  /// list reads back) follows the viewer across clients
+  /// (plan 102). This is the write the official client performs
+  /// when its playback ends; without it the unit never learns
+  /// a position from this app and "continue" is never offered.
+  ///
+  /// Measured semantics of the underlying call: the position
+  /// travels in milliseconds and the unit keeps whole seconds
+  /// (truncated); zero clears the point; the unit does not
+  /// clamp at the title's duration, so clearing at the end of
+  /// a viewing is the caller's job; every accepted call
+  /// re-stamps the title's last-playback time.
+  Future<void> setResumePosition(String id, Duration position);
 }
 
 /// Settings reads and the verified writes (WebAPI, plan 12.1).

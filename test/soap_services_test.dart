@@ -328,6 +328,51 @@ void main() {
         );
       },
     );
+
+    test('setResumePosition posts milliseconds to the media-service '
+        'port (plan 102)', () async {
+      late http.Request seen;
+      final client = MockClient((request) async {
+        seen = request;
+        return http.Response('{"errorcode": 0}', 200);
+      });
+      final catalog = SoapTitleCatalogService(
+        soap: SoapTransport(client: client),
+        xsrsControlUrl: xsrsUrl,
+        webApi: WebApiTransport('192.0.2.1', client: client),
+        metadata: _FixtureMetadata(),
+      );
+      await catalog.setResumePosition(
+        '10000000000000000001',
+        const Duration(minutes: 5, milliseconds: 250),
+      );
+      expect(seen.method, 'POST');
+      expect(
+        seen.url.toString(),
+        'http://192.0.2.1:64220/recorded/recordedContentResumePositionSet',
+      );
+      expect(seen.body, 'id=10000000000000000001&position=300250');
+    });
+
+    test('setResumePosition clamps a negative position to zero '
+        '(the unit rejects one with errorcode 803)', () async {
+      late http.Request seen;
+      final client = MockClient((request) async {
+        seen = request;
+        return http.Response('{"errorcode": 0}', 200);
+      });
+      final catalog = SoapTitleCatalogService(
+        soap: SoapTransport(client: client),
+        xsrsControlUrl: xsrsUrl,
+        webApi: WebApiTransport('192.0.2.1', client: client),
+        metadata: _FixtureMetadata(),
+      );
+      await catalog.setResumePosition(
+        '10000000000000000001',
+        const Duration(seconds: -3),
+      );
+      expect(seen.body, 'id=10000000000000000001&position=0');
+    });
   });
 }
 
