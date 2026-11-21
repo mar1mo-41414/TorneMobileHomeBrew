@@ -137,20 +137,30 @@ class SoapTitleCatalogService implements TitleCatalogService {
 
   @override
   Future<Uint8List?> fetchThumbnail(String id) async {
-    // Measured on a real unit (plan 97): thumbnailMapGet
-    // returns a position map with no image in it, and the
-    // frames behind recordedContentThumbnailGet are
-    // encrypted, so this returns null on real units today.
-    // The magic-byte extraction stays as a defensive path.
+    // Measured on a real unit (plan 97 / 99): thumbnailMapGet
+    // returns a position map with no image in it; the frames
+    // live behind recordedContentThumbnailGet as AES-128-CBC
+    // payloads whose key is an app-common constant, and
+    // decode to 360x240 UYVY (plan 99). The first entry is
+    // the list's picture. The magic-byte extraction stays as
+    // a defensive path if a unit ever embeds a plain image.
     // Every failure — transport, status, an unrecognised
     // payload — is simply "no thumbnail"; a missing picture
     // must never break the list.
     try {
-      final raw = await _webApi.getBytes(
+      final mapRaw = await _webApi.getBytes(
         WebApiEndpoints.thumbnailMapGet,
         params: {'id': id},
       );
-      return extractThumbnailImage(raw);
+      final embedded = extractThumbnailImage(mapRaw);
+      if (embedded != null) return embedded;
+      final count = thumbnailEntryCount(mapRaw);
+      if (count == null || count == 0) return null;
+      final raw = await _webApi.getBytes(
+        WebApiEndpoints.recordedContentThumbnailGet,
+        params: {'id': id, 'thumbnailEntryId': '0'},
+      );
+      return extractThumbnailImage(raw) ?? decodeThumbnailPayload(raw);
     } catch (_) {
       return null;
     }

@@ -12,12 +12,13 @@
 /// item 1).
 ///
 /// Plan 86.6: list rows and the detail view show the title's
-/// thumbnail (recorded/thumbnailMapGet, extracted defensively
-/// by magic bytes) when the unit provides one. Before this the
+/// thumbnail when the unit provides one. Before this the
 /// endpoint was defined but never called (plan 85 item 6).
-/// Real-unit measurement (plan 97) later showed the map
-/// carries no image and the actual frames are encrypted, so
-/// on real units the placeholder is what shows today.
+/// Real-unit measurement (plan 97 / 99) showed the map
+/// carries no image — it is a position index — and the
+/// actual frames live behind recordedContentThumbnailGet,
+/// AES-128-CBC encrypted with an app-common key and stored
+/// as 360x240 UYVY; fetchThumbnail decodes them (plan 99).
 ///
 /// Plan 86.5: the list can be searched by title, sorted, and
 /// filtered by channel / genre / unwatched; the genre comes

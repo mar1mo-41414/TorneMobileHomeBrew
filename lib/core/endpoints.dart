@@ -98,6 +98,11 @@ abstract final class WebApiEndpoints {
     requiredParams: ['id'],
     responseKind: ApiResponseKind.binary,
   );
+  static const recordedContentThumbnailGet = WebApiEndpoint(
+    '/recorded/recordedContentThumbnailGet',
+    requiredParams: ['id', 'thumbnailEntryId'],
+    responseKind: ApiResponseKind.binary,
+  );
   static const pmtMapGet = WebApiEndpoint(
     '/recorded/PMTMapGet',
     requiredParams: ['id'],
@@ -180,6 +185,7 @@ abstract final class WebApiEndpoints {
     recordedContentCountGet,
     recordedContentMaxCountGet,
     thumbnailMapGet,
+    recordedContentThumbnailGet,
     pmtMapGet,
     seMapDataGet,
     channelLogoDataGet,

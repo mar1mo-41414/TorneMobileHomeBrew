@@ -1,8 +1,14 @@
 /// Plan 86.6 (#6): defensive extraction of a thumbnail image
 /// from the thumbnailMapGet binary payload by magic bytes.
+/// Plan 99: the map's entry count, and the decode of the
+/// real payload format — AES-128-CBC (app-common key, zero
+/// IV) over a 360x240 UYVY frame, served as a BMP.
 library;
 
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pointycastle/export.dart';
 import 'package:tmhb/core/parsing/thumbnail.dart';
 
 List<int> _jpeg({int pad = 64}) => [
@@ -94,6 +100,118 @@ void main() {
         ...List.filled(32, 0x22),
       ];
       expect(extractThumbnailImage(payload), isNull);
+    });
+  });
+
+  group('thumbnailEntryCount', () {
+    List<int> map(int count, {int? bytes}) {
+      final out = <int>[
+        (count >> 24) & 0xFF,
+        (count >> 16) & 0xFF,
+        (count >> 8) & 0xFF,
+        count & 0xFF,
+      ];
+      for (var i = 0; i < count; i++) {
+        out.addAll([0x00, 0x00, 0x0A, 0x00]);
+      }
+      return bytes == null ? out : out.sublist(0, bytes);
+    }
+
+    test('reads the big-endian count', () {
+      expect(thumbnailEntryCount(map(3)), 3);
+      expect(thumbnailEntryCount(map(0)), 0);
+      expect(thumbnailEntryCount(map(242)), 242);
+    });
+
+    test('rejects truncated or absurd payloads', () {
+      expect(thumbnailEntryCount(map(3, bytes: 8)), isNull);
+      expect(thumbnailEntryCount(const []), isNull);
+      expect(thumbnailEntryCount(const [0xFF, 0xFF, 0xFF, 0xFF]), isNull);
+    });
+  });
+
+  group('decodeThumbnailPayload', () {
+    // The key is duplicated here on purpose: the fixture is
+    // encrypted with the plan 99 app-common key so the test
+    // fails if the production key ever drifts from it.
+    const key = [
+      0x33,
+      0xa4,
+      0x9d,
+      0x7b,
+      0x3d,
+      0x0f,
+      0x35,
+      0x84,
+      0x70,
+      0x27,
+      0x91,
+      0x7d,
+      0x64,
+      0x17,
+      0xdb,
+      0x54,
+    ];
+
+    Uint8List encrypt(Uint8List plain) {
+      final cipher = CBCBlockCipher(AESEngine())
+        ..init(
+          true,
+          ParametersWithIV(
+            KeyParameter(Uint8List.fromList(key)),
+            Uint8List(16),
+          ),
+        );
+      final out = Uint8List(plain.length);
+      for (var off = 0; off < plain.length; off += 16) {
+        cipher.processBlock(plain, off, out, off);
+      }
+      return out;
+    }
+
+    /// One UYVY frame filled with a single (U, Y, V) triple.
+    Uint8List solidFrame(int u, int y, int v) {
+      final frame = Uint8List(thumbnailPayloadSize);
+      for (var i = 0; i < frame.length; i += 4) {
+        frame[i] = u;
+        frame[i + 1] = y;
+        frame[i + 2] = v;
+        frame[i + 3] = y;
+      }
+      return frame;
+    }
+
+    test('rejects payloads that are not exactly one frame', () {
+      expect(decodeThumbnailPayload(const []), isNull);
+      expect(decodeThumbnailPayload(List.filled(172799, 0)), isNull);
+      expect(decodeThumbnailPayload(List.filled(172801, 0)), isNull);
+    });
+
+    test('a neutral frame decodes to a grey BMP', () {
+      final bmp = decodeThumbnailPayload(encrypt(solidFrame(128, 128, 128)))!;
+      expect(bmp.length, 54 + 360 * 240 * 3);
+      expect(bmp[0], 0x42); // 'B'
+      expect(bmp[1], 0x4D); // 'M'
+      final head = ByteData.sublistView(bmp);
+      expect(head.getInt32(18, Endian.little), 360);
+      expect(head.getInt32(22, Endian.little), 240);
+      expect(head.getUint16(28, Endian.little), 24);
+      // Every pixel is (128, 128, 128) in BGR byte order.
+      for (var i = 54; i < bmp.length; i++) {
+        expect(bmp[i], 128);
+      }
+    });
+
+    test('chrominance follows the BT.601 full-range conversion', () {
+      // U=90, Y=76, V=255 -> R=254, G=0 (clamped), B=9.
+      final bmp = decodeThumbnailPayload(encrypt(solidFrame(90, 76, 255)))!;
+      expect(bmp[54], 9); // B
+      expect(bmp[55], 0); // G
+      expect(bmp[56], 254); // R
+      // The second pixel of the pair shares the chroma.
+      expect(bmp[57], 9);
+      expect(bmp[58], 0);
+      expect(bmp[59], 254);
     });
   });
 }
