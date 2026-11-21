@@ -16,6 +16,12 @@
 #    variable does not help — the flutter tool does not forward
 #    it. So: let flutter generate the project (--config-only),
 #    then drive xcodebuild directly with signing disabled.
+#    The xcodebuild MUST go through macos/Runner.xcworkspace:
+#    building the .xcodeproj directly skips the CocoaPods embed
+#    phase, so the media_kit / FFmpeg frameworks end up referenced
+#    by the executable (@rpath/Ass.framework etc.) but never
+#    copied into the .app, and dyld kills the app at launch.
+#    A guard below fails the build if that ever happens.
 #
 # 2. The resulting .app is unsigned; its frameworks are rejected
 #    by dyld, so it is signed below. The signature must NOT carry
@@ -56,6 +62,19 @@ flutter build macos --config-only --release
 xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
   -configuration Release -derivedDataPath build/macos \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+
+# Guard against the silent missing-frameworks trap: if the Pods
+# embed phase did not run, the media frameworks are referenced
+# by the executable but absent from the bundle, and the app dies
+# in dyld at launch (Library not loaded: @rpath/Ass.framework).
+for fw in Ass Mpv Avcodec media_kit_video; do
+  if [ ! -d "/Contents/Frameworks/.framework" ]; then
+    echo "ERROR: .framework missing from " >&2
+    echo "The CocoaPods embed phase did not run - build via the" >&2
+    echo ".xcworkspace (not the .xcodeproj) so Pods are integrated." >&2
+    exit 1
+  fi
+done
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$SIGN_IDENTITY\""; then
   echo "signing with identity: $SIGN_IDENTITY"
