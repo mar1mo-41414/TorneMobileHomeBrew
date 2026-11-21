@@ -68,8 +68,8 @@ xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
 # by the executable but absent from the bundle, and the app dies
 # in dyld at launch (Library not loaded: @rpath/Ass.framework).
 for fw in Ass Mpv Avcodec media_kit_video; do
-  if [ ! -d "/Contents/Frameworks/.framework" ]; then
-    echo "ERROR: .framework missing from " >&2
+  if [ ! -d "$APP/Contents/Frameworks/$fw.framework" ]; then
+    echo "ERROR: $fw.framework missing from $APP" >&2
     echo "The CocoaPods embed phase did not run - build via the" >&2
     echo ".xcworkspace (not the .xcodeproj) so Pods are integrated." >&2
     exit 1
