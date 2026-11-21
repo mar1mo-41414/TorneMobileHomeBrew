@@ -193,7 +193,7 @@ Future<void> deleteRecordedTitle({
 /// The protection toggle flow (plan 98), driven by the title
 /// detail's switch: sends the X_UpdateTitle the unit expects
 /// (the shape verified in plan 86.3), then rewrites the one
-/// title's flag in the loaded list (plan 102). No refetch: the
+/// title's flag in the loaded list (plan 103). No refetch: the
 /// whole list costs more the larger the library grows, and the
 /// unit's title list may keep answering with the pre-update
 /// flag for a while anyway (device-observed after plan 98), so
@@ -809,7 +809,7 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   Widget build(BuildContext context) {
     final t = title;
     // The protection state this view shows is the loaded
-    // list's: a successful toggle rewrites it there (plan 102),
+    // list's: a successful toggle rewrites it there (plan 103),
     // and this view is rebuilt with the updated title.
     final protectValue = t.protectFlag;
     final channels = ref.watch(channelsProvider(reg)).value;

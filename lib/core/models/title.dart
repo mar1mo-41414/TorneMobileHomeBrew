@@ -150,7 +150,7 @@ class RecordedTitle {
   /// A copy of this title with only the protection flag changed.
   ///
   /// Used to reflect a successful protection update in the loaded
-  /// list at once (plan 102): the unit accepted the new flag, so
+  /// list at once (plan 103): the unit accepted the new flag, so
   /// the copy the UI holds can be brought in line without waiting
   /// for a refetch — the unit's own title list can keep answering
   /// with the pre-update flag for a while.

@@ -245,7 +245,7 @@ final schedulesProvider =
 ///
 /// A notifier rather than a plain stream provider so a
 /// successful protection update can rewrite the one title's
-/// flag in the loaded list (plan 102, [TitlesNotifier.applyProtection])
+/// flag in the loaded list (plan 103, [TitlesNotifier.applyProtection])
 /// instead of refetching the whole list: the refetch cost grows
 /// with the library, and the unit's own list can lag the update
 /// anyway.
@@ -261,7 +261,7 @@ class TitlesNotifier extends StreamNotifier<TitleListProgress> {
       .listTitlesProgressively();
 
   /// Rewrites the protection flag of the loaded title [titleId]
-  /// in place, after the unit accepted the update (plan 102).
+  /// in place, after the unit accepted the update (plan 103).
   ///
   /// The list the UI holds becomes the up-to-date one at once:
   /// the row's lock icon and the detail's switch both read this

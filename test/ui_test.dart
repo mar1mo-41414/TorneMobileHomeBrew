@@ -202,7 +202,7 @@ class FakeTitles implements TitleCatalogService {
   final List<(String, bool)> protectionChanges = [];
 
   /// How many times a (progressive) list load was started. A
-  /// protection toggle must not start another one (plan 102).
+  /// protection toggle must not start another one (plan 103).
   int listLoadCount = 0;
 
   /// When true, deleteTitle answers the way the unit answers
@@ -931,7 +931,7 @@ void main() {
 
     expect(fixture.titlesService.protectionChanges, [('202', true)]);
     // The detail reflects the flag rewritten in the loaded list
-    // (plan 102) — no new list load was started for it.
+    // (plan 103) — no new list load was started for it.
     expect(fixture.titlesService.listLoadCount, loadsBefore);
     expect(find.text('保護あり'), findsOneWidget);
     expect(find.text('保護しました'), findsOneWidget);
@@ -962,12 +962,12 @@ void main() {
   testWidgets(
     'the protection switch settles at once even while the '
     'unit list still carries the old flag (plan 98 follow-up, '
-    'plan 102)',
+    'plan 103)',
     (tester) async {
       usePhoneSize(tester);
       // The unit accepted the update, but its title list keeps
       // answering with the pre-update flag for a while. The
-      // toggle no longer refetches at all (plan 102): the flag
+      // toggle no longer refetches at all (plan 103): the flag
       // is rewritten in the loaded list, so nothing the unit
       // answers afterwards can unsettle the switch.
       final fixture = Fixture(titlesProtectionListLags: true);
@@ -996,7 +996,7 @@ void main() {
 
   testWidgets(
     'toggling protection updates the list row lock at once, '
-    'without reloading the list (plan 102)',
+    'without reloading the list (plan 103)',
     (tester) async {
       usePhoneSize(tester);
       final fixture = Fixture();

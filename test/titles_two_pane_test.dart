@@ -30,7 +30,7 @@ const _reg = RegisteredNasne(
 const _title = RecordedTitle(id: '1', title: 'テスト番組', channelName: 'テスト放送');
 
 /// A titles notifier serving one fixed, complete stage — the
-/// override stand-in for the device-backed load (plan 102).
+/// override stand-in for the device-backed load (plan 103).
 class _StaticTitlesNotifier extends TitlesNotifier {
   _StaticTitlesNotifier(super.reg);
 
