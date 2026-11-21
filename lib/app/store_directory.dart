@@ -59,7 +59,13 @@ Future<void> migrateLegacyStoreFiles({
   required Directory to,
 }) async {
   await to.create(recursive: true);
-  for (final name in const [registrationFileName, keyValueFileName]) {
+  for (final name in const [
+    registrationFileName,
+    keyValueFileName,
+    channelCacheFileName,
+    epgCacheFileName,
+    srmFileName,
+  ]) {
     await _moveIfAbsent(File('${from.path}/$name'), File('${to.path}/$name'));
   }
   final legacyLogs = Directory('${from.path}/$debugLogsDirectoryName');

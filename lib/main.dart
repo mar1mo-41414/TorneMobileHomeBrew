@@ -25,6 +25,9 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   final storeDirectory = await resolveStoreDirectory();
+  // Split the legacy shared key-value file into per-purpose
+  // files before anything reads the stores (plan 96).
+  await migrateLegacyKeyValueFiles(storeDirectory);
   final container = fileStoreContainer(storeDirectory);
   // App lifecycle transitions go to the debug log (plan 36), so a
   // field log shows when the process was suspended and resumed
@@ -32,10 +35,7 @@ Future<void> main() async {
   // The binding holds the observer for the app's lifetime.
   LifecycleLogger(container.read(diagLogProvider)).attach();
   runApp(
-    UncontrolledProviderScope(
-      container: container,
-      child: const TmhbApp(),
-    ),
+    UncontrolledProviderScope(container: container, child: const TmhbApp()),
   );
 }
 

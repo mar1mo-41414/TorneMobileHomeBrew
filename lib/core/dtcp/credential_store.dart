@@ -203,14 +203,21 @@ class InMemoryCredentialStore implements CredentialStore {
   Future<bool> get hasCredentials async => _credentials != null;
 }
 
-/// SRM persistence in the app's regular key-value store. The SRM is
-/// DTLA-signed public data (plan 26.4), unlike the credential pair.
+/// SRM persistence in a key-value store. The SRM is DTLA-signed
+/// public data (plan 26.4), unlike the credential pair. Since
+/// plan 96 the store behind this is the SRM's own file: the SRM
+/// is DTCP protocol state (a revocation list) rewritten during
+/// AKE — neither a user setting nor a display cache — so it no
+/// longer shares a file with either.
 class KeyValueSrmStore implements SrmStore {
   KeyValueSrmStore(this._store);
 
   final KeyValueStore _store;
 
-  static const String _key = 'dtcp_srm';
+  /// The key the SRM is stored under; the split migration
+  /// (app/bootstrap.dart, plan 96) moves this key out of the
+  /// legacy shared settings file.
+  static const String storageKey = 'dtcp_srm';
 
   @override
   Future<Srm?> load() async {
@@ -225,13 +232,13 @@ class KeyValueSrmStore implements SrmStore {
 
   @override
   Future<Uint8List?> loadRaw() async {
-    final hex = await _store.read(_key);
+    final hex = await _store.read(storageKey);
     if (hex == null || hex.isEmpty) return null;
     return hexToBytes(hex);
   }
 
   @override
   Future<void> save(Uint8List raw, Srm srm) async {
-    await _store.write(_key, bytesToHex(raw));
+    await _store.write(storageKey, bytesToHex(raw));
   }
 }

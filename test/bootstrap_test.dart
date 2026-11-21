@@ -55,10 +55,14 @@ void main() {
     test('stores are file-backed, not the in-memory defaults', () {
       final container = fileStoreContainer(dir);
       addTearDown(container.dispose);
-      expect(container.read(registrationStoreProvider),
-          isA<JsonFileRegistrationStore>());
       expect(
-          container.read(keyValueStoreProvider), isA<JsonFileKeyValueStore>());
+        container.read(registrationStoreProvider),
+        isA<JsonFileRegistrationStore>(),
+      );
+      expect(
+        container.read(keyValueStoreProvider),
+        isA<JsonFileKeyValueStore>(),
+      );
     });
 
     test('registrations and channel cache survive a restart', () async {
@@ -67,17 +71,19 @@ void main() {
       await first.read(channelCacheProvider).save('192.0.2.1', 2, channels);
       first.dispose();
 
-      // Both JSON files were created inside the given directory.
+      // Both JSON files were created inside the given directory
+      // (the channel cache has its own file since plan 96).
       expect(File('${dir.path}/$registrationFileName').existsSync(), isTrue);
-      expect(File('${dir.path}/$keyValueFileName').existsSync(), isTrue);
+      expect(File('${dir.path}/$channelCacheFileName').existsSync(), isTrue);
 
       final second = fileStoreContainer(dir);
       addTearDown(second.dispose);
       final loaded = await second.read(registrationStoreProvider).loadAll();
       expect(loaded.single.host, '192.0.2.1');
       expect(loaded.single.pin, '334455');
-      final cached =
-          await second.read(channelCacheProvider).load('192.0.2.1', 2);
+      final cached = await second
+          .read(channelCacheProvider)
+          .load('192.0.2.1', 2);
       expect(cached, isNotNull);
       expect(cached!.single.serviceName, 'テスト放送');
     });

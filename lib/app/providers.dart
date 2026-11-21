@@ -70,8 +70,26 @@ final keyValueStoreProvider = Provider<KeyValueStore>(
   (ref) => InMemoryKeyValueStore(),
 );
 
+/// The key-value store behind the channel cache. Caches live in
+/// their own files, away from the settings file: they are
+/// rewritten on every fetch while settings are near-fixed, and
+/// the standing rule is that writers of different volatility
+/// never share a file (plan 96). Defaults to in-memory; the app
+/// entry point overrides it (app/bootstrap.dart).
+final channelCacheStoreProvider = Provider<KeyValueStore>(
+  (ref) => InMemoryKeyValueStore(),
+);
+
 final channelCacheProvider = Provider<ChannelCache>(
-  (ref) => ChannelCache(ref.watch(keyValueStoreProvider)),
+  (ref) => ChannelCache(ref.watch(channelCacheStoreProvider)),
+);
+
+/// The key-value store behind the programme-guide accumulation
+/// cache — its own file again (plan 96). The guide is by far the
+/// largest value in the app and is rewritten on every guide
+/// fetch, so it shares a file with nothing else.
+final epgGuideCacheStoreProvider = Provider<KeyValueStore>(
+  (ref) => InMemoryKeyValueStore(),
 );
 
 /// The DTCP-IP credential vault (Phase 5, plan 26.4). The pair
@@ -81,10 +99,19 @@ final credentialStoreProvider = Provider<CredentialStore>(
   (ref) => SecureCredentialStore(),
 );
 
-/// SRM persistence: signed public data in the regular key-value
-/// store (plan 26.4).
+/// The key-value store behind [srmStoreProvider]. The SRM is
+/// DTCP protocol state (a revocation list) rewritten during AKE,
+/// so it lives in its own file, away from both the settings file
+/// and the caches (plan 96). Defaults to in-memory; the app
+/// entry point overrides it (app/bootstrap.dart).
+final srmKeyValueStoreProvider = Provider<KeyValueStore>(
+  (ref) => InMemoryKeyValueStore(),
+);
+
+/// SRM persistence: signed public data in its own key-value
+/// store (plan 26.4; split out in plan 96).
 final srmStoreProvider = Provider<KeyValueSrmStore>(
-  (ref) => KeyValueSrmStore(ref.watch(keyValueStoreProvider)),
+  (ref) => KeyValueSrmStore(ref.watch(srmKeyValueStoreProvider)),
 );
 
 /// Non-sensitive facts about the imported pair for the settings UI
@@ -300,7 +327,8 @@ DeviceServices assembleDeviceServices(
   RegisteredNasne reg, {
   NasneDevice? describedDevice,
   http.Client? client,
-  KeyValueStore? keyValueStore,
+  KeyValueStore? epgCacheStore,
+  KeyValueStore? srmKeyValueStore,
   CredentialStore? credentialStore,
   SrmStore? srmStore,
   DiagLog? diagLog,
@@ -328,8 +356,8 @@ DeviceServices assembleDeviceServices(
       authed: authed,
       diag: diagLog ?? const DiagLog.none(),
       // Persistent guide accumulation (plan 23), backed by the
-      // app's key-value store when one is wired.
-      guideCache: keyValueStore == null ? null : EpgGuideCache(keyValueStore),
+      // guide cache's own key-value store when one is wired.
+      guideCache: epgCacheStore == null ? null : EpgGuideCache(epgCacheStore),
       cacheHost: reg.host,
     ),
   );
@@ -349,7 +377,7 @@ DeviceServices assembleDeviceServices(
       credentialStore: credentialStore ?? SecureCredentialStore(),
       srmStore:
           srmStore ??
-          KeyValueSrmStore(keyValueStore ?? InMemoryKeyValueStore()),
+          KeyValueSrmStore(srmKeyValueStore ?? InMemoryKeyValueStore()),
       diag: diagLog ?? const DiagLog.none(),
       akeConnectionFactory: (host, port) => nativeAkeConnectionFactory(
         host,
@@ -364,7 +392,8 @@ final deviceServicesProvider = Provider.family<DeviceServices, RegisteredNasne>(
   (ref, reg) => assembleDeviceServices(
     reg,
     client: ref.watch(httpClientProvider),
-    keyValueStore: ref.watch(keyValueStoreProvider),
+    epgCacheStore: ref.watch(epgGuideCacheStoreProvider),
+    srmKeyValueStore: ref.watch(srmKeyValueStoreProvider),
     credentialStore: ref.watch(credentialStoreProvider),
     srmStore: ref.watch(srmStoreProvider),
     diagLog: ref.watch(diagLogProvider),
