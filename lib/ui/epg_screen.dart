@@ -468,6 +468,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
                 guide,
                 ref.watch(showSubchannelsProvider),
               ),
+              hiddenGenres: ref.watch(hiddenEpgGenresProvider),
               logos: logos,
               selectedDay: _selectedDay,
               onSelectDay: (day) => setState(() {
@@ -491,6 +492,7 @@ class _GuideView extends StatelessWidget {
   const _GuideView({
     required this.reg,
     required this.guide,
+    required this.hiddenGenres,
     required this.logos,
     required this.selectedDay,
     required this.onSelectDay,
@@ -503,6 +505,10 @@ class _GuideView extends StatelessWidget {
 
   final RegisteredNasne reg;
   final EpgGuide guide;
+
+  /// Genres the viewer marked as not watched (plan 95):
+  /// their tiles paint blank.
+  final Set<int> hiddenGenres;
   final Map<int, List<int>> logos;
   final DateTime? selectedDay;
   final ValueChanged<DateTime> onSelectDay;
@@ -588,6 +594,7 @@ class _GuideView extends StatelessWidget {
                           child: _DayGrid(
                             reg: reg,
                             services: guide.services,
+                            hiddenGenres: hiddenGenres,
                             dayStart: dayStart,
                             dayEnd: dayEnd,
                             controller: bodyController,
@@ -728,6 +735,7 @@ class _DayGrid extends StatelessWidget {
   const _DayGrid({
     required this.reg,
     required this.services,
+    required this.hiddenGenres,
     required this.dayStart,
     required this.dayEnd,
     required this.controller,
@@ -735,6 +743,7 @@ class _DayGrid extends StatelessWidget {
 
   final RegisteredNasne reg;
   final List<EpgServiceGuide> services;
+  final Set<int> hiddenGenres;
   final DateTime dayStart;
   final DateTime dayEnd;
   final ScrollController controller;
@@ -785,6 +794,10 @@ class _DayGrid extends StatelessWidget {
                             channelName: services[i].channel.serviceName,
                             reg: reg,
                             dayStart: dayStart,
+                            suppressed: epgGenreSuppressed(
+                              event.genreLevel1,
+                              hiddenGenres,
+                            ),
                           ),
                       ],
                     ),
@@ -813,6 +826,7 @@ class _EventTile extends StatelessWidget {
     required this.channelName,
     required this.reg,
     required this.dayStart,
+    required this.suppressed,
   });
 
   final EpgEvent event;
@@ -820,6 +834,12 @@ class _EventTile extends StatelessWidget {
   final String channelName;
   final RegisteredNasne reg;
   final DateTime dayStart;
+
+  /// The event's genre is one the viewer marked as not
+  /// watched (plan 95): the tile paints as a blank of plain
+  /// surface colour — no tint, no text — so it does not draw
+  /// the eye. The slot and the tap (the detail dialog) stay.
+  final bool suppressed;
 
   @override
   Widget build(BuildContext context) {
@@ -847,11 +867,15 @@ class _EventTile extends StatelessWidget {
         // Tiles are tinted by the event's genre (plan 86,
         // plan 85 item 10); events without a known genre
         // keep the neutral colour they have always had.
-        color: epgGenreTileColor(
-          genreLevel1: event.genreLevel1,
-          surface: theme.colorScheme.surface,
-          fallback: theme.colorScheme.surfaceContainerHighest,
-        ),
+        // A suppressed genre (plan 95) paints the plain
+        // surface instead, with no text below.
+        color: suppressed
+            ? theme.colorScheme.surface
+            : epgGenreTileColor(
+                genreLevel1: event.genreLevel1,
+                surface: theme.colorScheme.surface,
+                fallback: theme.colorScheme.surfaceContainerHighest,
+              ),
         borderRadius: BorderRadius.circular(3),
         // Tiles too short for their text must not paint outside
         // their box: spilled glyphs used to bleed into the tile
@@ -866,7 +890,9 @@ class _EventTile extends StatelessWidget {
             channelName: channelName,
             event: event,
           ),
-          child: maxTitleLines >= 1
+          child: suppressed
+              ? const SizedBox.expand()
+              : maxTitleLines >= 1
               ? Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 4,

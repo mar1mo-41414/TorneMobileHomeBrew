@@ -1196,4 +1196,80 @@ void main() {
       expect(pos.pixels, lessThanOrEqualTo(pos.maxScrollExtent + 0.5));
     });
   });
+
+  group('hidden genres in the guide grid (plan 95)', () {
+    Future<void> pumpGuide(
+      WidgetTester tester, {
+      InMemoryKeyValueStore? keyValues,
+    }) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      final now = DateTime.now().toUtc();
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          EpgServiceGuide(
+            channel: _channel,
+            events: [
+              EpgEvent(
+                eventId: 1,
+                start: now,
+                duration: const Duration(minutes: 30),
+                title: 'ニュース番組',
+                genreLevel1: 0,
+              ),
+              EpgEvent(
+                eventId: 2,
+                start: now.add(const Duration(minutes: 30)),
+                duration: const Duration(minutes: 30),
+                title: 'ドラマ番組',
+                genreLevel1: 3,
+              ),
+            ],
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider.overrideWithValue(
+                InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+            keyValueStoreProvider
+                .overrideWithValue(keyValues ?? InMemoryKeyValueStore()),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+    }
+
+    testWidgets('a hidden genre paints blank, the others stay', (
+      tester,
+    ) async {
+      final keyValues = InMemoryKeyValueStore();
+      await keyValues.write('epg_hidden_genres', '3');
+      await pumpGuide(tester, keyValues: keyValues);
+      expect(find.text('ニュース番組'), findsOneWidget);
+      expect(find.text('ドラマ番組'), findsNothing);
+    });
+
+    testWidgets('without the setting both genres show', (tester) async {
+      await pumpGuide(tester);
+      expect(find.text('ニュース番組'), findsOneWidget);
+      expect(find.text('ドラマ番組'), findsOneWidget);
+    });
+  });
 }

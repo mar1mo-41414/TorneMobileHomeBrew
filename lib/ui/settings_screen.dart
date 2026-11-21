@@ -16,6 +16,7 @@ import '../app/state.dart';
 import '../app/store_directory.dart';
 import '../core/core.dart';
 import 'dtcp_credential_screen.dart';
+import 'epg_hidden_genres_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
 import 'widgets.dart';
@@ -191,6 +192,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             value: ref.watch(showSubchannelsProvider),
             onChanged: (value) =>
                 ref.read(showSubchannelsProvider.notifier).set(value),
+          ),
+          ListTile(
+            title: const Text('見ないジャンル'),
+            subtitle: const Text('選んだジャンルの番組は番組表で空白表示になります'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const EpgHiddenGenresScreen(),
+              ),
+            ),
           ),
           const Divider(),
           _sectionTitle(context, '録画再生 (DTCP-IP)'),

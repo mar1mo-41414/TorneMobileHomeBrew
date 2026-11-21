@@ -122,6 +122,54 @@ final showSubchannelsProvider = NotifierProvider<ShowSubchannelsNotifier, bool>(
   ShowSubchannelsNotifier.new,
 );
 
+/// Programme-guide genres the viewer does not watch
+/// (Discord request, 2026-11-21): events of these genres
+/// paint blank in the guide grid, so the guide only draws
+/// the eye to programmes of genres the viewer cares about.
+/// Persisted in the key-value store as the comma-separated
+/// ARIB level-1 values.
+class HiddenEpgGenresNotifier extends Notifier<Set<int>> {
+  static const _key = 'epg_hidden_genres';
+
+  @override
+  Set<int> build() {
+    final store = ref.watch(keyValueStoreProvider);
+    Future.microtask(() async {
+      final restored = decode(await store.read(_key));
+      if (restored.isNotEmpty && state.isEmpty) state = restored;
+    });
+    return const {};
+  }
+
+  /// The stored form: comma-separated level-1 values.
+  /// Anything unparsable is dropped, never fatal.
+  static Set<int> decode(String? raw) {
+    final values = <int>{};
+    for (final part in (raw ?? '').split(',')) {
+      final value = int.tryParse(part.trim());
+      if (value != null) values.add(value);
+    }
+    return values;
+  }
+
+  Future<void> setHidden(int genreLevel1, bool hidden) async {
+    final next = {...state};
+    if (hidden) {
+      next.add(genreLevel1);
+    } else {
+      next.remove(genreLevel1);
+    }
+    state = next;
+    final sorted = next.toList()..sort();
+    await ref.read(keyValueStoreProvider).write(_key, sorted.join(','));
+  }
+}
+
+final hiddenEpgGenresProvider =
+    NotifierProvider<HiddenEpgGenresNotifier, Set<int>>(
+      HiddenEpgGenresNotifier.new,
+    );
+
 /// The app store directory (file stores and the debug log
 /// destination, plan 28; location rule in plan 47).
 /// The bootstrap overrides this with the real directory; null in

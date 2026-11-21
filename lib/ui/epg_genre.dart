@@ -40,6 +40,21 @@ String? epgGenreLabel(int? genreLevel1) => switch (genreLevel1) {
   _ => null,
 };
 
+/// Every level-1 value that has a label, in ARIB order: the
+/// full set a viewer can pick from (the settings screen's
+/// hidden-genre list, plan 95).
+final List<int> epgGenreLevel1Values = [
+  for (var value = 0; value <= 15; value++)
+    if (epgGenreLabel(value) != null) value,
+];
+
+/// Whether an event of [genreLevel1] is suppressed in the
+/// guide because the viewer marked the genre as one they do
+/// not watch (plan 95). Events without a genre are never
+/// suppressed: there is nothing to judge them by.
+bool epgGenreSuppressed(int? genreLevel1, Set<int> hiddenGenres) =>
+    genreLevel1 != null && hiddenGenres.contains(genreLevel1);
+
 /// The base colour of an ARIB genre level-1 value, or null
 /// when the genre has no colour (see [epgGenreLabel]). The
 /// hues are spread around the wheel so neighbouring tiles
