@@ -79,6 +79,15 @@ abstract interface class ScheduleService {
 /// (plan 12.1 / 12.5). Callers only see the merged model.
 abstract interface class TitleCatalogService {
   Future<List<RecordedTitle>> listTitles({bool withMetadata = true});
+
+  /// Progressive variant of [listTitles] (plan 100): emits the
+  /// titles accumulated so far as they arrive — a small first
+  /// chunk after one short round trip, then one emission per
+  /// fetched page — and a final emission, marked complete, once
+  /// the DIDL complement is merged. Only the final emission is
+  /// the whole list; earlier emissions carry the XSRS fields
+  /// alone (no channel name, genre or copy count yet).
+  Stream<TitleListProgress> listTitlesProgressively({bool withMetadata = true});
   Future<int> countTitles();
   Future<int> maxTitles();
 

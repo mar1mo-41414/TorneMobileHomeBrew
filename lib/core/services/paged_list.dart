@@ -25,17 +25,25 @@ const int maxListPages = 100;
 /// reports NumberReturned 0, or after [maxListPages] pages. When
 /// the counts are absent from the response, the first page is
 /// taken as the whole list (the behaviour before paging).
+///
+/// [onPage], when given, runs after each page has been consumed
+/// (plan 100): a caller building a progressive view of the list
+/// uses it to publish the accumulation so far without waiting
+/// for the remaining pages.
 Future<void> fetchAllListPages({
   required Future<SoapResponse> Function(int startingIndex) requestPage,
   required int Function(SoapResponse response) consumePage,
+  void Function()? onPage,
 }) async {
   var accumulated = 0;
   var startingIndex = 0;
   for (var page = 0; page < maxListPages; page++) {
     final response = await requestPage(startingIndex);
     accumulated += consumePage(response);
-    final numberReturned =
-        int.tryParse(response.values['NumberReturned'] ?? '');
+    onPage?.call();
+    final numberReturned = int.tryParse(
+      response.values['NumberReturned'] ?? '',
+    );
     final totalMatches = int.tryParse(response.values['TotalMatches'] ?? '');
     if (numberReturned == null || numberReturned <= 0) break;
     if (totalMatches == null || accumulated >= totalMatches) break;

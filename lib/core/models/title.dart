@@ -155,6 +155,22 @@ class RecordedTitle {
   TitleRes? get mobileRes => res.mobileRes;
 }
 
+/// One stage of a progressive title-list load (plan 100).
+///
+/// [titles] is everything fetched so far, in fetch order. The
+/// DIDL complement (channel name, genre, copy count, resources)
+/// is merged only in the final stage, so earlier stages carry
+/// the XSRS fields alone. [complete] is false until that final
+/// stage: search, filtering and sorting are whole-set
+/// operations, so a view must not present an incomplete stage's
+/// filtered result as the final answer.
+class TitleListProgress {
+  const TitleListProgress(this.titles, {required this.complete});
+
+  final List<RecordedTitle> titles;
+  final bool complete;
+}
+
 /// Playback resource selection over a DIDL res list (plan 33),
 /// shared by recorded titles and live channels (plan 39): both
 /// carry the same dr / x3 / mobile resource family.
