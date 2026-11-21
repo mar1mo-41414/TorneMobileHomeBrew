@@ -192,15 +192,16 @@ Future<void> deleteRecordedTitle({
 
 /// The protection toggle flow (plan 98), driven by the title
 /// detail's switch: sends the X_UpdateTitle the unit expects
-/// (the shape verified in plan 86.3), then refreshes the list.
-/// Returns whether the unit accepted the update; the caller
-/// reflects a success in the detail's own state at once,
-/// because the refreshed list can lag the update — the unit's
-/// title list may keep answering with the pre-update flag for
-/// a while (device-observed after plan 98), which left the
-/// switch showing the old state until the detail was
-/// re-entered. A failure keeps the listed state and surfaces
-/// the error.
+/// (the shape verified in plan 86.3), then rewrites the one
+/// title's flag in the loaded list (plan 102). No refetch: the
+/// whole list costs more the larger the library grows, and the
+/// unit's title list may keep answering with the pre-update
+/// flag for a while anyway (device-observed after plan 98), so
+/// a refetch could not be trusted to settle the switch either.
+/// The patched list state is what the row's lock icon and the
+/// detail's switch both read, so both settle at once. A failure
+/// changes nothing and surfaces the error. Returns whether the
+/// unit accepted the update.
 Future<bool> setRecordedTitleProtection({
   required BuildContext context,
   required WidgetRef ref,
@@ -222,7 +223,7 @@ Future<bool> setRecordedTitleProtection({
     if (context.mounted) showSnack(context, '保護を変更できませんでした');
     return false;
   }
-  ref.invalidate(titlesProvider(reg));
+  ref.read(titlesProvider(reg).notifier).applyProtection(title.id, protect);
   if (!context.mounted) return true;
   showSnack(context, protect ? '保護しました' : '保護を解除しました');
   return true;
@@ -786,41 +787,19 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   /// have no order between them worth having.
   bool _protectBusy = false;
 
-  /// The protection state as last set from this view (plan 98
-  /// follow-up). The switch otherwise reads the title resolved
-  /// from the list, whose refresh can lag the unit's own
-  /// update, so a successful toggle is reflected here at once
-  /// and the switch settles immediately. The override is
-  /// dropped when the listed title catches up (its flag equals
-  /// the override) or the view moves to another title, so the
-  /// list stays the source of truth.
-  bool? _protectOverride;
-
   RegisteredNasne get reg => widget.reg;
   RecordedTitle get title => widget.title;
-
-  @override
-  void didUpdateWidget(TitleDetailView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.title.id != oldWidget.title.id ||
-        widget.title.protectFlag == _protectOverride) {
-      _protectOverride = null;
-    }
-  }
 
   Future<void> _toggleProtection(bool protect) async {
     setState(() => _protectBusy = true);
     try {
-      final updated = await setRecordedTitleProtection(
+      await setRecordedTitleProtection(
         context: context,
         ref: ref,
         reg: reg,
         title: title,
         protect: protect,
       );
-      if (updated && mounted) {
-        setState(() => _protectOverride = protect);
-      }
     } finally {
       if (mounted) setState(() => _protectBusy = false);
     }
@@ -829,10 +808,10 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   @override
   Widget build(BuildContext context) {
     final t = title;
-    // The protection state this view shows: the value set
-    // from here, while the listed title still carries the
-    // pre-update flag (see _protectOverride).
-    final protectValue = _protectOverride ?? t.protectFlag;
+    // The protection state this view shows is the loaded
+    // list's: a successful toggle rewrites it there (plan 102),
+    // and this view is rebuilt with the updated title.
+    final protectValue = t.protectFlag;
     final channels = ref.watch(channelsProvider(reg)).value;
     final credentialSummary = ref.watch(credentialSummaryProvider);
     final credentialsMissing =

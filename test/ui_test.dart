@@ -201,6 +201,10 @@ class FakeTitles implements TitleCatalogService {
   final List<String> deletedIds = [];
   final List<(String, bool)> protectionChanges = [];
 
+  /// How many times a (progressive) list load was started. A
+  /// protection toggle must not start another one (plan 102).
+  int listLoadCount = 0;
+
   /// When true, deleteTitle answers the way the unit answers
   /// for a title protected after the list was fetched (UPnP
   /// error 877, plan 86.3).
@@ -263,6 +267,7 @@ class FakeTitles implements TitleCatalogService {
   Stream<TitleListProgress> listTitlesProgressively({
     bool withMetadata = true,
   }) {
+    listLoadCount++;
     if (progressive) return progressController.stream;
     return Stream.value(TitleListProgress(List.of(items), complete: true));
   }
@@ -308,38 +313,6 @@ class FakeTitles implements TitleCatalogService {
   Future<Uint8List?> fetchThumbnail(String id) async {
     final bytes = thumbnails[id];
     return bytes == null ? null : Uint8List.fromList(bytes);
-  }
-}
-
-/// A copy of this title with only the protection flag changed
-/// (the fake's answer to a protection update).
-extension RecordedTitleProtectCopy on RecordedTitle {
-  RecordedTitle withProtectFlag(bool protect) {
-    return RecordedTitle(
-      id: id,
-      title: title,
-      scheduledStart: scheduledStart,
-      scheduledDurationSeconds: scheduledDurationSeconds,
-      channel: channel,
-      desiredQualityMode: desiredQualityMode,
-      genreId: genreId,
-      genreType: genreType,
-      reservationCreatorId: reservationCreatorId,
-      protectFlag: protect,
-      newFlag: newFlag,
-      recordingFlag: recordingFlag,
-      recordDestinationId: recordDestinationId,
-      recordSizeRaw: recordSizeRaw,
-      lastPlaybackTime: lastPlaybackTime,
-      resumePointSeconds: resumePointSeconds,
-      sourceItemXml: sourceItemXml,
-      description: description,
-      longDescription: longDescription,
-      channelName: channelName,
-      genre: genre,
-      copyCountRemaining: copyCountRemaining,
-      res: res,
-    );
   }
 }
 
@@ -952,11 +925,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('なし'), findsOneWidget);
+    final loadsBefore = fixture.titlesService.listLoadCount;
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
 
     expect(fixture.titlesService.protectionChanges, [('202', true)]);
-    // The detail resynced from the refreshed list.
+    // The detail reflects the flag rewritten in the loaded list
+    // (plan 102) — no new list load was started for it.
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
     expect(find.text('保護あり'), findsOneWidget);
     expect(find.text('保護しました'), findsOneWidget);
   });
@@ -984,13 +960,16 @@ void main() {
   });
 
   testWidgets(
-    'the protection switch settles at once even while the list '
-    'still carries the old flag (plan 98 follow-up)',
+    'the protection switch settles at once even while the '
+    'unit list still carries the old flag (plan 98 follow-up, '
+    'plan 102)',
     (tester) async {
       usePhoneSize(tester);
       // The unit accepted the update, but its title list keeps
-      // answering with the pre-update flag for a while — the
-      // refetch the toggle triggers cannot settle the switch.
+      // answering with the pre-update flag for a while. The
+      // toggle no longer refetches at all (plan 102): the flag
+      // is rewritten in the loaded list, so nothing the unit
+      // answers afterwards can unsettle the switch.
       final fixture = Fixture(titlesProtectionListLags: true);
       await tester.pumpWidget(fixture.app());
       await tester.pumpAndSettle();
@@ -1001,15 +980,61 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('なし'), findsOneWidget);
+      final loadsBefore = fixture.titlesService.listLoadCount;
       await tester.tap(find.byType(Switch));
       await tester.pumpAndSettle();
 
       expect(fixture.titlesService.protectionChanges, [('202', true)]);
+      expect(fixture.titlesService.listLoadCount, loadsBefore);
       // The switch and its label reflect the successful update
       // immediately, without waiting for the list to catch up.
       expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
       expect(find.text('保護あり'), findsOneWidget);
       expect(find.text('保護しました'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'toggling protection updates the list row lock at once, '
+    'without reloading the list (plan 102)',
+    (tester) async {
+      usePhoneSize(tester);
+      final fixture = Fixture();
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('録画済み'));
+      await tester.pumpAndSettle();
+      // Only title A is protected: one lock in the list.
+      expect(find.byIcon(Icons.lock), findsOneWidget);
+      final loadsBefore = fixture.titlesService.listLoadCount;
+
+      await tester.tap(find.text('録画タイトルB'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(fixture.titlesService.protectionChanges, [('202', true)]);
+
+      // Back on the list, B's row carries the lock too — and
+      // the list was never reloaded to learn it.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.lock), findsNWidgets(2));
+      expect(fixture.titlesService.listLoadCount, loadsBefore);
+
+      // Unprotecting removes the row's lock the same way.
+      await tester.tap(find.text('録画タイトルB'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(fixture.titlesService.protectionChanges, [
+        ('202', true),
+        ('202', false),
+      ]);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.lock), findsOneWidget);
+      expect(fixture.titlesService.listLoadCount, loadsBefore);
     },
   );
 
@@ -1028,10 +1053,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('なし'), findsOneWidget);
+      final loadsBefore = fixture.titlesService.listLoadCount;
       await tester.tap(find.byType(Switch));
       await tester.pumpAndSettle();
 
       expect(fixture.titlesService.protectionChanges, isEmpty);
+      expect(fixture.titlesService.listLoadCount, loadsBefore);
       expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
       expect(find.text('なし'), findsOneWidget);
       expect(find.text('操作に失敗しました。'), findsOneWidget);

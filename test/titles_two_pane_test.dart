@@ -29,6 +29,16 @@ const _reg = RegisteredNasne(
 
 const _title = RecordedTitle(id: '1', title: 'テスト番組', channelName: 'テスト放送');
 
+/// A titles notifier serving one fixed, complete stage — the
+/// override stand-in for the device-backed load (plan 102).
+class _StaticTitlesNotifier extends TitlesNotifier {
+  _StaticTitlesNotifier(super.reg);
+
+  @override
+  Stream<TitleListProgress> build() =>
+      Stream.value(const TitleListProgress([_title], complete: true));
+}
+
 /// Pumps the titles screen the way the wide app shell hosts it:
 /// beside a navigation rail, so the screen's own width is the
 /// window width minus the rail — the gap the bug lived in. With
@@ -48,10 +58,7 @@ Future<void> _pumpTitles(
         registrationStoreProvider.overrideWithValue(
           InMemoryRegistrationStore(const [_reg]),
         ),
-        titlesProvider.overrideWith(
-          (ref, reg) =>
-              Stream.value(const TitleListProgress([_title], complete: true)),
-        ),
+        titlesProvider.overrideWith2((reg) => _StaticTitlesNotifier(reg)),
         titleCountsProvider.overrideWith(
           (ref, reg) async => const TitleCounts(1, 3000),
         ),
