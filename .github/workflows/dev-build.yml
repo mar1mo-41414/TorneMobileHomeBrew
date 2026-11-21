@@ -158,6 +158,7 @@ jobs:
             echo "- 元 commit: ${SHORT_SHA}"
             echo "- Android: APK (署名は、配布用キーストアが登録されていれば配布用鍵、なければデバッグ鍵)"
             echo "- iOS: 署名なし IPA (LiveContainer 等での利用を想定)"
+            echo "- デスクトップ: Linux / Windows / macOS は CI では作らず、担当が tool/dev_desktop_builds.md の手順でビルドして差し替える (macOS は署名の都合で Mac 上のビルド + 本人署名が正規経路)"
             echo ""
             echo "このリリース (タグ dev) はビルドのたびに最新の成果物へ差し替わります。"
           } > notes.md
@@ -179,6 +180,14 @@ jobs:
                     keep=1
                   fi
                 done
+                # デスクトップ版の dev 資産は CI では作らず、担当が
+                # tool/dev_desktop_builds.md の手順で差し替える。
+                # ここの資産整理で消さないよう保持リストに入れる。
+                case "${name}" in
+                  TorneMobileHomeBrew-dev-linux.tar.gz|TorneMobileHomeBrew-dev-windows.zip|TorneMobileHomeBrew-dev-macos.zip)
+                    keep=1
+                    ;;
+                esac
                 if [ "${keep}" -eq 0 ]; then
                   echo "今回の成果物に含まれない資産を削除します: ${name}"
                   gh release delete-asset dev "${name}" --yes
