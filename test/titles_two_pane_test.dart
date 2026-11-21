@@ -48,7 +48,10 @@ Future<void> _pumpTitles(
         registrationStoreProvider.overrideWithValue(
           InMemoryRegistrationStore(const [_reg]),
         ),
-        titlesProvider.overrideWith((ref, reg) async => [_title]),
+        titlesProvider.overrideWith(
+          (ref, reg) =>
+              Stream.value(const TitleListProgress([_title], complete: true)),
+        ),
         titleCountsProvider.overrideWith(
           (ref, reg) async => const TitleCounts(1, 3000),
         ),

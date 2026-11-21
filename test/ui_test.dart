@@ -192,6 +192,7 @@ class FakeTitles implements TitleCatalogService {
     this.deleteRefusesAsProtected = false,
     this.protectionListLags = false,
     this.protectionUpdateFails = false,
+    this.progressive = false,
   }) : items = List.of(items ?? defaultItems),
        thumbnails = thumbnails ?? const {};
 
@@ -248,6 +249,23 @@ class FakeTitles implements TitleCatalogService {
   @override
   Future<List<RecordedTitle>> listTitles({bool withMetadata = true}) async =>
       items;
+
+  /// When true, the progressive load is driven by the test
+  /// through [progressController] instead of completing at
+  /// once (plan 100).
+  final bool progressive;
+
+  /// Stages the test feeds to a progressive load.
+  final StreamController<TitleListProgress> progressController =
+      StreamController<TitleListProgress>();
+
+  @override
+  Stream<TitleListProgress> listTitlesProgressively({
+    bool withMetadata = true,
+  }) {
+    if (progressive) return progressController.stream;
+    return Stream.value(TitleListProgress(List.of(items), complete: true));
+  }
 
   @override
   Future<int> countTitles() async => items.length;
@@ -491,6 +509,7 @@ class Fixture {
     this.titlesDeleteRefusesAsProtected = false,
     this.titlesProtectionListLags = false,
     this.titlesProtectionUpdateFails = false,
+    this.titlesProgressive = false,
   }) : schedules = schedules ?? FakeSchedules(),
        store = InMemoryRegistrationStore(registrations ?? [testReg]),
        titlesService = FakeTitles(
@@ -499,6 +518,7 @@ class Fixture {
          deleteRefusesAsProtected: titlesDeleteRefusesAsProtected,
          protectionListLags: titlesProtectionListLags,
          protectionUpdateFails: titlesProtectionUpdateFails,
+         progressive: titlesProgressive,
        );
 
   final FakeSchedules schedules;
@@ -509,6 +529,7 @@ class Fixture {
   final bool titlesDeleteRefusesAsProtected;
   final bool titlesProtectionListLags;
   final bool titlesProtectionUpdateFails;
+  final bool titlesProgressive;
   final FakeTitles titlesService;
 
   Widget app() {
@@ -790,6 +811,82 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('ニュース番組'), findsNothing);
     expect(find.text('アニメ番組'), findsOneWidget);
+  });
+
+  testWidgets('title list shows the first chunk while the rest '
+      'is still loading (plan 100)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(titlesProgressive: true);
+    // No pumpAndSettle anywhere in this test: the shell keeps
+    // every tab built, so the titles spinner is animating from
+    // the start and the test drives frames by hand.
+    await tester.pumpWidget(fixture.app());
+    await pumpFrames(tester);
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pump();
+
+    // Nothing has arrived yet: no rows.
+    expect(find.text('録画タイトルA'), findsNothing);
+    expect(find.text('録画タイトルB'), findsNothing);
+
+    // The first chunk arrives: its row shows at once, and the
+    // header says the load is still going.
+    fixture.titlesService.progressController.add(
+      TitleListProgress([FakeTitles.defaultItems.first], complete: false),
+    );
+    await tester.pump();
+    expect(find.text('録画タイトルA'), findsOneWidget);
+    expect(find.text('録画タイトルB'), findsNothing);
+    expect(find.textContaining('読み込み中'), findsWidgets);
+
+    // The complete stage lands: every row, and the loading
+    // note is gone.
+    fixture.titlesService.progressController.add(
+      TitleListProgress(FakeTitles.defaultItems, complete: true),
+    );
+    await tester.pump();
+    expect(find.text('録画タイトルA'), findsOneWidget);
+    expect(find.text('録画タイトルB'), findsOneWidget);
+    expect(find.textContaining('読み込み中'), findsNothing);
+  });
+
+  testWidgets('a search with no hit yet shows as still loading, '
+      'not as no match (plan 100)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(titlesProgressive: true);
+    await tester.pumpWidget(fixture.app());
+    await pumpFrames(tester);
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pump();
+    fixture.titlesService.progressController.add(
+      TitleListProgress([FakeTitles.defaultItems.first], complete: false),
+    );
+    await tester.pump();
+    expect(find.text('録画タイトルA'), findsOneWidget);
+
+    // Search for the title that has not arrived yet: while
+    // the load is incomplete this must not settle as "no
+    // match". (The row is found through its ListTile — the
+    // search field itself also carries the query text.)
+    await tester.enterText(find.byType(TextField), '録画タイトルB');
+    await tester.pump();
+    expect(find.text('条件に合うタイトルがありません'), findsNothing);
+    expect(find.textContaining('読み込み中'), findsWidgets);
+
+    // Once the complete stage arrives, the hit shows and the
+    // count is stated as final.
+    fixture.titlesService.progressController.add(
+      TitleListProgress(FakeTitles.defaultItems, complete: true),
+    );
+    await tester.pump();
+    expect(
+      find.widgetWithText(ListTile, '録画タイトルB'),
+      findsOneWidget,
+    );
+    expect(find.text('条件に合うのは 1 件'), findsOneWidget);
+    expect(find.textContaining('読み込み中'), findsNothing);
   });
 
   testWidgets('a protected title cannot be deleted (plan 86.3)', (

@@ -235,9 +235,19 @@ final schedulesProvider =
       return [...list]..sort((a, b) => a.start.compareTo(b.start));
     });
 
+/// Recorded titles, loaded progressively (plan 100): the stream
+/// emits the titles fetched so far — a first chunk, then page by
+/// page — and a final stage marked complete once every page is
+/// in and the DIDL complement is merged. Only the complete
+/// stage is the whole list; consumers that search, filter or
+/// sort (whole-set operations) must treat an incomplete stage
+/// as provisional.
 final titlesProvider =
-    FutureProvider.family<List<RecordedTitle>, RegisteredNasne>(
-      (ref, reg) => ref.watch(deviceServicesProvider(reg)).titles.listTitles(),
+    StreamProvider.family<TitleListProgress, RegisteredNasne>(
+      (ref, reg) => ref
+          .watch(deviceServicesProvider(reg))
+          .titles
+          .listTitlesProgressively(),
     );
 
 /// A recorded title's thumbnail image (plan 86.6), fetched

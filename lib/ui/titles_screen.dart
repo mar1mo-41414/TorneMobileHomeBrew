@@ -37,6 +37,16 @@
 /// 877 — the title was protected after the list in hand was
 /// fetched — is explained as protection and resynced, not
 /// reported as a generic failure.
+///
+/// Plan 100: the list loads progressively. The first chunk
+/// (20 titles) is shown as soon as it arrives and the rest
+/// follows page by page, instead of the screen waiting for
+/// every page plus the DIDL Browse before showing anything.
+/// While a stage is incomplete the screen says so beside the
+/// filters, and an empty filtered result shows as still
+/// loading, never as "no match" — search, filtering and
+/// sorting are whole-set operations, and only the complete
+/// stage settles them.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -329,9 +339,22 @@ class _TitleListState extends ConsumerState<_TitleList> {
   @override
   Widget build(BuildContext context) {
     final reg = widget.reg;
-    final titles = ref.watch(titlesProvider(reg));
+    final progress = ref.watch(titlesProvider(reg));
     final counts = ref.watch(titleCountsProvider(reg)).value;
-    final allTitles = titles.value ?? const <RecordedTitle>[];
+    // The latest stage of the progressive load (plan 100). A
+    // stage is provisional until it is marked complete; during
+    // a refresh the previous stage stays on screen, with the
+    // loading state saying a newer one is on its way.
+    final snapshot = progress.value;
+    final allTitles = snapshot?.titles ?? const <RecordedTitle>[];
+    final stillLoading =
+        snapshot == null || !snapshot.complete || progress.isLoading;
+    // A load that failed before completing has nothing sound
+    // to show — the error view takes over, as it did when the
+    // whole list was one future. A failed *refresh* keeps the
+    // complete stage it already had.
+    final loadFailed =
+        progress.hasError && (snapshot == null || !snapshot.complete);
     final channelChoices = titleChannelChoices(allTitles);
     final genreChoices = titleGenreChoices(allTitles);
     // A chosen value can vanish when the list refreshes (its
@@ -432,108 +455,158 @@ class _TitleListState extends ConsumerState<_TitleList> {
                     onPressed: _clearFilters,
                     child: const Text('条件をクリア'),
                   ),
-                  if (filteredCount != null) Text('条件に合うのは $filteredCount 件'),
+                  if (filteredCount != null && !stillLoading)
+                    Text('条件に合うのは $filteredCount 件'),
+                ],
+                // While the load is incomplete (plan 100), the
+                // counts beside the filters are provisional and
+                // say so; the filtered count is phrased as "so
+                // far" so it cannot read as the final answer.
+                if (stillLoading) ...[
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  Text(
+                    filteredCount != null
+                        ? '読み込み中… 条件に合うのは現在 $filteredCount 件'
+                        : '読み込み中… ${allTitles.length} 件を表示',
+                  ),
                 ],
               ],
             ),
           ),
         ),
         Expanded(
-          child: asyncSection(titles, (list) {
-            if (list.isEmpty) {
-              return const Center(child: Text('録画済みのタイトルはありません'));
-            }
-            final view = applyTitleListView(list, filter: filter, sort: _sort);
-            if (view.isEmpty) {
-              return Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('条件に合うタイトルがありません'),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _clearFilters,
-                      child: const Text('条件をクリア'),
-                    ),
-                  ],
+          child: loadFailed
+              ? Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: ErrorView(
+                    message: userMessageForError(progress.error!),
+                    onRetry: () => ref.invalidate(titlesProvider(reg)),
+                  ),
+                )
+              : snapshot == null
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              : _titleListBody(
+                  reg: reg,
+                  list: snapshot.titles,
+                  stillLoading: stillLoading,
+                  filter: filter,
                 ),
-              );
-            }
-            return LayoutBuilder(
-              builder: (context, constraints) {
-                // The tap behaviour and the pane layout must agree
-                // on what "wide" means, so both read the same
-                // width: the one this list actually gets. The tap
-                // once read the MediaQuery window width while the
-                // layout read these constraints, which the shell's
-                // navigation rail narrows; in the band between the
-                // two (a 1024-wide iPad in landscape, a Split View
-                // or Stage Manager window) a tap only updated the
-                // selection state — no detail page was pushed and
-                // no detail pane existed to show it — so selecting
-                // a title appeared to do nothing at all.
-                final twoPane = constraints.maxWidth >= twoPaneBreakpoint;
-                final listView = ListView.builder(
-                  itemCount: view.length,
-                  itemBuilder: (context, i) {
-                    final t = view[i];
-                    return ListTile(
-                      selected: t.id == widget.selectedId,
-                      leading: _TitleLeading(reg: reg, title: t),
-                      title: Text(t.title),
-                      subtitle: Text(
-                        '${t.scheduledStart != null ? formatDateTimeJst(t.scheduledStart!) : ''}'
-                        '${t.scheduledDurationSeconds != null ? ' (${formatDurationSeconds(t.scheduledDurationSeconds!)})' : ''}'
-                        '${t.channelName != null ? ' ${t.channelName}' : ''}',
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (t.protectFlag) const Icon(Icons.lock, size: 16),
-                          if (t.newFlag)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 4),
-                              child: Icon(Icons.fiber_new, size: 18),
-                            ),
-                          if (t.copyCountRemaining != null)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 6),
-                              child: Text('残り ${t.copyCountRemaining} 回'),
-                            ),
-                        ],
-                      ),
-                      onTap: () => widget.onSelect(t, twoPane),
-                      onLongPress: () => deleteRecordedTitle(
-                        context: context,
-                        ref: ref,
-                        reg: reg,
-                        title: t,
-                      ),
-                    );
-                  },
-                );
-                if (!twoPane) return listView;
-                RecordedTitle? selected;
-                for (final t in view) {
-                  if (t.id == widget.selectedId) selected = t;
-                }
-                return Row(
-                  children: [
-                    Expanded(flex: 5, child: listView),
-                    const VerticalDivider(thickness: 1, width: 1),
-                    Expanded(
-                      flex: 6,
-                      child: selected == null
-                          ? const Center(child: Text('タイトルを選択してください'))
-                          : TitleDetailView(reg: reg, title: selected),
-                    ),
-                  ],
-                );
-              },
-            );
-          }, onRetry: () => ref.invalidate(titlesProvider(reg))),
         ),
       ],
+    );
+  }
+
+  /// The list itself, over one stage of the progressive load
+  /// (plan 100). [stillLoading] separates "nothing (yet)" from
+  /// "nothing, finally": an empty list or an empty filtered
+  /// result while later pages are still coming shows as
+  /// loading, not as the settled answer.
+  Widget _titleListBody({
+    required RegisteredNasne reg,
+    required List<RecordedTitle> list,
+    required bool stillLoading,
+    required TitleListFilter filter,
+  }) {
+    if (list.isEmpty) {
+      if (stillLoading) {
+        return const Center(child: Text('読み込み中…'));
+      }
+      return const Center(child: Text('録画済みのタイトルはありません'));
+    }
+    final view = applyTitleListView(list, filter: filter, sort: _sort);
+    if (view.isEmpty) {
+      if (stillLoading) {
+        return const Center(child: Text('読み込み中…'));
+      }
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('条件に合うタイトルがありません'),
+            const SizedBox(height: 8),
+            TextButton(onPressed: _clearFilters, child: const Text('条件をクリア')),
+          ],
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The tap behaviour and the pane layout must agree
+        // on what "wide" means, so both read the same
+        // width: the one this list actually gets. The tap
+        // once read the MediaQuery window width while the
+        // layout read these constraints, which the shell's
+        // navigation rail narrows; in the band between the
+        // two (a 1024-wide iPad in landscape, a Split View
+        // or Stage Manager window) a tap only updated the
+        // selection state — no detail page was pushed and
+        // no detail pane existed to show it — so selecting
+        // a title appeared to do nothing at all.
+        final twoPane = constraints.maxWidth >= twoPaneBreakpoint;
+        final listView = ListView.builder(
+          itemCount: view.length,
+          itemBuilder: (context, i) {
+            final t = view[i];
+            return ListTile(
+              selected: t.id == widget.selectedId,
+              leading: _TitleLeading(reg: reg, title: t),
+              title: Text(t.title),
+              subtitle: Text(
+                '${t.scheduledStart != null ? formatDateTimeJst(t.scheduledStart!) : ''}'
+                '${t.scheduledDurationSeconds != null ? ' (${formatDurationSeconds(t.scheduledDurationSeconds!)})' : ''}'
+                '${t.channelName != null ? ' ${t.channelName}' : ''}',
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (t.protectFlag) const Icon(Icons.lock, size: 16),
+                  if (t.newFlag)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4),
+                      child: Icon(Icons.fiber_new, size: 18),
+                    ),
+                  if (t.copyCountRemaining != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Text('残り ${t.copyCountRemaining} 回'),
+                    ),
+                ],
+              ),
+              onTap: () => widget.onSelect(t, twoPane),
+              onLongPress: () => deleteRecordedTitle(
+                context: context,
+                ref: ref,
+                reg: reg,
+                title: t,
+              ),
+            );
+          },
+        );
+        if (!twoPane) return listView;
+        RecordedTitle? selected;
+        for (final t in view) {
+          if (t.id == widget.selectedId) selected = t;
+        }
+        return Row(
+          children: [
+            Expanded(flex: 5, child: listView),
+            const VerticalDivider(thickness: 1, width: 1),
+            Expanded(
+              flex: 6,
+              child: selected == null
+                  ? const Center(child: Text('タイトルを選択してください'))
+                  : TitleDetailView(reg: reg, title: selected),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -647,10 +720,10 @@ class TitleDetailPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final titles = ref.watch(titlesProvider(reg));
+    final progress = ref.watch(titlesProvider(reg));
     return Scaffold(
       appBar: AppBar(title: const Text('タイトルの詳細')),
-      body: asyncSection(titles, (list) {
+      body: asyncSection(progress.whenData((stage) => stage.titles), (list) {
         for (final t in list) {
           if (t.id == titleId) {
             return TitleDetailView(
