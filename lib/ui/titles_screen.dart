@@ -47,6 +47,15 @@
 /// loading, never as "no match" — search, filtering and
 /// sorting are whole-set operations, and only the complete
 /// stage settles them.
+///
+/// Plan 104 follow-up: a viewing's resume report (plan 102)
+/// is reflected in the loaded list at once, the same
+/// one-title patch as a protection update (plan 103). The
+/// detail the viewer returns to shows the position just
+/// recorded — or none, after a completed viewing cleared
+/// it — instead of the snapshot from before the playback.
+/// The unit already held the new point; only the display
+/// lagged, which made the recording look unrecorded.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -228,6 +237,33 @@ Future<bool> setRecordedTitleProtection({
   if (!context.mounted) return true;
   showSnack(context, protect ? '保護しました' : '保護を解除しました');
   return true;
+}
+
+/// The resume report a closing player makes (plan 102), and
+/// its reflection in the loaded list (plan 104 follow-up).
+///
+/// The unit is told where the viewing stopped; on success
+/// the one title's resume point in the loaded list is
+/// rewritten with the reported value — the same one-title
+/// patch as a protection update (plan 103) — so the detail
+/// the viewer returns to shows the position that was just
+/// recorded, and a completed viewing's clear (a reported
+/// zero) shows as no position. A failure throws before the
+/// patch: the display keeps the old value, and the player's
+/// teardown logs the failed report. No refetch either way.
+Future<void> reportResumePosition({
+  required WidgetRef ref,
+  required RegisteredNasne reg,
+  required String titleId,
+  required Duration position,
+}) async {
+  await ref
+      .read(deviceServicesProvider(reg))
+      .titles
+      .setResumePosition(titleId, position);
+  ref
+      .read(titlesProvider(reg).notifier)
+      .applyResumePoint(titleId, position.inSeconds);
 }
 
 Future<void> _showDeleteRefusal(BuildContext context, String message) {
@@ -983,11 +1019,14 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           // Leaving the player reports where the viewing
           // stopped (plan 102), so the unit's resume point is
           // there for the next viewing — in this app or in
-          // the official client.
-          onResumePosition: (position) => ref
-              .read(deviceServicesProvider(reg))
-              .titles
-              .setResumePosition(title.id, position),
+          // the official client — and the loaded list follows
+          // the report at once (plan 104 follow-up).
+          onResumePosition: (position) => reportResumePosition(
+            ref: ref,
+            reg: reg,
+            titleId: title.id,
+            position: position,
+          ),
         ),
         unsupportedSubject: '録画の再生',
       );

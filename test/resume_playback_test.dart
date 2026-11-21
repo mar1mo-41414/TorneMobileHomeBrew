@@ -56,6 +56,26 @@ void main() {
     });
   });
 
+  group('RecordedTitle.withResumePoint (plan 104 follow-up)', () {
+    final stamp = DateTime.parse('2026-11-22T07:00:00+09:00');
+
+    test('rewrites the point and the stamp, keeps the rest', () {
+      final updated = _title(resumePointSeconds: 360)
+          .withResumePoint(300, stamp);
+      expect(updated.resumePointSeconds, 300);
+      expect(updated.lastPlaybackTime, stamp);
+      expect(updated.id, '1');
+      expect(updated.title, 'テスト番組');
+    });
+
+    test('a zero point offers nothing to resume', () {
+      final cleared = _title(resumePointSeconds: 360)
+          .withResumePoint(0, stamp);
+      expect(cleared.resumePointSeconds, 0);
+      expect(resumeStartOf(cleared), isNull);
+    });
+  });
+
   group('showResumeChoiceDialog', () {
     Future<bool?> pumpAndChoose(WidgetTester tester, String label) async {
       bool? result;

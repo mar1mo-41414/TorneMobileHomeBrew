@@ -14,6 +14,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:tmhb/app/providers.dart';
 import 'package:tmhb/core/core.dart';
 import 'package:tmhb/main.dart';
+import 'package:tmhb/ui/titles_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -192,6 +193,7 @@ class FakeTitles implements TitleCatalogService {
     this.deleteRefusesAsProtected = false,
     this.protectionListLags = false,
     this.protectionUpdateFails = false,
+    this.resumeReportFails = false,
     this.progressive = false,
   }) : items = List.of(items ?? defaultItems),
        thumbnails = thumbnails ?? const {};
@@ -219,6 +221,12 @@ class FakeTitles implements TitleCatalogService {
 
   /// When true, a protection update fails with a SOAP fault.
   final bool protectionUpdateFails;
+
+  /// When true, a resume position report fails the way the
+  /// unit refuses one (a WebAPI errorcode, plan 102), so the
+  /// displayed position must keep the pre-report value
+  /// (plan 104 follow-up).
+  final bool resumeReportFails;
 
   static final defaultItems = [
     RecordedTitle(
@@ -320,6 +328,9 @@ class FakeTitles implements TitleCatalogService {
 
   @override
   Future<void> setResumePosition(String id, Duration position) async {
+    if (resumeReportFails) {
+      throw NasneError.webapi(803, 'test:recordedContentResumePositionSet');
+    }
     resumePositions.add((id, position));
   }
 }
@@ -476,6 +487,22 @@ class FakeRegistration implements RegistrationService {
   Future<bool> verify(RegisteredNasne registration) async => true;
 }
 
+/// One title carrying a resume point (plan 104 follow-up):
+/// the unit recorded six minutes watched, so the detail
+/// shows the position and offers a resume.
+List<RecordedTitle> resumeTitles() => [
+  RecordedTitle(
+    id: '201',
+    title: '録画タイトルA',
+    scheduledStart: DateTime.parse('2026-11-15T11:34:46+09:00'),
+    scheduledDurationSeconds: 1800,
+    channelName: 'テスト放送',
+    copyCountRemaining: 10,
+    lastPlaybackTime: DateTime.parse('2026-11-21T21:00:00+09:00'),
+    resumePointSeconds: 360,
+  ),
+];
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -490,6 +517,7 @@ class Fixture {
     this.titlesDeleteRefusesAsProtected = false,
     this.titlesProtectionListLags = false,
     this.titlesProtectionUpdateFails = false,
+    this.titlesResumeReportFails = false,
     this.titlesProgressive = false,
   }) : schedules = schedules ?? FakeSchedules(),
        store = InMemoryRegistrationStore(registrations ?? [testReg]),
@@ -499,6 +527,7 @@ class Fixture {
          deleteRefusesAsProtected: titlesDeleteRefusesAsProtected,
          protectionListLags: titlesProtectionListLags,
          protectionUpdateFails: titlesProtectionUpdateFails,
+         resumeReportFails: titlesResumeReportFails,
          progressive: titlesProgressive,
        );
 
@@ -510,6 +539,7 @@ class Fixture {
   final bool titlesDeleteRefusesAsProtected;
   final bool titlesProtectionListLags;
   final bool titlesProtectionUpdateFails;
+  final bool titlesResumeReportFails;
   final bool titlesProgressive;
   final FakeTitles titlesService;
 
@@ -1070,6 +1100,121 @@ void main() {
       expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
       expect(find.text('なし'), findsOneWidget);
       expect(find.text('操作に失敗しました。'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a resume report rewrites the detail position at once, '
+    'without reloading the list (plan 104 follow-up)',
+    (tester) async {
+      usePhoneSize(tester);
+      final fixture = Fixture(titles: resumeTitles());
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('録画済み'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('録画タイトルA'));
+      await tester.pumpAndSettle();
+      expect(find.text('再開位置'), findsOneWidget);
+      expect(find.text('6分'), findsOneWidget);
+      final loadsBefore = fixture.titlesService.listLoadCount;
+
+      // What a closing player does (plan 102): the report
+      // reaches the unit and the loaded list follows it, so
+      // the detail the viewer returns to shows the position
+      // that was just recorded.
+      final ref =
+          tester.element(find.byType(TitlesScreen, skipOffstage: false))
+              as WidgetRef;
+      await reportResumePosition(
+        ref: ref,
+        reg: testReg,
+        titleId: '201',
+        position: const Duration(minutes: 5),
+      );
+      await tester.pump();
+
+      expect(fixture.titlesService.resumePositions, [
+        ('201', const Duration(minutes: 5)),
+      ]);
+      expect(find.text('5分'), findsOneWidget);
+      expect(find.text('6分'), findsNothing);
+      expect(fixture.titlesService.listLoadCount, loadsBefore);
+    },
+  );
+
+  testWidgets(
+    'a completed viewing clears the detail resume position '
+    '(plan 104 follow-up)',
+    (tester) async {
+      usePhoneSize(tester);
+      final fixture = Fixture(titles: resumeTitles());
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('録画済み'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('録画タイトルA'));
+      await tester.pumpAndSettle();
+      expect(find.text('再開位置'), findsOneWidget);
+      final loadsBefore = fixture.titlesService.listLoadCount;
+
+      // A viewing that ran to the end reports zero, and the
+      // detail stops offering a position.
+      final ref =
+          tester.element(find.byType(TitlesScreen, skipOffstage: false))
+              as WidgetRef;
+      await reportResumePosition(
+        ref: ref,
+        reg: testReg,
+        titleId: '201',
+        position: Duration.zero,
+      );
+      await tester.pump();
+
+      expect(fixture.titlesService.resumePositions, [('201', Duration.zero)]);
+      expect(find.text('再開位置'), findsNothing);
+      expect(fixture.titlesService.listLoadCount, loadsBefore);
+    },
+  );
+
+  testWidgets(
+    'a failed resume report leaves the displayed position '
+    'alone (plan 104 follow-up)',
+    (tester) async {
+      usePhoneSize(tester);
+      final fixture = Fixture(
+        titles: resumeTitles(),
+        titlesResumeReportFails: true,
+      );
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('録画済み'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('録画タイトルA'));
+      await tester.pumpAndSettle();
+      expect(find.text('6分'), findsOneWidget);
+      final loadsBefore = fixture.titlesService.listLoadCount;
+
+      final ref =
+          tester.element(find.byType(TitlesScreen, skipOffstage: false))
+              as WidgetRef;
+      await expectLater(
+        reportResumePosition(
+          ref: ref,
+          reg: testReg,
+          titleId: '201',
+          position: const Duration(minutes: 5),
+        ),
+        throwsA(isA<NasneError>()),
+      );
+      await tester.pump();
+
+      expect(fixture.titlesService.resumePositions, isEmpty);
+      expect(find.text('6分'), findsOneWidget);
+      expect(fixture.titlesService.listLoadCount, loadsBefore);
     },
   );
 
