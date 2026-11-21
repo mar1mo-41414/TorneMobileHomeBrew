@@ -1044,6 +1044,17 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
             titleId: title.id,
             position: position,
           ),
+          // The chapter points load as the player opens
+          // (plan 112); the service validates them against
+          // the listed duration, and an empty answer leaves
+          // the player without chapter controls.
+          loadChapters: () => ref
+              .read(deviceServicesProvider(reg))
+              .titles
+              .fetchChapters(
+                title.id,
+                durationSeconds: title.scheduledDurationSeconds ?? 0,
+              ),
         ),
         unsupportedSubject: '録画の再生',
       );

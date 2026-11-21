@@ -333,6 +333,16 @@ class FakeTitles implements TitleCatalogService {
     }
     resumePositions.add((id, position));
   }
+
+  /// Chapter points [fetchChapters] answers per title id
+  /// (plan 112); a title absent from the map has none.
+  final Map<String, List<Duration>> chaptersByTitle = {};
+
+  @override
+  Future<List<Duration>> fetchChapters(
+    String id, {
+    required int durationSeconds,
+  }) async => chaptersByTitle[id] ?? const [];
 }
 
 /// Records the res it was asked to play, then fails with a

@@ -376,6 +376,11 @@ DeviceServices assembleDeviceServices(
   final soap = SoapTransport(client: client);
   final xsrs = device.controlUrl(SoapServices.scheduledRecording.serviceType);
   final cds = device.controlUrl(SoapServices.contentDirectory.serviceType);
+  // X_PvrControl carries X_GetTitleInfo (chapters, plan
+  // 112). Unlike the two services above it is not
+  // load-bearing — a description without it simply has
+  // no chapters — so it is passed through as nullable.
+  final pvr = device.controlUrl(SoapServices.pvrControl.serviceType);
   if (xsrs == null || cds == null) {
     throw NasneError.validation(
       'providers',
@@ -403,6 +408,7 @@ DeviceServices assembleDeviceServices(
       xsrsControlUrl: xsrs,
       webApi: plain,
       metadata: metadata,
+      pvrControlUrl: pvr,
     ),
     metadata: metadata,
     live: DlnaLiveCatalogService(metadata: metadata),
