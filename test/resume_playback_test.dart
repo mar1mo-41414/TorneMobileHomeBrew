@@ -9,10 +9,10 @@ import 'package:tmhb/core/core.dart';
 import 'package:tmhb/ui/titles_screen.dart';
 
 RecordedTitle _title({int? resumePointSeconds}) => RecordedTitle(
-      id: '1',
-      title: 'テスト番組',
-      resumePointSeconds: resumePointSeconds,
-    );
+  id: '1',
+  title: 'テスト番組',
+  resumePointSeconds: resumePointSeconds,
+);
 
 void main() {
   group('resumeStartOf', () {
@@ -28,6 +28,30 @@ void main() {
       expect(
         resumeStartOf(_title(resumePointSeconds: 754)),
         const Duration(seconds: 754),
+      );
+    });
+  });
+
+  group('resumePlaybackStartOf (plan 98)', () {
+    test('starts the rewind before the recorded position', () {
+      expect(
+        resumePlaybackStartOf(_title(resumePointSeconds: 754)),
+        const Duration(seconds: 744),
+      );
+    });
+
+    test('clamps at the beginning for a short position', () {
+      expect(
+        resumePlaybackStartOf(_title(resumePointSeconds: 5)),
+        Duration.zero,
+      );
+    });
+
+    test('no recorded position starts at zero', () {
+      expect(resumePlaybackStartOf(_title()), Duration.zero);
+      expect(
+        resumePlaybackStartOf(_title(resumePointSeconds: 0)),
+        Duration.zero,
       );
     });
   });

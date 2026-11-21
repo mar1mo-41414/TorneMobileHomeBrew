@@ -61,6 +61,33 @@ Duration? resumeStartOf(RecordedTitle title) {
   return Duration(seconds: seconds);
 }
 
+/// How far before the recorded position a resume actually
+/// starts (plan 98).
+///
+/// The recorded position is the unit's, and the unit counts
+/// what it served, not what was watched: the DTCP proxy reads
+/// ahead into its plaintext window (32 MiB) and the player
+/// buffers ahead of the playhead too, so when playback stops,
+/// the recorded position can sit past the last frame actually
+/// seen — tens of seconds at DR bitrates, more at 3x. Opening
+/// exactly at the recorded position therefore skipped content
+/// the viewer never saw. A resume starts [resumeRewind]
+/// earlier instead: at most that much is replayed, and nothing
+/// unseen is jumped over. The choice dialog still names the
+/// recorded position — that is what the unit says was watched
+/// to; only the open start moves.
+const Duration resumeRewind = Duration(seconds: 10);
+
+/// The start a "continue" choice opens at (plan 98): the
+/// recorded position rewound by [resumeRewind], clamped at
+/// the beginning. Zero when the title offers no resume.
+Duration resumePlaybackStartOf(RecordedTitle title) {
+  final recorded = resumeStartOf(title);
+  if (recorded == null) return Duration.zero;
+  final start = recorded - resumeRewind;
+  return start < Duration.zero ? Duration.zero : start;
+}
+
 /// Asks whether to continue from [resumeStart] or start over
 /// (plan 86). Returns true for "continue", false for "from the
 /// beginning", and null when the dialog was dismissed without a
@@ -854,7 +881,10 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
       final resume = await showResumeChoiceDialog(context, initialStart);
       if (!context.mounted) return;
       if (resume == null) return;
-      if (!resume) initialStart = null;
+      // Continuing opens a little before the recorded position
+      // (plan 98): the unit's position counts what it served,
+      // which runs ahead of what was watched.
+      initialStart = resume ? resumePlaybackStartOf(title) : null;
     }
     setState(() => _starting = true);
     try {
