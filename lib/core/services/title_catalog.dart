@@ -108,11 +108,14 @@ class SoapTitleCatalogService implements TitleCatalogService {
 
   @override
   Future<Uint8List?> fetchThumbnail(String id) async {
-    // The thumbnail map's container layout is unmeasured
-    // (plan 11.4 / 86.6): the image is located by magic bytes
-    // inside whatever came back. Every failure — transport,
-    // status, an unrecognised payload — is simply "no
-    // thumbnail"; a missing picture must never break the list.
+    // Measured on a real unit (plan 97): thumbnailMapGet
+    // returns a position map with no image in it, and the
+    // frames behind recordedContentThumbnailGet are
+    // encrypted, so this returns null on real units today.
+    // The magic-byte extraction stays as a defensive path.
+    // Every failure — transport, status, an unrecognised
+    // payload — is simply "no thumbnail"; a missing picture
+    // must never break the list.
     try {
       final raw = await _webApi.getBytes(
         WebApiEndpoints.thumbnailMapGet,

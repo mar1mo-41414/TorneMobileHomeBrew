@@ -1,13 +1,25 @@
 /// Thumbnail payload extraction (plan 86.6).
 ///
-/// `recorded/thumbnailMapGet` answers with a binary "map" whose
-/// container layout has not been measured (plan 11.4 records only
-/// that it is a binary response taking an `id` parameter). Rather
-/// than guess the container, the image is located by its magic
-/// bytes: the earliest complete JPEG or PNG embedded in the
-/// payload wins. Anything else — an empty map, an unknown
-/// container, a truncated embedded image — yields null and the
-/// UI keeps its placeholder.
+/// The image is located by its magic bytes: the earliest
+/// complete JPEG or PNG embedded in the payload wins.
+/// Anything else — an empty payload, an unknown container,
+/// a truncated embedded image — yields null and the UI
+/// keeps its placeholder.
+///
+/// Real-unit measurement (plan 97) settled what the unit
+/// actually serves: `recorded/thumbnailMapGet` answers with
+/// a position map — a big-endian uint32 count followed by
+/// that many uint32 values, roughly one entry per 15
+/// seconds of recording — and contains no image at all.
+/// The frames live behind `recorded/recordedContentThumbnailGet`
+/// (`id` + a `thumbnailEntryId` index) as fixed-size
+/// 172,800-byte payloads, the size of a raw 320x180 RGB
+/// frame, but the bytes are encrypted (full entropy, no
+/// repeated 16-byte blocks, no short XOR period), so they
+/// cannot be rendered without the official client's
+/// decryption scheme. On a real unit this extractor is
+/// therefore expected to find nothing; it stays as the
+/// defensive path if a unit ever embeds an image.
 library;
 
 import 'dart:typed_data';

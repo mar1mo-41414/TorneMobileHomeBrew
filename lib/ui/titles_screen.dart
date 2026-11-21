@@ -15,6 +15,9 @@
 /// thumbnail (recorded/thumbnailMapGet, extracted defensively
 /// by magic bytes) when the unit provides one. Before this the
 /// endpoint was defined but never called (plan 85 item 6).
+/// Real-unit measurement (plan 97) later showed the map
+/// carries no image and the actual frames are encrypted, so
+/// on real units the placeholder is what shows today.
 ///
 /// Plan 86.5: the list can be searched by title, sorted, and
 /// filtered by channel / genre / unwatched; the genre comes
