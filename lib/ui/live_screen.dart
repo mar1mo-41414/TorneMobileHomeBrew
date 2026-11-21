@@ -229,6 +229,66 @@ String _channelSubtitle(LiveChannel channel) {
   return '$range${channel.description ?? ''}';
 }
 
+/// The live channel carrying a programme-guide service,
+/// matched on the (networkId, transportStreamId, serviceId)
+/// triple the DIDL ids and the guide share (plan 95); null
+/// when the LiveTuner tree has no such channel.
+LiveChannel? liveChannelForService(
+  List<LiveBand> bands, {
+  required int networkId,
+  required int transportStreamId,
+  required int serviceId,
+}) {
+  for (final band in bands) {
+    for (final channel in band.channels) {
+      if (channel.networkId == networkId &&
+          channel.transportStreamId == transportStreamId &&
+          channel.serviceId == serviceId) {
+        return channel;
+      }
+    }
+  }
+  return null;
+}
+
+/// From the programme guide to live viewing (plan 95):
+/// resolves the guide channel's live channel and opens its
+/// detail page, where the 視聴 button starts playback. When
+/// the channel cannot be resolved — a band the LiveTuner
+/// tree does not carry, or a failed fetch — a snackbar says
+/// so instead of navigating nowhere.
+Future<void> openLiveChannelForEpg(
+  BuildContext context,
+  WidgetRef ref, {
+  required RegisteredNasne reg,
+  required Channel channel,
+}) async {
+  final List<LiveBand> bands;
+  try {
+    bands = await ref.read(liveChannelsProvider(reg).future);
+  } catch (_) {
+    if (context.mounted) showSnack(context, 'チャンネル情報を取得できませんでした');
+    return;
+  }
+  final live = liveChannelForService(
+    bands,
+    networkId: channel.networkId,
+    transportStreamId: channel.transportStreamId,
+    serviceId: channel.serviceId,
+  );
+  if (!context.mounted) return;
+  if (live == null) {
+    showSnack(context, '視聴可能なチャンネルが見つかりません');
+    return;
+  }
+  await Navigator.push(
+    context,
+    MaterialPageRoute<void>(
+      builder: (_) => LiveChannelDetailPage(reg: reg, channelId: live.id),
+    ),
+  );
+}
+
 /// Detail page for narrow layouts.
 class LiveChannelDetailPage extends ConsumerWidget {
   const LiveChannelDetailPage({

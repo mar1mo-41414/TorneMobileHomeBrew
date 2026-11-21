@@ -25,6 +25,7 @@ import 'epg_genre.dart';
 import 'epg_search_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
+import 'live_screen.dart';
 import 'schedule_form.dart';
 import 'epg_subchannel_visibility.dart';
 import 'widgets.dart';
@@ -469,6 +470,12 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
                 ref.watch(showSubchannelsProvider),
               ),
               hiddenGenres: ref.watch(hiddenEpgGenresProvider),
+              onWatchEvent: (channel) => openLiveChannelForEpg(
+                context,
+                ref,
+                reg: reg,
+                channel: channel,
+              ),
               logos: logos,
               selectedDay: _selectedDay,
               onSelectDay: (day) => setState(() {
@@ -493,6 +500,7 @@ class _GuideView extends StatelessWidget {
     required this.reg,
     required this.guide,
     required this.hiddenGenres,
+    required this.onWatchEvent,
     required this.logos,
     required this.selectedDay,
     required this.onSelectDay,
@@ -509,6 +517,10 @@ class _GuideView extends StatelessWidget {
   /// Genres the viewer marked as not watched (plan 95):
   /// their tiles paint blank.
   final Set<int> hiddenGenres;
+
+  /// Opens live viewing for a guide channel (plan 95);
+  /// offered from the event detail while the event is on air.
+  final void Function(Channel channel) onWatchEvent;
   final Map<int, List<int>> logos;
   final DateTime? selectedDay;
   final ValueChanged<DateTime> onSelectDay;
@@ -595,6 +607,7 @@ class _GuideView extends StatelessWidget {
                             reg: reg,
                             services: guide.services,
                             hiddenGenres: hiddenGenres,
+                            onWatchEvent: onWatchEvent,
                             dayStart: dayStart,
                             dayEnd: dayEnd,
                             controller: bodyController,
@@ -736,6 +749,7 @@ class _DayGrid extends StatelessWidget {
     required this.reg,
     required this.services,
     required this.hiddenGenres,
+    required this.onWatchEvent,
     required this.dayStart,
     required this.dayEnd,
     required this.controller,
@@ -744,6 +758,7 @@ class _DayGrid extends StatelessWidget {
   final RegisteredNasne reg;
   final List<EpgServiceGuide> services;
   final Set<int> hiddenGenres;
+  final void Function(Channel channel) onWatchEvent;
   final DateTime dayStart;
   final DateTime dayEnd;
   final ScrollController controller;
@@ -798,6 +813,8 @@ class _DayGrid extends StatelessWidget {
                               event.genreLevel1,
                               hiddenGenres,
                             ),
+                            onWatch: () =>
+                                onWatchEvent(services[i].channel),
                           ),
                       ],
                     ),
@@ -827,6 +844,7 @@ class _EventTile extends StatelessWidget {
     required this.reg,
     required this.dayStart,
     required this.suppressed,
+    required this.onWatch,
   });
 
   final EpgEvent event;
@@ -840,6 +858,11 @@ class _EventTile extends StatelessWidget {
   /// surface colour — no tint, no text — so it does not draw
   /// the eye. The slot and the tap (the detail dialog) stay.
   final bool suppressed;
+
+  /// Opens live viewing for this tile's channel (plan 95);
+  /// the detail dialog offers it only while the event is on
+  /// air.
+  final VoidCallback onWatch;
 
   @override
   Widget build(BuildContext context) {
@@ -889,6 +912,7 @@ class _EventTile extends StatelessWidget {
             channel: channel,
             channelName: channelName,
             event: event,
+            onWatch: onWatch,
           ),
           child: suppressed
               ? const SizedBox.expand()
@@ -959,19 +983,30 @@ class _EventTile extends StatelessWidget {
 /// prefilled with this event, through the same XSRS create
 /// path as a manual reservation. Events that have already
 /// ended cannot be reserved.
+///
+/// Watch from the guide (plan 95): while the event is on air,
+/// [onWatch] — wired by the caller to the channel's live
+/// viewing — is offered next to the reservation. Before the
+/// start and after the end there is nothing of this event to
+/// watch (the live stream carries whatever is on air then),
+/// so the action is not shown at all.
 void showEpgEventDetail(
   BuildContext context, {
   required RegisteredNasne reg,
   required Channel channel,
   required String channelName,
   required EpgEvent event,
+  VoidCallback? onWatch,
 }) {
+  final now = DateTime.now();
+  final watchable =
+      onWatch != null && !event.start.isAfter(now) && event.end.isAfter(now);
   showDialog<void>(
     context: context,
     builder: (dialogContext) => EpgEventDetailDialog(
       event: event,
       channelName: channelName,
-      onReserve: event.end.isAfter(DateTime.now())
+      onReserve: event.end.isAfter(now)
           ? () {
               Navigator.of(dialogContext).pop();
               Navigator.of(context).push(
@@ -985,6 +1020,12 @@ void showEpgEventDetail(
               );
             }
           : null,
+      onWatch: watchable
+          ? () {
+              Navigator.of(dialogContext).pop();
+              onWatch();
+            }
+          : null,
     ),
   );
 }
@@ -995,6 +1036,7 @@ class EpgEventDetailDialog extends StatelessWidget {
     required this.event,
     required this.channelName,
     this.onReserve,
+    this.onWatch,
   });
 
   final EpgEvent event;
@@ -1003,6 +1045,10 @@ class EpgEventDetailDialog extends StatelessWidget {
   /// Opens the prefilled reservation form (plan 28); null when
   /// the event has already ended.
   final VoidCallback? onReserve;
+
+  /// Opens the channel's live viewing (plan 95); null unless
+  /// the event is on air now.
+  final VoidCallback? onWatch;
 
   @override
   Widget build(BuildContext context) {
@@ -1059,6 +1105,12 @@ class EpgEventDetailDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),
+        if (onWatch != null)
+          FilledButton.icon(
+            onPressed: onWatch,
+            icon: const Icon(Icons.live_tv, size: 18),
+            label: const Text('試聴'),
+          ),
         if (onReserve != null)
           FilledButton.icon(
             onPressed: onReserve,

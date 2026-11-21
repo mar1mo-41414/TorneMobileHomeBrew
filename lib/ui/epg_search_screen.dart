@@ -24,6 +24,7 @@ import '../core/core.dart';
 import 'epg_screen.dart';
 import 'epg_search.dart';
 import 'format.dart';
+import 'live_screen.dart';
 import 'widgets.dart';
 
 class EpgSearchScreen extends ConsumerStatefulWidget {
@@ -168,6 +169,12 @@ class _EpgSearchScreenState extends ConsumerState<EpgSearchScreen> {
             channel: hit.channel,
             channelName: hit.channelName,
             event: event,
+            onWatch: () => openLiveChannelForEpg(
+              context,
+              ref,
+              reg: widget.reg,
+              channel: hit.channel,
+            ),
           ),
         );
       },

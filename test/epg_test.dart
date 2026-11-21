@@ -20,6 +20,7 @@ import 'package:tmhb/app/providers.dart';
 import 'package:tmhb/app/state.dart';
 import 'package:tmhb/core/core.dart';
 import 'package:tmhb/ui/epg_screen.dart';
+import 'package:tmhb/ui/live_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Synthetic EPG plaintext builder
@@ -1270,6 +1271,207 @@ void main() {
       await pumpGuide(tester);
       expect(find.text('ニュース番組'), findsOneWidget);
       expect(find.text('ドラマ番組'), findsOneWidget);
+    });
+  });
+
+  group('watch from the guide (plan 95)', () {
+    const reg = RegisteredNasne(
+      host: '192.0.2.1',
+      udn: 'uuid:test',
+      friendlyName: 'nasne',
+      macAddr: '00:11:22:33:44:55',
+    );
+
+    test('liveChannelForService matches the identity triple', () {
+      const channel = LiveChannel(
+        id: '0/video/LiveTuner/DTTB/ch?nid=1111&tsid=2222&svid=3333',
+        bandId: '0/video/LiveTuner/DTTB',
+        networkId: 0x1111,
+        transportStreamId: 0x2222,
+        serviceId: 0x3333,
+        programTitle: 'ライブ番組',
+      );
+      const bands = [
+        LiveBand(
+          containerId: '0/video/LiveTuner/DTTB',
+          title: '地上デジタル',
+          channels: [channel],
+        ),
+      ];
+      expect(
+        liveChannelForService(
+          bands,
+          networkId: 0x1111,
+          transportStreamId: 0x2222,
+          serviceId: 0x3333,
+        ),
+        channel,
+      );
+      expect(
+        liveChannelForService(
+          bands,
+          networkId: 0x1111,
+          transportStreamId: 0x2222,
+          serviceId: 0x4444,
+        ),
+        isNull,
+      );
+      expect(
+        liveChannelForService(
+          const [],
+          networkId: 0x1111,
+          transportStreamId: 0x2222,
+          serviceId: 0x3333,
+        ),
+        isNull,
+      );
+    });
+
+    Future<void> pumpDetailDialog(
+      WidgetTester tester,
+      EpgEvent event,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showEpgEventDetail(
+                  context,
+                  reg: reg,
+                  channel: _channel,
+                  channelName: 'テスト局',
+                  event: event,
+                  onWatch: () {},
+                ),
+                child: const Text('開く'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('開く'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    testWidgets('the watch action shows only while on air', (tester) async {
+      final now = DateTime.now().toUtc();
+      await pumpDetailDialog(
+        tester,
+        EpgEvent(
+          eventId: 1,
+          start: now.subtract(const Duration(minutes: 10)),
+          duration: const Duration(minutes: 60),
+          title: '放送中の番組',
+        ),
+      );
+      expect(find.text('試聴'), findsOneWidget);
+      expect(find.text('録画予約'), findsOneWidget);
+    });
+
+    testWidgets('a future event offers a reservation, not watching', (
+      tester,
+    ) async {
+      final now = DateTime.now().toUtc();
+      await pumpDetailDialog(
+        tester,
+        EpgEvent(
+          eventId: 2,
+          start: now.add(const Duration(hours: 2)),
+          duration: const Duration(minutes: 30),
+          title: '未来の番組',
+        ),
+      );
+      expect(find.text('試聴'), findsNothing);
+      expect(find.text('録画予約'), findsOneWidget);
+    });
+
+    testWidgets('an ended event offers neither action', (tester) async {
+      final now = DateTime.now().toUtc();
+      await pumpDetailDialog(
+        tester,
+        EpgEvent(
+          eventId: 3,
+          start: now.subtract(const Duration(hours: 2)),
+          duration: const Duration(minutes: 30),
+          title: '終わった番組',
+        ),
+      );
+      expect(find.text('試聴'), findsNothing);
+      expect(find.text('録画予約'), findsNothing);
+      expect(find.text('閉じる'), findsOneWidget);
+    });
+
+    testWidgets('an on-air tile leads to the live detail page', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final now = DateTime.now().toUtc();
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          EpgServiceGuide(
+            channel: _channel,
+            events: [
+              EpgEvent(
+                eventId: 1,
+                start: now.subtract(const Duration(minutes: 10)),
+                duration: const Duration(minutes: 60),
+                title: '放送中の番組',
+              ),
+            ],
+          ),
+        ],
+      );
+      const liveBands = [
+        LiveBand(
+          containerId: '0/video/LiveTuner/DTTB',
+          title: '地上デジタル',
+          channels: [
+            LiveChannel(
+              id: '0/video/LiveTuner/DTTB/ch?nid=1111&tsid=2222&svid=3333',
+              bandId: '0/video/LiveTuner/DTTB',
+              networkId: 0x1111,
+              transportStreamId: 0x2222,
+              serviceId: 0x3333,
+              channelName: 'テスト局',
+              programTitle: 'ライブ番組',
+            ),
+          ],
+        ),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider
+                .overrideWithValue(InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+            liveChannelsProvider.overrideWith((ref, r) async => liveBands),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('放送中の番組'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('試聴'), findsOneWidget);
+
+      await tester.tap(find.text('試聴'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      // The live detail page for the guide's channel.
+      expect(find.text('ライブ番組'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, '視聴'), findsOneWidget);
     });
   });
 }
