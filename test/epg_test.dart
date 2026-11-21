@@ -8,6 +8,7 @@ library;
 
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -660,6 +661,221 @@ void main() {
       // re-created on completion loops forever and blocks all
       // further pointer input to the grid (plan 23).
       expect(scrollable.position.activity, isA<IdleScrollActivity>());
+    });
+
+    testWidgets('mouse drag scrolls the grid vertically', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      // A guide holding only tomorrow's programmes: the screen
+      // opens on that day and the initial jump-to-now (which runs
+      // for today only) stays out of the way, so the grid starts
+      // at offset 0 whatever time of day the test runs at.
+      final tomorrow = DateTime.now().toUtc().add(const Duration(days: 1));
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          EpgServiceGuide(
+            channel: _channel,
+            events: [
+              EpgEvent(
+                eventId: 1,
+                start: tomorrow,
+                duration: const Duration(minutes: 30),
+                title: '明日の番組',
+              ),
+            ],
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider.overrideWithValue(
+                InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final grid = find.byWidgetPredicate((w) =>
+          w is SingleChildScrollView &&
+          w.scrollDirection == Axis.vertical &&
+          w.physics is! NeverScrollableScrollPhysics);
+      expect(grid, findsOneWidget);
+      final scrollable = tester.state<ScrollableState>(find.descendant(
+          of: grid,
+          matching: find.byWidgetPredicate((w) =>
+              w is Scrollable && w.axisDirection == AxisDirection.down)));
+      expect(scrollable.position.pixels, 0);
+
+      // Grab the grid with the mouse and pull it upwards: the
+      // guide must follow, like it follows a touch swipe.
+      final gesture = await tester.startGesture(
+        tester.getCenter(grid),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveBy(const Offset(0, -300));
+      await tester.pump();
+      await gesture.up();
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(scrollable.position.pixels, greaterThan(100));
+    });
+
+    testWidgets(
+        'mouse drag scrolls the grid horizontally and settles on a '
+        'column boundary', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      Channel channelN(int n) => Channel(
+            broadcastingType: 2,
+            networkId: 0x1111,
+            transportStreamId: 0x2222 + n,
+            serviceId: 0x3300 + n,
+            serviceType: 1,
+            channelNumber: n + 1,
+            serviceName: '局$n',
+          );
+      final now = DateTime.now().toUtc();
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          for (var i = 0; i < 6; i++)
+            EpgServiceGuide(
+              channel: channelN(i),
+              events: [
+                EpgEvent(
+                  eventId: 1,
+                  start: now.subtract(const Duration(minutes: 10)),
+                  duration: const Duration(minutes: 30),
+                  title: '番組$i',
+                ),
+              ],
+            ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider.overrideWithValue(
+                InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final scv = find.byWidgetPredicate((w) =>
+          w is SingleChildScrollView &&
+          w.scrollDirection == Axis.horizontal);
+      expect(scv, findsOneWidget);
+      // Grab the grid with the mouse and pull it sideways.
+      final gesture = await tester.startGesture(
+        tester.getCenter(scv),
+        kind: PointerDeviceKind.mouse,
+      );
+      // A real drag arrives as a stream of small moves. The
+      // first segment is spent winning the gesture arena from
+      // the grid's vertical drag recogniser, so step the pull
+      // instead of moving once.
+      for (var i = 0; i < 4; i++) {
+        await gesture.moveBy(const Offset(-65, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      // Let the snap spring run to rest (bounded pumps, as in the
+      // touch version of this test above).
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final scrollable = tester.state<ScrollableState>(find.descendant(
+          of: scv,
+          matching: find.byWidgetPredicate((w) =>
+              w is Scrollable && w.axisDirection == AxisDirection.right)));
+      final pixels = scrollable.position.pixels;
+      expect(pixels, greaterThan(0));
+      expect(pixels % 172, anyOf(closeTo(0, 1.0), closeTo(172, 1.0)));
+      expect(scrollable.position.activity, isA<IdleScrollActivity>());
+    });
+
+    testWidgets('mouse click on an event tile still opens the detail',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      final now = DateTime.now().toUtc();
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          EpgServiceGuide(
+            channel: _channel,
+            events: [
+              EpgEvent(
+                eventId: 1,
+                start: now.subtract(const Duration(minutes: 30)),
+                duration: const Duration(minutes: 60),
+                title: 'テスト番組',
+                description: '説明テキスト',
+              ),
+            ],
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider.overrideWithValue(
+                InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // A plain mouse click (no drag) must still select the
+      // programme: enabling mouse drags must not eat tile taps.
+      await tester.tap(find.text('テスト番組'),
+          kind: PointerDeviceKind.mouse);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(EpgEventDetailDialog), findsOneWidget);
     });
 
     testWidgets(

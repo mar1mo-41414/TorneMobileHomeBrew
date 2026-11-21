@@ -13,6 +13,7 @@ library;
 
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -98,6 +99,25 @@ class _ChannelSnapPhysics extends ScrollPhysics {
       tolerance: tolerance,
     );
   }
+}
+
+/// Scroll behaviour for the programme guide: on top of the
+/// default drag devices, a pressed mouse button also drags, so
+/// desktop users can grab the guide grid and pull it around the
+/// way touch users swipe it (5ch request, 2026-11-21). Applied
+/// only around the guide body of this screen; the rest of the
+/// app keeps the standard desktop behaviour. Event tiles still
+/// take plain clicks: the gesture arena only turns a press into
+/// a drag once it moves past the slop, so a click that does not
+/// move lands on the tile exactly as before.
+class _EpgScrollBehavior extends MaterialScrollBehavior {
+  const _EpgScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+    ...super.dragDevices,
+    PointerDeviceKind.mouse,
+  };
 }
 
 class EpgScreen extends ConsumerStatefulWidget {
@@ -190,7 +210,10 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
               onRegister: () =>
                   ref.read(tabIndexProvider.notifier).select(AppTabs.settings),
             )
-          : _buildBandGuide(reg),
+          : ScrollConfiguration(
+              behavior: const _EpgScrollBehavior(),
+              child: _buildBandGuide(reg),
+            ),
     );
   }
 
