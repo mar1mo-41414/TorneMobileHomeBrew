@@ -314,6 +314,14 @@ class FakeTitles implements TitleCatalogService {
     final bytes = thumbnails[id];
     return bytes == null ? null : Uint8List.fromList(bytes);
   }
+
+  /// Resume positions reported by a closing player (plan 102).
+  final List<(String, Duration)> resumePositions = [];
+
+  @override
+  Future<void> setResumePosition(String id, Duration position) async {
+    resumePositions.add((id, position));
+  }
 }
 
 /// Records the res it was asked to play, then fails with a

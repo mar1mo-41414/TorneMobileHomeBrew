@@ -80,6 +80,16 @@
 /// used, so every viewing of a long programme restarted at the
 /// beginning (plan 85 item 1).
 ///
+/// Plan 102: the other half of that pair — leaving this screen
+/// reports where the viewing stopped ([PlayerScreen
+/// .onResumePosition]), because the unit does not learn a
+/// position from being streamed to: its points stayed zero
+/// through every HB playback until this write existed, so
+/// "continue" could never be offered for them. The terms of
+/// the report (nothing when playback never started, zero —
+/// a cleared point — when it ran to the end) are
+/// player_resume_policy's.
+///
 /// Plan 86 (plan 85 item 7): recorded playback gains a speed
 /// control in the app bar (1.0 / 1.25 / 1.5 / 2.0, applied via
 /// mpv's rate with pitch-corrected audio). Live viewing is
@@ -130,6 +140,7 @@ import '../app/providers.dart';
 import '../core/core.dart';
 import 'player_cache_policy.dart';
 import 'player_error_policy.dart';
+import 'player_resume_policy.dart';
 import 'player_seek_policy.dart';
 import 'player_speed_policy.dart';
 import 'player_track_policy.dart';
@@ -141,6 +152,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
     required this.session,
     this.live = false,
     this.initialStart,
+    this.onResumePosition,
   });
 
   /// Display heading: a recording's title, or a live channel's
@@ -161,6 +173,22 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// so the proxy's time-seek path establishes the stream at
   /// that position from the first byte.
   final Duration? initialStart;
+
+  /// Where the position a recording was stopped at goes when
+  /// this screen closes (plan 102): the unit is told, so its
+  /// resume point — the value [initialStart] is later read
+  /// from — follows the viewer. What is sent follows
+  /// player_resume_policy: the stopped-at position, or zero
+  /// (clearing the point) when playback ran to the end, and
+  /// nothing at all when playback never started. Null (live
+  /// viewing has no position to report) disables the report.
+  ///
+  /// The report is a notification to the unit, not local
+  /// persistence: it is awaited inside its own task off the
+  /// dispose path, and a failure is logged to the playback
+  /// diagnostics and dropped — leaving the player must never
+  /// fail or hang because a report did not land.
+  final Future<void> Function(Duration position)? onResumePosition;
 
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
@@ -807,8 +835,44 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     const MaterialDesktopFullscreenButton(),
   ];
 
+  /// Reports the stopped-at position to the unit as the
+  /// screen closes (plan 102; the terms are
+  /// player_resume_policy's). Runs off the dispose path: the
+  /// report is awaited inside its own task, its failure is
+  /// logged and dropped, and dispose never waits on it — the
+  /// screen is leaving either way, and the session teardown
+  /// below does not depend on the report landing.
+  void _reportResumePosition() {
+    final sink = widget.onResumePosition;
+    if (sink == null) return;
+    final position = resumePositionToReport(
+      started: _playing,
+      completed: _completed,
+      position: _lastPosition,
+    );
+    if (position == null) return;
+    final diag = _diag;
+    diag(
+      DiagCategory.playback,
+      'player: reporting the resume position '
+      '${position.inSeconds}s to the unit (plan 102)',
+    );
+    unawaited(
+      sink(position).then(
+        (_) {},
+        onError: (Object e) {
+          diag(
+            DiagCategory.playback,
+            'player: resume position report failed: $e',
+          );
+        },
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _reportResumePosition();
     _watchdog?.cancel();
     _stallTimer?.cancel();
     _wakelockSession.release();

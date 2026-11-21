@@ -73,20 +73,21 @@ Duration? resumeStartOf(RecordedTitle title) {
 }
 
 /// How far before the recorded position a resume actually
-/// starts (plan 98).
+/// starts (plan 98; the mechanism corrected by plan 102).
 ///
-/// The recorded position is the unit's, and the unit counts
-/// what it served, not what was watched: the DTCP proxy reads
-/// ahead into its plaintext window (32 MiB) and the player
-/// buffers ahead of the playhead too, so when playback stops,
-/// the recorded position can sit past the last frame actually
-/// seen — tens of seconds at DR bitrates, more at 3x. Opening
-/// exactly at the recorded position therefore skipped content
-/// the viewer never saw. A resume starts [resumeRewind]
-/// earlier instead: at most that much is replayed, and nothing
-/// unseen is jumped over. The choice dialog still names the
-/// recorded position — that is what the unit says was watched
-/// to; only the open start moves.
+/// Plan 98 assumed the unit derives the position from what
+/// it served, read-ahead included, and the rewind corrected
+/// for the overshoot. Plan 102 measured otherwise: serving
+/// alone never moves the unit's point — the point is what
+/// the last client to play the title reported from its own
+/// playhead when its playback ended (the official client's
+/// write, and now this app's, plan 102). The recorded
+/// position is therefore a watched position, and the rewind
+/// is kept as a context rewind: a resume replays a few
+/// seconds so the viewer picks the thread back up, and any
+/// small overshoot in how a client reports is absorbed.
+/// The choice dialog still names the recorded position —
+/// that is what was watched to; only the open start moves.
 const Duration resumeRewind = Duration(seconds: 10);
 
 /// The start a "continue" choice opens at (plan 98): the
@@ -965,9 +966,8 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
       final resume = await showResumeChoiceDialog(context, initialStart);
       if (!context.mounted) return;
       if (resume == null) return;
-      // Continuing opens a little before the recorded position
-      // (plan 98): the unit's position counts what it served,
-      // which runs ahead of what was watched.
+      // Continuing opens a little before the recorded position:
+      // the context rewind of resumeRewind (plan 98 / 102).
       initialStart = resume ? resumePlaybackStartOf(title) : null;
     }
     setState(() => _starting = true);
@@ -980,6 +980,14 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           title: title.title,
           session: session,
           initialStart: initialStart,
+          // Leaving the player reports where the viewing
+          // stopped (plan 102), so the unit's resume point is
+          // there for the next viewing — in this app or in
+          // the official client.
+          onResumePosition: (position) => ref
+              .read(deviceServicesProvider(reg))
+              .titles
+              .setResumePosition(title.id, position),
         ),
         unsupportedSubject: '録画の再生',
       );
