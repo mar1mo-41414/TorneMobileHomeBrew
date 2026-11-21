@@ -183,11 +183,15 @@ Future<void> deleteRecordedTitle({
 /// The protection toggle flow (plan 98), driven by the title
 /// detail's switch: sends the X_UpdateTitle the unit expects
 /// (the shape verified in plan 86.3), then refreshes the list.
-/// The detail views resolve their title from the list, so the
-/// switch settles on the unit's answer rather than on the
-/// request. A failure keeps the listed state and surfaces the
-/// error.
-Future<void> setRecordedTitleProtection({
+/// Returns whether the unit accepted the update; the caller
+/// reflects a success in the detail's own state at once,
+/// because the refreshed list can lag the update — the unit's
+/// title list may keep answering with the pre-update flag for
+/// a while (device-observed after plan 98), which left the
+/// switch showing the old state until the detail was
+/// re-entered. A failure keeps the listed state and surfaces
+/// the error.
+Future<bool> setRecordedTitleProtection({
   required BuildContext context,
   required WidgetRef ref,
   required RegisteredNasne reg,
@@ -202,15 +206,16 @@ Future<void> setRecordedTitleProtection({
   } on NasneError catch (e) {
     ref.read(diagLogProvider)(DiagCategory.ui, 'title protect failed: $e');
     if (context.mounted) showSnack(context, userMessageForError(e));
-    return;
+    return false;
   } catch (e) {
     ref.read(diagLogProvider)(DiagCategory.ui, 'title protect failed: $e');
     if (context.mounted) showSnack(context, '保護を変更できませんでした');
-    return;
+    return false;
   }
   ref.invalidate(titlesProvider(reg));
-  if (!context.mounted) return;
+  if (!context.mounted) return true;
   showSnack(context, protect ? '保護しました' : '保護を解除しました');
+  return true;
 }
 
 Future<void> _showDeleteRefusal(BuildContext context, String message) {
@@ -708,19 +713,41 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   /// have no order between them worth having.
   bool _protectBusy = false;
 
+  /// The protection state as last set from this view (plan 98
+  /// follow-up). The switch otherwise reads the title resolved
+  /// from the list, whose refresh can lag the unit's own
+  /// update, so a successful toggle is reflected here at once
+  /// and the switch settles immediately. The override is
+  /// dropped when the listed title catches up (its flag equals
+  /// the override) or the view moves to another title, so the
+  /// list stays the source of truth.
+  bool? _protectOverride;
+
   RegisteredNasne get reg => widget.reg;
   RecordedTitle get title => widget.title;
+
+  @override
+  void didUpdateWidget(TitleDetailView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.title.id != oldWidget.title.id ||
+        widget.title.protectFlag == _protectOverride) {
+      _protectOverride = null;
+    }
+  }
 
   Future<void> _toggleProtection(bool protect) async {
     setState(() => _protectBusy = true);
     try {
-      await setRecordedTitleProtection(
+      final updated = await setRecordedTitleProtection(
         context: context,
         ref: ref,
         reg: reg,
         title: title,
         protect: protect,
       );
+      if (updated && mounted) {
+        setState(() => _protectOverride = protect);
+      }
     } finally {
       if (mounted) setState(() => _protectBusy = false);
     }
@@ -729,6 +756,10 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   @override
   Widget build(BuildContext context) {
     final t = title;
+    // The protection state this view shows: the value set
+    // from here, while the listed title still carries the
+    // pre-update flag (see _protectOverride).
+    final protectValue = _protectOverride ?? t.protectFlag;
     final channels = ref.watch(channelsProvider(reg)).value;
     final credentialSummary = ref.watch(credentialSummaryProvider);
     final credentialsMissing =
@@ -784,7 +815,7 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
           FieldRow(label: '保護', value: t.protectFlag ? '保護あり' : 'なし')
         else
           _ProtectionRow(
-            protect: t.protectFlag,
+            protect: protectValue,
             onChanged: _protectBusy ? null : _toggleProtection,
           ),
         if (t.recordingFlag) const FieldRow(label: '状態', value: '録画中'),

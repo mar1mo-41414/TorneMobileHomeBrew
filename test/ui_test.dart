@@ -190,6 +190,8 @@ class FakeTitles implements TitleCatalogService {
     List<RecordedTitle>? items,
     Map<String, List<int>>? thumbnails,
     this.deleteRefusesAsProtected = false,
+    this.protectionListLags = false,
+    this.protectionUpdateFails = false,
   }) : items = List.of(items ?? defaultItems),
        thumbnails = thumbnails ?? const {};
 
@@ -202,6 +204,16 @@ class FakeTitles implements TitleCatalogService {
   /// for a title protected after the list was fetched (UPnP
   /// error 877, plan 86.3).
   final bool deleteRefusesAsProtected;
+
+  /// When true, a protection update is accepted (and recorded)
+  /// but the listed items keep the pre-update flag — the way
+  /// the unit's title list can lag its own update, so the
+  /// refetch right after the update still carries the old flag
+  /// (device-observed after plan 98).
+  final bool protectionListLags;
+
+  /// When true, a protection update fails with a SOAP fault.
+  final bool protectionUpdateFails;
 
   static final defaultItems = [
     RecordedTitle(
@@ -261,7 +273,15 @@ class FakeTitles implements TitleCatalogService {
     RecordedTitle title, {
     required bool protect,
   }) async {
+    if (protectionUpdateFails) {
+      throw NasneError.soapFault(
+        errorCode: '500',
+        errorDescription: 'Action X_UpdateTitle failed',
+        source: 'soap:X_UpdateTitle',
+      );
+    }
     protectionChanges.add((title.id, protect));
+    if (protectionListLags) return;
     final i = items.indexWhere((t) => t.id == title.id);
     if (i >= 0) items[i] = items[i].withProtectFlag(protect);
   }
@@ -469,12 +489,16 @@ class Fixture {
     this.playback,
     this.thumbnails,
     this.titlesDeleteRefusesAsProtected = false,
+    this.titlesProtectionListLags = false,
+    this.titlesProtectionUpdateFails = false,
   }) : schedules = schedules ?? FakeSchedules(),
        store = InMemoryRegistrationStore(registrations ?? [testReg]),
        titlesService = FakeTitles(
          items: titles,
          thumbnails: thumbnails,
          deleteRefusesAsProtected: titlesDeleteRefusesAsProtected,
+         protectionListLags: titlesProtectionListLags,
+         protectionUpdateFails: titlesProtectionUpdateFails,
        );
 
   final FakeSchedules schedules;
@@ -483,6 +507,8 @@ class Fixture {
   final PlaybackEngine? playback;
   final Map<String, List<int>>? thumbnails;
   final bool titlesDeleteRefusesAsProtected;
+  final bool titlesProtectionListLags;
+  final bool titlesProtectionUpdateFails;
   final FakeTitles titlesService;
 
   Widget app() {
@@ -859,6 +885,61 @@ void main() {
     expect(find.text('なし'), findsOneWidget);
     expect(find.text('保護を解除しました'), findsOneWidget);
   });
+
+  testWidgets(
+    'the protection switch settles at once even while the list '
+    'still carries the old flag (plan 98 follow-up)',
+    (tester) async {
+      usePhoneSize(tester);
+      // The unit accepted the update, but its title list keeps
+      // answering with the pre-update flag for a while — the
+      // refetch the toggle triggers cannot settle the switch.
+      final fixture = Fixture(titlesProtectionListLags: true);
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('録画済み'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('録画タイトルB'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('なし'), findsOneWidget);
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+
+      expect(fixture.titlesService.protectionChanges, [('202', true)]);
+      // The switch and its label reflect the successful update
+      // immediately, without waiting for the list to catch up.
+      expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+      expect(find.text('保護あり'), findsOneWidget);
+      expect(find.text('保護しました'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a failed protection update leaves the switch unchanged '
+    '(plan 98 follow-up)',
+    (tester) async {
+      usePhoneSize(tester);
+      final fixture = Fixture(titlesProtectionUpdateFails: true);
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('録画済み'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('録画タイトルB'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('なし'), findsOneWidget);
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+
+      expect(fixture.titlesService.protectionChanges, isEmpty);
+      expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+      expect(find.text('なし'), findsOneWidget);
+      expect(find.text('操作に失敗しました。'), findsOneWidget);
+    },
+  );
 
   testWidgets('a delete the unit refuses with 877 is explained as protection '
       '(plan 98)', (tester) async {
