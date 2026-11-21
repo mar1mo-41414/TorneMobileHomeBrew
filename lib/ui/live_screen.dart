@@ -94,38 +94,43 @@ class _LiveList extends ConsumerWidget {
       if (channels.isEmpty) {
         return const Center(child: Text('視聴可能なチャンネルがありません'));
       }
-      final listView = ListView(
-        children: [
-          for (final band in list)
-            if (band.channels.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                child: Text(
-                  band.title,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ),
-              for (final channel in band.channels)
-                ListTile(
-                  selected: channel.id == selectedId,
-                  leading: const Icon(Icons.live_tv_outlined),
-                  title: Text(channel.channelName ?? channel.programTitle),
-                  subtitle: Text(
-                    _channelSubtitle(channel),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onTap: () => onSelect(
-                    channel,
-                    MediaQuery.sizeOf(context).width >= twoPaneBreakpoint,
-                  ),
-                ),
-            ],
-        ],
-      );
       return LayoutBuilder(
         builder: (context, constraints) {
-          if (constraints.maxWidth < twoPaneBreakpoint) return listView;
+          // One width decides both the layout and the tap
+          // behaviour: the width this list actually gets. Reading
+          // the MediaQuery window width for the tap instead left
+          // a band (window >= breakpoint, list < breakpoint, e.g.
+          // a 1024-wide iPad in landscape past the shell's rail)
+          // where a tap updated only the selection and opened
+          // nothing. See titles_screen.dart for the full note.
+          final twoPane = constraints.maxWidth >= twoPaneBreakpoint;
+          final listView = ListView(
+            children: [
+              for (final band in list)
+                if (band.channels.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: Text(
+                      band.title,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  for (final channel in band.channels)
+                    ListTile(
+                      selected: channel.id == selectedId,
+                      leading: const Icon(Icons.live_tv_outlined),
+                      title: Text(channel.channelName ?? channel.programTitle),
+                      subtitle: Text(
+                        _channelSubtitle(channel),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onTap: () => onSelect(channel, twoPane),
+                    ),
+                ],
+            ],
+          );
+          if (!twoPane) return listView;
           LiveChannel? selected;
           for (final channel in channels) {
             if (channel.id == selectedId) selected = channel;

@@ -372,53 +372,60 @@ class _TitleListState extends ConsumerState<_TitleList> {
                 ),
               );
             }
-            final listView = ListView.builder(
-              itemCount: view.length,
-              itemBuilder: (context, i) {
-                final t = view[i];
-                return ListTile(
-                  selected: t.id == widget.selectedId,
-                  leading: _TitleLeading(reg: reg, title: t),
-                  title: Text(t.title),
-                  subtitle: Text(
-                    '${t.scheduledStart != null ? formatDateTimeJst(t.scheduledStart!) : ''}'
-                    '${t.scheduledDurationSeconds != null ? ' (${formatDurationSeconds(t.scheduledDurationSeconds!)})' : ''}'
-                    '${t.channelName != null ? ' ${t.channelName}' : ''}',
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (t.protectFlag) const Icon(Icons.lock, size: 16),
-                      if (t.newFlag)
-                        const Padding(
-                          padding: EdgeInsets.only(left: 4),
-                          child: Icon(Icons.fiber_new, size: 18),
-                        ),
-                      if (t.copyCountRemaining != null)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 6),
-                          child: Text('残り ${t.copyCountRemaining} 回'),
-                        ),
-                    ],
-                  ),
-                  onTap: () => widget.onSelect(
-                    t,
-                    MediaQuery.sizeOf(context).width >= twoPaneBreakpoint,
-                  ),
-                  onLongPress: () => deleteRecordedTitle(
-                    context: context,
-                    ref: ref,
-                    reg: reg,
-                    title: t,
-                  ),
-                );
-              },
-            );
             return LayoutBuilder(
               builder: (context, constraints) {
-                if (constraints.maxWidth < twoPaneBreakpoint) {
-                  return listView;
-                }
+                // The tap behaviour and the pane layout must agree
+                // on what "wide" means, so both read the same
+                // width: the one this list actually gets. The tap
+                // once read the MediaQuery window width while the
+                // layout read these constraints, which the shell's
+                // navigation rail narrows; in the band between the
+                // two (a 1024-wide iPad in landscape, a Split View
+                // or Stage Manager window) a tap only updated the
+                // selection state — no detail page was pushed and
+                // no detail pane existed to show it — so selecting
+                // a title appeared to do nothing at all.
+                final twoPane = constraints.maxWidth >= twoPaneBreakpoint;
+                final listView = ListView.builder(
+                  itemCount: view.length,
+                  itemBuilder: (context, i) {
+                    final t = view[i];
+                    return ListTile(
+                      selected: t.id == widget.selectedId,
+                      leading: _TitleLeading(reg: reg, title: t),
+                      title: Text(t.title),
+                      subtitle: Text(
+                        '${t.scheduledStart != null ? formatDateTimeJst(t.scheduledStart!) : ''}'
+                        '${t.scheduledDurationSeconds != null ? ' (${formatDurationSeconds(t.scheduledDurationSeconds!)})' : ''}'
+                        '${t.channelName != null ? ' ${t.channelName}' : ''}',
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (t.protectFlag) const Icon(Icons.lock, size: 16),
+                          if (t.newFlag)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: Icon(Icons.fiber_new, size: 18),
+                            ),
+                          if (t.copyCountRemaining != null)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 6),
+                              child: Text('残り ${t.copyCountRemaining} 回'),
+                            ),
+                        ],
+                      ),
+                      onTap: () => widget.onSelect(t, twoPane),
+                      onLongPress: () => deleteRecordedTitle(
+                        context: context,
+                        ref: ref,
+                        reg: reg,
+                        title: t,
+                      ),
+                    );
+                  },
+                );
+                if (!twoPane) return listView;
                 RecordedTitle? selected;
                 for (final t in view) {
                   if (t.id == widget.selectedId) selected = t;

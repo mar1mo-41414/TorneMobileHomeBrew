@@ -107,36 +107,41 @@ class _ScheduleList extends ConsumerWidget {
       if (list.isEmpty) {
         return const Center(child: Text('予約はありません'));
       }
-      final listView = ListView.builder(
-        itemCount: list.length,
-        itemBuilder: (context, i) {
-          final s = list[i];
-          return ListTile(
-            selected: s.id == selectedId,
-            leading: const Icon(Icons.event_note_outlined),
-            title: Text(
-              '${formatDateTimeWithWeekdayJst(s.start)} '
-              '${channelDisplayName(channels, s.channel)}',
-            ),
-            subtitle: Text(
-              '${formatTimeJst(s.start)}〜${formatTimeJst(s.end)}'
-              ' (${formatDurationSeconds(s.durationSeconds)})'
-              ' 画質 ${qualityModeLabel(s.desiredQualityMode)}'
-              '${s.title != null ? ' ${s.title}' : ''}',
-            ),
-            trailing: s.priorityFlag != 0
-                ? const Icon(Icons.priority_high, size: 18)
-                : null,
-            onTap: () => onSelect(
-              s,
-              MediaQuery.sizeOf(context).width >= twoPaneBreakpoint,
-            ),
-          );
-        },
-      );
       return LayoutBuilder(
         builder: (context, constraints) {
-          if (constraints.maxWidth < twoPaneBreakpoint) return listView;
+          // One width decides both the layout and the tap
+          // behaviour: the width this list actually gets. Reading
+          // the MediaQuery window width for the tap instead left
+          // a band (window >= breakpoint, list < breakpoint, e.g.
+          // a 1024-wide iPad in landscape past the shell's rail)
+          // where a tap updated only the selection and opened
+          // nothing. See titles_screen.dart for the full note.
+          final twoPane = constraints.maxWidth >= twoPaneBreakpoint;
+          final listView = ListView.builder(
+            itemCount: list.length,
+            itemBuilder: (context, i) {
+              final s = list[i];
+              return ListTile(
+                selected: s.id == selectedId,
+                leading: const Icon(Icons.event_note_outlined),
+                title: Text(
+                  '${formatDateTimeWithWeekdayJst(s.start)} '
+                  '${channelDisplayName(channels, s.channel)}',
+                ),
+                subtitle: Text(
+                  '${formatTimeJst(s.start)}〜${formatTimeJst(s.end)}'
+                  ' (${formatDurationSeconds(s.durationSeconds)})'
+                  ' 画質 ${qualityModeLabel(s.desiredQualityMode)}'
+                  '${s.title != null ? ' ${s.title}' : ''}',
+                ),
+                trailing: s.priorityFlag != 0
+                    ? const Icon(Icons.priority_high, size: 18)
+                    : null,
+                onTap: () => onSelect(s, twoPane),
+              );
+            },
+          );
+          if (!twoPane) return listView;
           RecordSchedule? selected;
           for (final s in list) {
             if (s.id == selectedId) selected = s;
