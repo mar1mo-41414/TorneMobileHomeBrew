@@ -17,6 +17,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app/providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
+import 'epg_subchannel_visibility.dart';
 import 'format.dart';
 import 'playback_launcher.dart';
 import 'player_screen.dart';
@@ -89,8 +90,15 @@ class _LiveList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bands = ref.watch(liveChannelsProvider(reg));
+    final showSubchannels = ref.watch(showSubchannelsProvider);
     return asyncSection(bands, (list) {
-      final channels = [for (final band in list) ...band.channels];
+      // The guide's subchannel switch applies to this list
+      // too (plan 95): the same setting, not a new one.
+      final visibleBands = liveBandsWithSubchannelSetting(
+        list,
+        showSubchannels,
+      );
+      final channels = [for (final band in visibleBands) ...band.channels];
       if (channels.isEmpty) {
         return const Center(child: Text('視聴可能なチャンネルがありません'));
       }
@@ -106,7 +114,7 @@ class _LiveList extends ConsumerWidget {
           final twoPane = constraints.maxWidth >= twoPaneBreakpoint;
           final listView = ListView(
             children: [
-              for (final band in list)
+              for (final band in visibleBands)
                 if (band.channels.isNotEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
