@@ -141,6 +141,15 @@
 /// indicator where a thumb cannot reach it; the themes
 /// below raise its container height and thumb size and
 /// lift the non-fullscreen bar off the edge.
+///
+/// The fixed lift alone did not clear the indicator on
+/// the owner's devices (plan 105): the bottom margins
+/// of the seek bar and of the bottom button bar sharing
+/// its stack now grow by the device's actual bottom
+/// view padding, so the whole touch target and the
+/// button row sit above the gesture area, and the
+/// interruption banner pads itself the same way (see
+/// player_safe_area_policy).
 library;
 
 import 'dart:async';
@@ -156,6 +165,7 @@ import '../core/core.dart';
 import 'player_cache_policy.dart';
 import 'player_error_policy.dart';
 import 'player_resume_policy.dart';
+import 'player_safe_area_policy.dart';
 import 'player_seek_policy.dart';
 import 'player_speed_policy.dart';
 import 'player_teardown_policy.dart';
@@ -320,7 +330,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// and the controls no safe-area padding, leaving it
   /// under the iPhone home indicator; the fullscreen theme
   /// already carries a 42 px margin over the safe-area
-  /// padding and keeps it.
+  /// padding and keeps it. This lift is only the gap kept
+  /// above the gesture area: the theme adds the device's
+  /// bottom view padding under it (plan 105, see
+  /// player_safe_area_policy).
   static const double seekBarBottomLift = 12.0;
 
   /// The diagnostics log, captured in [initState] (plan
@@ -766,8 +779,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// transport row. Built from media_kit's defaults via
   /// copyWith so the gestures and the rest of the stock
   /// behaviour carry over unchanged.
+  ///
+  /// Outside fullscreen the bottom margins also clear the
+  /// system gesture area (plan 105): the seek bar's margin
+  /// and the bottom button bar's margin grow by
+  /// [bottomViewPadding], the device's bottom view
+  /// padding, and the button bar's right margin moves the
+  /// fullscreen button in from the corner (see
+  /// player_safe_area_policy). Fullscreen needs none of
+  /// this: media_kit pads the fullscreen controls by the
+  /// safe area itself, under the stock 42 px margins.
   MaterialVideoControlsThemeData _materialControlsTheme({
     required bool fullscreen,
+    double bottomViewPadding = 0,
   }) {
     final base = fullscreen
         ? kDefaultMaterialVideoControlsThemeDataFullscreen
@@ -779,10 +803,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     );
     if (!fullscreen) {
       data = data.copyWith(
-        seekBarMargin: const EdgeInsets.only(
+        seekBarMargin: EdgeInsets.only(
           left: 16,
           right: 16,
-          bottom: seekBarBottomLift,
+          bottom: seekBarBottomMargin(
+            lift: seekBarBottomLift,
+            viewPaddingBottom: bottomViewPadding,
+          ),
+        ),
+        bottomButtonBarMargin: EdgeInsets.only(
+          left: 16,
+          right: bottomButtonBarRightMargin,
+          bottom: bottomButtonBarBottomMargin(bottomViewPadding),
         ),
       );
     }
@@ -986,6 +1018,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // The device's bottom view padding — the home
+    // indicator's area on iPhone / iPad, the gesture
+    // bar's on Android, zero where the system keeps the
+    // window clear. The non-fullscreen controls' bottom
+    // margins grow by it (plan 105, see
+    // player_safe_area_policy). viewPadding, not
+    // padding: it reports the raw inset whether or not
+    // an ancestor has consumed the padding form.
+    final bottomViewPadding = MediaQuery.viewPaddingOf(context).bottom;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
@@ -1083,7 +1124,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           : Stack(
               children: [
                 MaterialVideoControlsTheme(
-                  normal: _materialControlsTheme(fullscreen: false),
+                  normal: _materialControlsTheme(
+                    fullscreen: false,
+                    bottomViewPadding: bottomViewPadding,
+                  ),
                   fullscreen: _materialControlsTheme(fullscreen: true),
                   child: MaterialDesktopVideoControlsTheme(
                     normal: _desktopControlsTheme(),
@@ -1109,7 +1153,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       bottom: 0,
       child: Container(
         color: Colors.black87,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        // The banner's buttons sit at the screen's bottom
+        // edge like the controls do, so its bottom padding
+        // clears the gesture area the same way (plan 105,
+        // see player_safe_area_policy).
+        padding: EdgeInsets.fromLTRB(
+          16,
+          10,
+          16,
+          10 + bottomGestureInset(MediaQuery.viewPaddingOf(context).bottom),
+        ),
         child: Row(
           children: [
             const Icon(Icons.error_outline, color: Colors.white),
