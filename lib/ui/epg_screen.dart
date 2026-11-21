@@ -13,8 +13,7 @@ library;
 
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' show PointerDeviceKind;
-
+import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -103,13 +102,17 @@ class _ChannelSnapPhysics extends ScrollPhysics {
 
 /// Scroll behaviour for the programme guide: on top of the
 /// default drag devices, a pressed mouse button also drags, so
-/// desktop users can grab the guide grid and pull it around the
-/// way touch users swipe it (5ch request, 2026-11-21). Applied
-/// only around the guide body of this screen; the rest of the
-/// app keeps the standard desktop behaviour. Event tiles still
-/// take plain clicks: the gesture arena only turns a press into
-/// a drag once it moves past the slop, so a click that does not
-/// move lands on the tile exactly as before.
+/// desktop users can pull scrollable parts of this screen
+/// around the way touch users swipe them (5ch request,
+/// 2026-11-21). Applied only around the guide body of this
+/// screen; the rest of the app keeps the standard desktop
+/// behaviour. The grid itself is the exception: it overrides
+/// this with [_EpgGridScrollBehavior] and takes its drags
+/// through [_GuideGridScroll], so that one drag can move both
+/// axes at once. Event tiles still take plain clicks: the
+/// gesture arena only turns a press into a drag once it moves
+/// past the slop, so a click that does not move lands on the
+/// tile exactly as before.
 class _EpgScrollBehavior extends MaterialScrollBehavior {
   const _EpgScrollBehavior();
 
@@ -118,6 +121,202 @@ class _EpgScrollBehavior extends MaterialScrollBehavior {
     ...super.dragDevices,
     PointerDeviceKind.mouse,
   };
+}
+
+/// Scroll behaviour for the guide grid subtree: no drag devices
+/// at all. [_GuideGridScroll] drives both of the grid's scroll
+/// positions from one pan recogniser; the scroll views' own
+/// drag recognisers must stay out of the gesture arena
+/// entirely, or they would lock each drag to a single axis
+/// again.
+class _EpgGridScrollBehavior extends MaterialScrollBehavior {
+  const _EpgGridScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const <PointerDeviceKind>{};
+}
+
+/// The guide grid: the horizontal channel scroll view around
+/// the vertical day grid, with drags driven by a single pan
+/// recogniser instead of the two scroll views' own drag
+/// recognisers.
+///
+/// A horizontal and a vertical drag recogniser in the same
+/// gesture arena lock a drag to whichever axis crosses the
+/// touch slop first, so a diagonal pull only ever scrolled one
+/// way (reported from the Windows build, 2026-11-21: start
+/// pulling vertically and only vertical moves, start
+/// horizontally and only horizontal moves). Here the grid
+/// subtree's [ScrollConfiguration] offers no drag devices (see
+/// [_EpgGridScrollBehavior]), and one [PanGestureRecognizer]
+/// forwards every update to both scroll positions through the
+/// same hold/drag/end hand-off [Scrollable] itself uses — the
+/// arrangement the framework's two-dimensional scrolling uses
+/// for DiagonalDragBehavior.free. Each position keeps its own
+/// physics, so a released fling still settles the channel axis
+/// on a column boundary, the time ruler stays in step through
+/// the existing controller link, and plain clicks still land
+/// on the event tiles: the pan recogniser only claims a press
+/// once it moves past the slop.
+class _GuideGridScroll extends StatefulWidget {
+  const _GuideGridScroll({
+    required this.gridController,
+    required this.bodyController,
+    required this.child,
+  });
+
+  /// Horizontal (channel axis) scroll of the grid.
+  final ScrollController gridController;
+
+  /// Vertical (time axis) scroll of the day grid.
+  final ScrollController bodyController;
+
+  final Widget child;
+
+  @override
+  State<_GuideGridScroll> createState() => _GuideGridScrollState();
+}
+
+class _GuideGridScrollState extends State<_GuideGridScroll> {
+  Drag? _horizontalDrag;
+  Drag? _verticalDrag;
+  ScrollHoldController? _horizontalHold;
+  ScrollHoldController? _verticalHold;
+
+  ScrollPosition? get _horizontalPosition =>
+      widget.gridController.hasClients ? widget.gridController.position : null;
+
+  ScrollPosition? get _verticalPosition =>
+      widget.bodyController.hasClients ? widget.bodyController.position : null;
+
+  @override
+  void dispose() {
+    _horizontalHold?.cancel();
+    _horizontalDrag?.cancel();
+    _verticalHold?.cancel();
+    _verticalDrag?.cancel();
+    super.dispose();
+  }
+
+  void _disposeHorizontalHold() => _horizontalHold = null;
+
+  void _disposeVerticalHold() => _verticalHold = null;
+
+  void _disposeHorizontalDrag() => _horizontalDrag = null;
+
+  void _disposeVerticalDrag() => _verticalDrag = null;
+
+  // The handlers below mirror ScrollableState's touch handlers,
+  // once per axis: hold on down, drag on start, and the drag
+  // hand-off disposes the hold on its own.
+  void _handleDragDown(DragDownDetails details) {
+    _horizontalHold = _horizontalPosition?.hold(_disposeHorizontalHold);
+    _verticalHold = _verticalPosition?.hold(_disposeVerticalHold);
+  }
+
+  void _handleDragStart(DragStartDetails details) {
+    final horizontal = _horizontalPosition;
+    if (horizontal != null) {
+      _horizontalDrag = horizontal.drag(details, _disposeHorizontalDrag);
+    }
+    if (_horizontalHold != null) _disposeHorizontalHold();
+    final vertical = _verticalPosition;
+    if (vertical != null) {
+      _verticalDrag = vertical.drag(details, _disposeVerticalDrag);
+    }
+    if (_verticalHold != null) _disposeVerticalHold();
+  }
+
+  void _handleDragUpdate(DragUpdateDetails details) {
+    // ScrollDragController reads primaryDelta, so each axis
+    // gets the pan delta projected onto it, as the framework's
+    // two-dimensional scrollable does.
+    _horizontalDrag?.update(
+      DragUpdateDetails(
+        sourceTimeStamp: details.sourceTimeStamp,
+        delta: Offset(details.delta.dx, 0.0),
+        primaryDelta: details.delta.dx,
+        globalPosition: details.globalPosition,
+        localPosition: details.localPosition,
+      ),
+    );
+    _verticalDrag?.update(
+      DragUpdateDetails(
+        sourceTimeStamp: details.sourceTimeStamp,
+        delta: Offset(0.0, details.delta.dy),
+        primaryDelta: details.delta.dy,
+        globalPosition: details.globalPosition,
+        localPosition: details.localPosition,
+      ),
+    );
+  }
+
+  void _handleDragEnd(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond;
+    _horizontalDrag?.end(
+      DragEndDetails(
+        velocity: Velocity(pixelsPerSecond: Offset(velocity.dx, 0.0)),
+        primaryVelocity: velocity.dx,
+      ),
+    );
+    _verticalDrag?.end(
+      DragEndDetails(
+        velocity: Velocity(pixelsPerSecond: Offset(0.0, velocity.dy)),
+        primaryVelocity: velocity.dy,
+      ),
+    );
+  }
+
+  void _handleDragCancel() {
+    _horizontalHold?.cancel();
+    _horizontalDrag?.cancel();
+    _verticalHold?.cancel();
+    _verticalDrag?.cancel();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RawGestureDetector(
+      gestures: <Type, GestureRecognizerFactory>{
+        PanGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<PanGestureRecognizer>(
+              () => PanGestureRecognizer(
+                supportedDevices: const <PointerDeviceKind>{
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.mouse,
+                  PointerDeviceKind.stylus,
+                  PointerDeviceKind.invertedStylus,
+                  PointerDeviceKind.trackpad,
+                  PointerDeviceKind.unknown,
+                },
+              ),
+              (PanGestureRecognizer instance) {
+                instance
+                  ..onDown = _handleDragDown
+                  ..onStart = _handleDragStart
+                  ..onUpdate = _handleDragUpdate
+                  ..onEnd = _handleDragEnd
+                  ..onCancel = _handleDragCancel
+                  ..dragStartBehavior = DragStartBehavior.start
+                  ..velocityTrackerBuilder = ScrollConfiguration.of(context)
+                      .velocityTrackerBuilder(context)
+                  ..gestureSettings = MediaQuery.maybeGestureSettingsOf(
+                    context,
+                  );
+              },
+            ),
+      },
+      child: ScrollConfiguration(
+        behavior: const _EpgGridScrollBehavior(),
+        child: SingleChildScrollView(
+          controller: widget.gridController,
+          scrollDirection: Axis.horizontal,
+          physics: const _ChannelSnapPhysics(),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
 }
 
 class EpgScreen extends ConsumerStatefulWidget {
@@ -136,6 +335,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
 
   final _rulerController = ScrollController();
   final _bodyController = ScrollController();
+  final _gridController = ScrollController();
   bool _syncing = false;
 
   @override
@@ -158,6 +358,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
   void dispose() {
     _rulerController.dispose();
     _bodyController.dispose();
+    _gridController.dispose();
     super.dispose();
   }
 
@@ -275,6 +476,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
               }),
               rulerController: _rulerController,
               bodyController: _bodyController,
+              gridController: _gridController,
               scrolledToNow: _scrolledToNow,
               onScrolledToNow: () => _scrolledToNow = true,
             ),
@@ -294,6 +496,7 @@ class _GuideView extends StatelessWidget {
     required this.onSelectDay,
     required this.rulerController,
     required this.bodyController,
+    required this.gridController,
     required this.scrolledToNow,
     required this.onScrolledToNow,
   });
@@ -305,6 +508,7 @@ class _GuideView extends StatelessWidget {
   final ValueChanged<DateTime> onSelectDay;
   final ScrollController rulerController;
   final ScrollController bodyController;
+  final ScrollController gridController;
   final bool scrolledToNow;
   final VoidCallback onScrolledToNow;
 
@@ -372,9 +576,9 @@ class _GuideView extends StatelessWidget {
               ),
               const VerticalDivider(width: 1),
               Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  physics: const _ChannelSnapPhysics(),
+                child: _GuideGridScroll(
+                  gridController: gridController,
+                  bodyController: bodyController,
                   child: SizedBox(
                     width: _channelWidth * guide.services.length,
                     child: Column(

@@ -824,6 +824,126 @@ void main() {
       expect(scrollable.position.activity, isA<IdleScrollActivity>());
     });
 
+    testWidgets('diagonal drags scroll the grid on both axes at once',
+        (tester) async {
+      tester.view.physicalSize = const Size(1000, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const reg = RegisteredNasne(
+        host: '192.0.2.1',
+        udn: 'uuid:test',
+        friendlyName: 'nasne',
+        macAddr: '00:11:22:33:44:55',
+      );
+      Channel channelN(int n) => Channel(
+            broadcastingType: 2,
+            networkId: 0x1111,
+            transportStreamId: 0x2222 + n,
+            serviceId: 0x3300 + n,
+            serviceType: 1,
+            channelNumber: n + 1,
+            serviceName: '局$n',
+          );
+      // A guide holding only tomorrow's programmes (JST), so the
+      // initial jump-to-now stays out of the way and the grid
+      // starts at offset 0 on both axes.
+      final jstNow = DateTime.now().toUtc().add(const Duration(hours: 9));
+      final firstDay = DateTime.utc(jstNow.year, jstNow.month, jstNow.day)
+          .add(const Duration(days: 1))
+          .subtract(const Duration(hours: 9));
+      final guide = EpgGuide(
+        broadcastingType: 2,
+        services: [
+          for (var s = 0; s < 8; s++)
+            EpgServiceGuide(
+              channel: channelN(s),
+              events: [
+                for (var i = 0; i < 48; i++)
+                  EpgEvent(
+                    eventId: i + 1,
+                    start: firstDay.add(Duration(minutes: 30 * i)),
+                    duration: const Duration(minutes: 30),
+                    title: '番組$s-$i',
+                  ),
+              ],
+            ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            registrationStoreProvider.overrideWithValue(
+                InMemoryRegistrationStore(const [reg])),
+            epgGuideProvider.overrideWith((ref, r) async => guide),
+            channelLogosProvider
+                .overrideWith((ref, r) async => const <int, List<int>>{}),
+          ],
+          child: const MaterialApp(home: EpgScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final scv = find.byWidgetPredicate((w) =>
+          w is SingleChildScrollView &&
+          w.scrollDirection == Axis.horizontal);
+      expect(scv, findsOneWidget);
+      ScrollPosition positionOf(AxisDirection axis) => tester
+          .stateList<ScrollableState>(
+              find.descendant(of: scv, matching: find.byType(Scrollable)))
+          .map((s) => s.position)
+          .firstWhere((p) => p.axisDirection == axis);
+      final hPos = positionOf(AxisDirection.right);
+      final vPos = positionOf(AxisDirection.down);
+      expect(hPos.pixels, 0);
+      expect(vPos.pixels, 0);
+
+      // Phase 1 (mouse): pull the grid diagonally. With the two
+      // scroll views' own drag recognisers, the gesture arena
+      // locked the drag to whichever axis crossed the slop
+      // first; through the grid's single pan recogniser both
+      // axes must follow the same drag.
+      final mouse = await tester.startGesture(
+        tester.getCenter(scv),
+        kind: PointerDeviceKind.mouse,
+      );
+      for (var i = 0; i < 6; i++) {
+        await mouse.moveBy(const Offset(-40, -40));
+        await tester.pump();
+      }
+      expect(hPos.pixels, greaterThan(100));
+      expect(vPos.pixels, greaterThan(100));
+      await mouse.up();
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      // The channel axis still settles on a column boundary and
+      // both positions come fully to rest.
+      expect(hPos.pixels % 172, anyOf(closeTo(0, 1.0), closeTo(172, 1.0)));
+      expect(hPos.activity, isA<IdleScrollActivity>());
+      expect(vPos.activity, isA<IdleScrollActivity>());
+
+      // Phase 2 (touch): drag back diagonally; both axes must
+      // follow again, by roughly the dragged amount.
+      final hBefore = hPos.pixels;
+      final vBefore = vPos.pixels;
+      final touch = await tester.startGesture(tester.getCenter(scv));
+      for (var i = 0; i < 3; i++) {
+        await touch.moveBy(const Offset(40, 40));
+        await tester.pump();
+      }
+      expect(hPos.pixels, lessThan(hBefore - 40));
+      expect(vPos.pixels, lessThan(vBefore - 40));
+      await touch.up();
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(hPos.pixels % 172, anyOf(closeTo(0, 1.0), closeTo(172, 1.0)));
+      expect(hPos.activity, isA<IdleScrollActivity>());
+      expect(vPos.activity, isA<IdleScrollActivity>());
+    });
+
     testWidgets('mouse click on an event tile still opens the detail',
         (tester) async {
       tester.view.physicalSize = const Size(390, 844);
