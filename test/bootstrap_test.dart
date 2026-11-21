@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tmhb/app/bootstrap.dart';
 import 'package:tmhb/app/providers.dart';
+import 'package:tmhb/app/state.dart';
 import 'package:tmhb/core/core.dart';
 
 const reg = RegisteredNasne(
@@ -16,6 +17,13 @@ const reg = RegisteredNasne(
   udn: 'uuid:00000000-0000-1000-8000-001122334455',
   friendlyName: 'nasne',
   macAddr: '00:11:22:33:44:55',
+);
+
+const regB = RegisteredNasne(
+  host: '192.0.2.2',
+  udn: 'uuid:00000000-0000-1000-8000-001122334466',
+  friendlyName: 'nasne (2台目)',
+  macAddr: '00:11:22:33:44:66',
 );
 
 const channels = [
@@ -72,6 +80,36 @@ void main() {
           await second.read(channelCacheProvider).load('192.0.2.1', 2);
       expect(cached, isNotNull);
       expect(cached!.single.serviceName, 'テスト放送');
+    });
+
+    test('selected device survives a restart', () async {
+      final first = fileStoreContainer(dir);
+      final store = first.read(registrationStoreProvider);
+      await store.save(reg);
+      await store.save(regB);
+      first.read(selectedHostProvider.notifier).select(regB.host);
+      // The selection write-back is asynchronous; wait until it
+      // lands in the key-value file before simulating the restart.
+      final kvFile = File('${dir.path}/$keyValueFileName');
+      for (var i = 0; i < 100; i++) {
+        if (await kvFile.exists() &&
+            (await kvFile.readAsString()).contains(regB.host)) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      first.dispose();
+
+      final second = fileStoreContainer(dir);
+      addTearDown(second.dispose);
+      await second.read(registrationsProvider.future);
+      // The persisted selection is restored asynchronously.
+      for (var i = 0; i < 100; i++) {
+        if (second.read(selectedHostProvider) == regB.host) break;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(second.read(selectedHostProvider), regB.host);
+      expect(second.read(selectedRegistrationProvider)?.host, regB.host);
     });
   });
 }

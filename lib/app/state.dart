@@ -60,12 +60,32 @@ final registrationsProvider =
 
 /// Host of the device the user explicitly selected; null means
 /// "the first registered device" (the v1 UI is single-device,
-/// plan 9 item 5c).
+/// plan 9 item 5c). The selection is persisted in the key-value
+/// store so it survives restarts when several devices are
+/// registered; without it a restart always fell back to the
+/// first registered device.
 class SelectedHostNotifier extends Notifier<String?> {
-  @override
-  String? build() => null;
+  static const _key = 'selected_host';
 
-  void select(String? host) => state = host;
+  @override
+  String? build() {
+    final store = ref.watch(keyValueStoreProvider);
+    Future.microtask(() async {
+      final value = await store.read(_key);
+      if (value != null && state == null) state = value;
+    });
+    return null;
+  }
+
+  Future<void> select(String? host) async {
+    state = host;
+    final store = ref.read(keyValueStoreProvider);
+    if (host == null) {
+      await store.delete(_key);
+    } else {
+      await store.write(_key, host);
+    }
+  }
 }
 
 final selectedHostProvider = NotifierProvider<SelectedHostNotifier, String?>(
