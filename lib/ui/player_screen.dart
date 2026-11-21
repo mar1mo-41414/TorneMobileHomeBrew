@@ -90,6 +90,21 @@
 /// a cleared point — when it ran to the end) are
 /// player_resume_policy's.
 ///
+/// Plan 104: leaving the screen could fail to stop the
+/// audio. The plan-102 report ran first in dispose and read
+/// the diagnostics log through ref; Riverpod 3 forbids ref
+/// once the widget is deactivating, so the read threw a
+/// StateError that aborted dispose before the player was
+/// disposed and the session stopped — the screen went back
+/// to the list and mpv kept playing (field report). Live
+/// viewing escaped only because it has no report to send.
+/// Dispose now decides the report from the state's own
+/// fields, reads no provider (the log is captured in a
+/// field at initState), and runs every teardown step —
+/// player stop and dispose, session stop, the report last —
+/// unconditionally through player_teardown_policy, each
+/// guarded so one failure cannot starve the rest.
+///
 /// Plan 86 (plan 85 item 7): recorded playback gains a speed
 /// control in the app bar (1.0 / 1.25 / 1.5 / 2.0, applied via
 /// mpv's rate with pitch-corrected audio). Live viewing is
@@ -143,6 +158,7 @@ import 'player_error_policy.dart';
 import 'player_resume_policy.dart';
 import 'player_seek_policy.dart';
 import 'player_speed_policy.dart';
+import 'player_teardown_policy.dart';
 import 'player_track_policy.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
@@ -188,6 +204,12 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// dispose path, and a failure is logged to the playback
   /// diagnostics and dropped — leaving the player must never
   /// fail or hang because a report did not land.
+  ///
+  /// Plan 104: the report is decided from the screen's own
+  /// fields before teardown and sent as a guarded teardown
+  /// step once the player's stop is under way; see
+  /// player_teardown_policy for why dispose touches no ref
+  /// and lets no step's failure starve the rest.
   final Future<void> Function(Duration position)? onResumePosition;
 
   @override
@@ -301,11 +323,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// padding and keeps it.
   static const double seekBarBottomLift = 12.0;
 
-  DiagLog get _diag => ref.read(diagLogProvider);
+  /// The diagnostics log, captured in [initState] (plan
+  /// 104): dispose and the teardown it drives read no
+  /// provider through ref — Riverpod 3 throws once the
+  /// widget is deactivating, and a throw there aborts the
+  /// teardown (see player_teardown_policy).
+  late final DiagLog _diag;
 
   @override
   void initState() {
     super.initState();
+    _diag = ref.read(diagLogProvider);
     _player = Player();
     _videoController = VideoController(_player);
     _wakelockSession = ref.read(playbackWakelockProvider).openSession();
@@ -835,52 +863,124 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     const MaterialDesktopFullscreenButton(),
   ];
 
-  /// Reports the stopped-at position to the unit as the
-  /// screen closes (plan 102; the terms are
-  /// player_resume_policy's). Runs off the dispose path: the
-  /// report is awaited inside its own task, its failure is
-  /// logged and dropped, and dispose never waits on it — the
-  /// screen is leaving either way, and the session teardown
-  /// below does not depend on the report landing.
-  void _reportResumePosition() {
-    final sink = widget.onResumePosition;
-    if (sink == null) return;
-    final position = resumePositionToReport(
+  /// The position leaving this screen reports to the unit,
+  /// or null when nothing is to be reported (plan 102; the
+  /// terms are player_resume_policy's). Decided from this
+  /// state's own fields — deliberately nothing through ref:
+  /// dispose runs while the widget is deactivating, where
+  /// Riverpod 3 forbids ref (plan 104).
+  Duration? _resumePositionToReport() {
+    if (widget.onResumePosition == null) return null;
+    return resumePositionToReport(
       started: _playing,
       completed: _completed,
       position: _lastPosition,
     );
-    if (position == null) return;
-    final diag = _diag;
-    diag(
+  }
+
+  /// Sends the resume report (plan 102) as the last teardown
+  /// step: the player's stop is already under way, and
+  /// nothing about leaving waits on the report landing. The
+  /// sink invocation sits inside the try because the sink
+  /// resolves the unit's services through the caller's ref
+  /// before its future exists — a synchronous throw there is
+  /// a failed report, not a failed teardown (plan 104).
+  void _reportResumePosition(Duration position) {
+    final sink = widget.onResumePosition;
+    if (sink == null) return;
+    _diag(
       DiagCategory.playback,
       'player: reporting the resume position '
       '${position.inSeconds}s to the unit (plan 102)',
     );
-    unawaited(
-      sink(position).then(
-        (_) {},
-        onError: (Object e) {
-          diag(
-            DiagCategory.playback,
-            'player: resume position report failed: $e',
-          );
-        },
-      ),
-    );
+    try {
+      unawaited(
+        sink(position).then(
+          (_) {},
+          onError: (Object e) {
+            _diag(
+              DiagCategory.playback,
+              'player: resume position report failed: $e',
+            );
+          },
+        ),
+      );
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: resume position report failed: $e');
+    }
+  }
+
+  /// Stops the player and then disposes it (plan 104): the
+  /// explicit stop silences mpv first, and the dispose runs
+  /// even when the stop fails — media_kit's own dispose also
+  /// stops internally, but leaving must not depend on a
+  /// single call landing.
+  Future<void> _stopAndDisposePlayer() async {
+    try {
+      await _player.stop();
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: stop on leaving failed: $e');
+    }
+    try {
+      await _player.dispose();
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: dispose on leaving failed: $e');
+    }
+  }
+
+  /// Stops the playback session (plan 104): closes the
+  /// loopback proxy and the DTCP session behind it. A
+  /// failure is logged inside and dropped; the session's
+  /// stop can never hold up the rest of the teardown.
+  Future<void> _stopSession() async {
+    try {
+      await widget.session.stop();
+    } catch (e) {
+      _diag(
+        DiagCategory.playback,
+        'player: session stop on leaving failed: $e',
+      );
+    }
   }
 
   @override
   void dispose() {
-    _reportResumePosition();
-    _watchdog?.cancel();
-    _stallTimer?.cancel();
-    _wakelockSession.release();
-    for (final subscription in _subscriptions) {
-      subscription.cancel();
-    }
-    _player.dispose();
-    widget.session.stop();
+    // What leaving reports to the unit is decided first,
+    // from plain fields, before anything is torn down
+    // (plan 104).
+    final resumePosition = _resumePositionToReport();
+    // Every step runs unconditionally (plan 104; see
+    // player_teardown_policy): a failure in one is logged
+    // and dropped, so the rest — above all the player's
+    // stop — always run, whichever exit path got here.
+    runTeardownSteps(
+      [
+        (name: 'watchdog', run: () => _watchdog?.cancel()),
+        (name: 'stall timer', run: () => _stallTimer?.cancel()),
+        (name: 'wakelock', run: () => _wakelockSession.release()),
+        (
+          name: 'subscriptions',
+          run: () {
+            for (final subscription in _subscriptions) {
+              subscription.cancel();
+            }
+          },
+        ),
+        (name: 'player', run: () => unawaited(_stopAndDisposePlayer())),
+        (name: 'session', run: () => unawaited(_stopSession())),
+        if (resumePosition != null)
+          (
+            name: 'resume report',
+            run: () => _reportResumePosition(resumePosition),
+          ),
+      ],
+      onFailure: (name, error) {
+        _diag(
+          DiagCategory.playback,
+          'player: leaving: the $name step failed: $error',
+        );
+      },
+    );
     super.dispose();
   }
 
