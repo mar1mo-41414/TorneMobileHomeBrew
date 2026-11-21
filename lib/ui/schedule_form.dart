@@ -23,6 +23,7 @@ import '../core/core.dart';
 import 'error_messages.dart';
 import 'format.dart';
 import 'schedule_channel_selection.dart';
+import 'schedule_destination.dart';
 import 'widgets.dart';
 
 enum ScheduleFormMode { create, edit, timeChange }
@@ -118,6 +119,7 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
   // shared fields
   late int _quality;
   late bool _priority;
+  String _destinationId = recordDestinationInternal;
   // edit fields
   final _condition = TextEditingController();
   final _destination = TextEditingController();
@@ -135,6 +137,9 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
       _priority = original.priorityFlag != 0;
       _condition.text = original.conditionId;
       _destination.text = original.recordDestinationId;
+      _destinationId = original.recordDestinationId == recordDestinationExternal
+          ? recordDestinationExternal
+          : recordDestinationInternal;
       final wall = jstWallClock(original.start);
       _date = DateTime(wall.year, wall.month, wall.day);
       _time = TimeOfDay(hour: wall.hour, minute: wall.minute);
@@ -192,6 +197,10 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
     final channels = _selectedBand == bsBroadcastingType
         ? ref.watch(bsChannelsProvider(widget.reg))
         : ref.watch(channelsProvider(widget.reg));
+    final hddDetails = ref.watch(hddDetailsProvider(widget.reg)).value;
+    final externalAvailable =
+        hddDetails != null &&
+        externalDestinationAvailable([for (final d in hddDetails) d.entry]);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -312,6 +321,10 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
         ),
         const SizedBox(height: 16),
         _qualityField(),
+        if (externalAvailable) ...[
+          const SizedBox(height: 16),
+          _destinationField(),
+        ],
         SwitchListTile(
           title: const Text('優先フラグ'),
           value: _priority,
@@ -364,6 +377,32 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
     );
   }
 
+  Widget _destinationField() {
+    // Offered only while an external HDD is registered and
+    // mounted; without one the form stays internal-only, as
+    // before (see externalDestinationAvailable).
+    return DropdownButtonFormField<String>(
+      initialValue: _destinationId,
+      decoration: const InputDecoration(labelText: '録画先'),
+      items: [
+        for (final id in const [
+          recordDestinationInternal,
+          recordDestinationExternal,
+        ])
+          DropdownMenuItem(value: id, child: Text(recordDestinationLabel(id))),
+      ],
+      onChanged: (v) => setState(() => _destinationId = v ?? _destinationId),
+    );
+  }
+
+  /// Whether an external HDD is currently known to be registered
+  /// and mounted; false while the HDD list is loading or failed.
+  bool get _externalAvailableNow {
+    final details = ref.read(hddDetailsProvider(widget.reg)).value;
+    if (details == null) return false;
+    return externalDestinationAvailable([for (final d in details) d.entry]);
+  }
+
   Future<void> _saveCreate() async {
     FocusScope.of(context).unfocus();
     final channels =
@@ -414,12 +453,14 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
           : 0,
       desiredQualityMode: _quality,
       priorityFlag: _priority ? 1 : 0,
-      // torne's create template pairs the destination with the
-      // quality profile (plan 28, torne-created samples): DR
-      // carries 'HDD', 3倍 carries 'USBHDD'. The value is the
-      // template's desired destination; the recording itself
-      // lands on the internal HDD either way.
-      recordDestinationId: _quality == 230 ? 'USBHDD' : 'HDD',
+      // The landing drive follows this value (plan 89.12), so
+      // it carries the form's destination choice, clamped to
+      // the internal HDD when the external one is not (or is
+      // no longer) available.
+      recordDestinationId: effectiveRecordDestination(
+        _destinationId,
+        externalAvailable: _externalAvailableNow,
+      ),
     );
 
     setState(() => _saving = true);
