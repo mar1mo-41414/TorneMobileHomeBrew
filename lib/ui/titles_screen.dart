@@ -780,7 +780,8 @@ class TitleDetailPage extends ConsumerWidget {
 /// The title detail: merged XSRS + DIDL information and the playback
 /// action. When the title carries a mobile resource alongside the
 /// original, a playback quality choice is offered (plan 33); the
-/// default is always the original quality.
+/// choice starts from the saved playback quality — the original
+/// quality until one is saved — and writes changes back to it.
 class TitleDetailView extends ConsumerStatefulWidget {
   const TitleDetailView({
     super.key,
@@ -805,9 +806,17 @@ class TitleDetailView extends ConsumerStatefulWidget {
 class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   /// Playback quality choice (plan 33): false = the title's
   /// original resource (DR / 3倍), true = the mobile transcode.
-  /// A per-playback option only — nothing is persisted, and every
-  /// visit to this screen starts on the original.
-  bool _useMobile = false;
+  /// The visit starts from the saved quality
+  /// (playbackQualityProvider) and a change here writes back
+  /// to it, so the choice carries to the next viewing. Null
+  /// until the viewer touches the choice on this visit — the
+  /// saved value, including its asynchronous restore, shows
+  /// through meanwhile.
+  bool? _useMobileChoice;
+
+  /// The quality in effect on this visit: this screen's own
+  /// choice once made, the saved quality otherwise.
+  bool get _useMobile => _useMobileChoice ?? ref.read(playbackQualityProvider);
 
   /// A playback start is in flight (plan 35). Starting takes a
   /// second or more (credentials -> HEAD -> AKE -> proxy); the
@@ -845,6 +854,12 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
   @override
   Widget build(BuildContext context) {
     final t = title;
+    // The quality choice in effect: this visit's own choice
+    // once made, the saved quality otherwise. Watching the
+    // saved quality rebuilds this view when its asynchronous
+    // restore lands.
+    final bool useMobile =
+        _useMobileChoice ?? ref.watch(playbackQualityProvider);
     // The protection state this view shows is the loaded
     // list's: a successful toggle rewrites it there (plan 103),
     // and this view is rebuilt with the updated title.
@@ -938,9 +953,11 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
               ButtonSegment(value: false, label: Text(originalLabel)),
               const ButtonSegment(value: true, label: Text('モバイル')),
             ],
-            selected: {_useMobile},
-            onSelectionChanged: (selection) =>
-                setState(() => _useMobile = selection.first),
+            selected: {useMobile},
+            onSelectionChanged: (selection) {
+              setState(() => _useMobileChoice = selection.first);
+              ref.read(playbackQualityProvider.notifier).set(selection.first);
+            },
           ),
           const SizedBox(height: 16),
         ],

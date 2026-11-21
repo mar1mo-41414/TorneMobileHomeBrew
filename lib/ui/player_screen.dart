@@ -53,8 +53,9 @@
 /// user turns captions on. Dual-audio programmes carry a
 /// second audio track; when two or more audio tracks exist an
 /// audio switcher （主音声 / 副音声） is offered. Both selections
-/// live only in this screen's state — like the quality choice,
-/// nothing is persisted.
+/// live only in this screen's state and nothing is persisted —
+/// unlike the quality choice, which the detail screens keep
+/// in the saved playback quality.
 ///
 /// Plan 54 corrections, driven by the owner's build-20 device
 /// log and desktop-mpv measurements on the same streams:

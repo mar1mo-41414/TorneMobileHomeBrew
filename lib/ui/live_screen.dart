@@ -321,8 +321,9 @@ class LiveChannelDetailPage extends ConsumerWidget {
 
 /// The channel detail: the current programme's information and
 /// the viewing action, with the plan-33 quality choice when the
-/// channel offers a mobile resource. The default is always the
-/// original quality; the choice is per viewing, never persisted.
+/// channel offers a mobile resource. The choice starts from the
+/// saved playback quality — the original quality until one is
+/// saved — and writes changes back to it.
 class LiveChannelDetailView extends ConsumerStatefulWidget {
   const LiveChannelDetailView({
     super.key,
@@ -340,7 +341,17 @@ class LiveChannelDetailView extends ConsumerStatefulWidget {
 
 class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
   /// Playback quality choice (plan 33, shared with recordings).
-  bool _useMobile = false;
+  /// The visit starts from the saved quality
+  /// (playbackQualityProvider) and a change here writes back
+  /// to it, so the choice carries to the next viewing. Null
+  /// until the viewer touches the choice on this visit — the
+  /// saved value, including its asynchronous restore, shows
+  /// through meanwhile.
+  bool? _useMobileChoice;
+
+  /// The quality in effect on this visit: this screen's own
+  /// choice once made, the saved quality otherwise.
+  bool get _useMobile => _useMobileChoice ?? ref.read(playbackQualityProvider);
 
   /// A viewing start is in flight (plan 35 guard, shared with
   /// recordings): while set, the button is disabled and _watch
@@ -353,6 +364,12 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
   @override
   Widget build(BuildContext context) {
     final ch = channel;
+    // The quality choice in effect: this visit's own choice
+    // once made, the saved quality otherwise. Watching the
+    // saved quality rebuilds this view when its asynchronous
+    // restore lands.
+    final bool useMobile =
+        _useMobileChoice ?? ref.watch(playbackQualityProvider);
     final originalRes = ch.originalRes;
     final mobileRes = ch.mobileRes;
     final originalLabel = originalRes?.quality == null
@@ -395,9 +412,11 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
               ButtonSegment(value: false, label: Text(originalLabel)),
               const ButtonSegment(value: true, label: Text('モバイル')),
             ],
-            selected: {_useMobile},
-            onSelectionChanged: (selection) =>
-                setState(() => _useMobile = selection.first),
+            selected: {useMobile},
+            onSelectionChanged: (selection) {
+              setState(() => _useMobileChoice = selection.first);
+              ref.read(playbackQualityProvider.notifier).set(selection.first);
+            },
           ),
           const SizedBox(height: 16),
         ],

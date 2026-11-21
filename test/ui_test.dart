@@ -533,6 +533,10 @@ class Fixture {
 
   final FakeSchedules schedules;
   final InMemoryRegistrationStore store;
+
+  /// The app's key-value store, exposed so tests can seed and
+  /// inspect persisted settings (e.g. the saved playback quality).
+  final InMemoryKeyValueStore keyValues = InMemoryKeyValueStore();
   final List<RecordedTitle>? titles;
   final PlaybackEngine? playback;
   final Map<String, List<int>>? thumbnails;
@@ -556,6 +560,7 @@ class Fixture {
     return ProviderScope(
       overrides: [
         registrationStoreProvider.overrideWithValue(store),
+        keyValueStoreProvider.overrideWithValue(keyValues),
         deviceServicesProvider.overrideWith((ref, reg) => bundle),
         discoveryServiceProvider.overrideWithValue(FakeDiscovery()),
         registrationServiceProvider.overrideWithValue(FakeRegistration()),
@@ -892,10 +897,7 @@ void main() {
       TitleListProgress(FakeTitles.defaultItems, complete: true),
     );
     await tester.pump();
-    expect(
-      find.widgetWithText(ListTile, '録画タイトルB'),
-      findsOneWidget,
-    );
+    expect(find.widgetWithText(ListTile, '録画タイトルB'), findsOneWidget);
     expect(find.text('条件に合うのは 1 件'), findsOneWidget);
     expect(find.textContaining('読み込み中'), findsNothing);
   });
@@ -997,226 +999,208 @@ void main() {
     expect(find.text('保護を解除しました'), findsOneWidget);
   });
 
-  testWidgets(
-    'the protection switch settles at once even while the '
-    'unit list still carries the old flag (plan 98 follow-up, '
-    'plan 103)',
-    (tester) async {
-      usePhoneSize(tester);
-      // The unit accepted the update, but its title list keeps
-      // answering with the pre-update flag for a while. The
-      // toggle no longer refetches at all (plan 103): the flag
-      // is rewritten in the loaded list, so nothing the unit
-      // answers afterwards can unsettle the switch.
-      final fixture = Fixture(titlesProtectionListLags: true);
-      await tester.pumpWidget(fixture.app());
-      await tester.pumpAndSettle();
+  testWidgets('the protection switch settles at once even while the '
+      'unit list still carries the old flag (plan 98 follow-up, '
+      'plan 103)', (tester) async {
+    usePhoneSize(tester);
+    // The unit accepted the update, but its title list keeps
+    // answering with the pre-update flag for a while. The
+    // toggle no longer refetches at all (plan 103): the flag
+    // is rewritten in the loaded list, so nothing the unit
+    // answers afterwards can unsettle the switch.
+    final fixture = Fixture(titlesProtectionListLags: true);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.text('録画済み'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('録画タイトルB'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルB'));
+    await tester.pumpAndSettle();
 
-      expect(find.text('なし'), findsOneWidget);
-      final loadsBefore = fixture.titlesService.listLoadCount;
-      await tester.tap(find.byType(Switch));
-      await tester.pumpAndSettle();
+    expect(find.text('なし'), findsOneWidget);
+    final loadsBefore = fixture.titlesService.listLoadCount;
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
 
-      expect(fixture.titlesService.protectionChanges, [('202', true)]);
-      expect(fixture.titlesService.listLoadCount, loadsBefore);
-      // The switch and its label reflect the successful update
-      // immediately, without waiting for the list to catch up.
-      expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
-      expect(find.text('保護あり'), findsOneWidget);
-      expect(find.text('保護しました'), findsOneWidget);
-    },
-  );
+    expect(fixture.titlesService.protectionChanges, [('202', true)]);
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
+    // The switch and its label reflect the successful update
+    // immediately, without waiting for the list to catch up.
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+    expect(find.text('保護あり'), findsOneWidget);
+    expect(find.text('保護しました'), findsOneWidget);
+  });
 
-  testWidgets(
-    'toggling protection updates the list row lock at once, '
-    'without reloading the list (plan 103)',
-    (tester) async {
-      usePhoneSize(tester);
-      final fixture = Fixture();
-      await tester.pumpWidget(fixture.app());
-      await tester.pumpAndSettle();
+  testWidgets('toggling protection updates the list row lock at once, '
+      'without reloading the list (plan 103)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture();
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.text('録画済み'));
-      await tester.pumpAndSettle();
-      // Only title A is protected: one lock in the list.
-      expect(find.byIcon(Icons.lock), findsOneWidget);
-      final loadsBefore = fixture.titlesService.listLoadCount;
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    // Only title A is protected: one lock in the list.
+    expect(find.byIcon(Icons.lock), findsOneWidget);
+    final loadsBefore = fixture.titlesService.listLoadCount;
 
-      await tester.tap(find.text('録画タイトルB'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byType(Switch));
-      await tester.pumpAndSettle();
-      expect(fixture.titlesService.protectionChanges, [('202', true)]);
+    await tester.tap(find.text('録画タイトルB'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(fixture.titlesService.protectionChanges, [('202', true)]);
 
-      // Back on the list, B's row carries the lock too — and
-      // the list was never reloaded to learn it.
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.lock), findsNWidgets(2));
-      expect(fixture.titlesService.listLoadCount, loadsBefore);
+    // Back on the list, B's row carries the lock too — and
+    // the list was never reloaded to learn it.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.lock), findsNWidgets(2));
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
 
-      // Unprotecting removes the row's lock the same way.
-      await tester.tap(find.text('録画タイトルB'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byType(Switch));
-      await tester.pumpAndSettle();
-      expect(fixture.titlesService.protectionChanges, [
-        ('202', true),
-        ('202', false),
-      ]);
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.lock), findsOneWidget);
-      expect(fixture.titlesService.listLoadCount, loadsBefore);
-    },
-  );
+    // Unprotecting removes the row's lock the same way.
+    await tester.tap(find.text('録画タイトルB'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(fixture.titlesService.protectionChanges, [
+      ('202', true),
+      ('202', false),
+    ]);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.lock), findsOneWidget);
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
+  });
 
-  testWidgets(
-    'a failed protection update leaves the switch unchanged '
-    '(plan 98 follow-up)',
-    (tester) async {
-      usePhoneSize(tester);
-      final fixture = Fixture(titlesProtectionUpdateFails: true);
-      await tester.pumpWidget(fixture.app());
-      await tester.pumpAndSettle();
+  testWidgets('a failed protection update leaves the switch unchanged '
+      '(plan 98 follow-up)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(titlesProtectionUpdateFails: true);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.text('録画済み'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('録画タイトルB'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルB'));
+    await tester.pumpAndSettle();
 
-      expect(find.text('なし'), findsOneWidget);
-      final loadsBefore = fixture.titlesService.listLoadCount;
-      await tester.tap(find.byType(Switch));
-      await tester.pumpAndSettle();
+    expect(find.text('なし'), findsOneWidget);
+    final loadsBefore = fixture.titlesService.listLoadCount;
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
 
-      expect(fixture.titlesService.protectionChanges, isEmpty);
-      expect(fixture.titlesService.listLoadCount, loadsBefore);
-      expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
-      expect(find.text('なし'), findsOneWidget);
-      expect(find.text('操作に失敗しました。'), findsOneWidget);
-    },
-  );
+    expect(fixture.titlesService.protectionChanges, isEmpty);
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+    expect(find.text('なし'), findsOneWidget);
+    expect(find.text('操作に失敗しました。'), findsOneWidget);
+  });
 
-  testWidgets(
-    'a resume report rewrites the detail position at once, '
-    'without reloading the list (plan 104 follow-up)',
-    (tester) async {
-      usePhoneSize(tester);
-      final fixture = Fixture(titles: resumeTitles());
-      await tester.pumpWidget(fixture.app());
-      await tester.pumpAndSettle();
+  testWidgets('a resume report rewrites the detail position at once, '
+      'without reloading the list (plan 104 follow-up)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(titles: resumeTitles());
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.text('録画済み'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('録画タイトルA'));
-      await tester.pumpAndSettle();
-      expect(find.text('再開位置'), findsOneWidget);
-      expect(find.text('6分'), findsOneWidget);
-      final loadsBefore = fixture.titlesService.listLoadCount;
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルA'));
+    await tester.pumpAndSettle();
+    expect(find.text('再開位置'), findsOneWidget);
+    expect(find.text('6分'), findsOneWidget);
+    final loadsBefore = fixture.titlesService.listLoadCount;
 
-      // What a closing player does (plan 102): the report
-      // reaches the unit and the loaded list follows it, so
-      // the detail the viewer returns to shows the position
-      // that was just recorded.
-      final ref =
-          tester.element(find.byType(TitlesScreen, skipOffstage: false))
-              as WidgetRef;
-      await reportResumePosition(
+    // What a closing player does (plan 102): the report
+    // reaches the unit and the loaded list follows it, so
+    // the detail the viewer returns to shows the position
+    // that was just recorded.
+    final ref = tester.element(
+      find.byType(TitlesScreen, skipOffstage: false),
+    ) as WidgetRef;
+    await reportResumePosition(
+      ref: ref,
+      reg: testReg,
+      titleId: '201',
+      position: const Duration(minutes: 5),
+    );
+    await tester.pump();
+
+    expect(fixture.titlesService.resumePositions, [
+      ('201', const Duration(minutes: 5)),
+    ]);
+    expect(find.text('5分'), findsOneWidget);
+    expect(find.text('6分'), findsNothing);
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
+  });
+
+  testWidgets('a completed viewing clears the detail resume position '
+      '(plan 104 follow-up)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(titles: resumeTitles());
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルA'));
+    await tester.pumpAndSettle();
+    expect(find.text('再開位置'), findsOneWidget);
+    final loadsBefore = fixture.titlesService.listLoadCount;
+
+    // A viewing that ran to the end reports zero, and the
+    // detail stops offering a position.
+    final ref = tester.element(
+      find.byType(TitlesScreen, skipOffstage: false),
+    ) as WidgetRef;
+    await reportResumePosition(
+      ref: ref,
+      reg: testReg,
+      titleId: '201',
+      position: Duration.zero,
+    );
+    await tester.pump();
+
+    expect(fixture.titlesService.resumePositions, [('201', Duration.zero)]);
+    expect(find.text('再開位置'), findsNothing);
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
+  });
+
+  testWidgets('a failed resume report leaves the displayed position '
+      'alone (plan 104 follow-up)', (tester) async {
+    usePhoneSize(tester);
+    final fixture = Fixture(
+      titles: resumeTitles(),
+      titlesResumeReportFails: true,
+    );
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('録画タイトルA'));
+    await tester.pumpAndSettle();
+    expect(find.text('6分'), findsOneWidget);
+    final loadsBefore = fixture.titlesService.listLoadCount;
+
+    final ref = tester.element(
+      find.byType(TitlesScreen, skipOffstage: false),
+    ) as WidgetRef;
+    await expectLater(
+      reportResumePosition(
         ref: ref,
         reg: testReg,
         titleId: '201',
         position: const Duration(minutes: 5),
-      );
-      await tester.pump();
+      ),
+      throwsA(isA<NasneError>()),
+    );
+    await tester.pump();
 
-      expect(fixture.titlesService.resumePositions, [
-        ('201', const Duration(minutes: 5)),
-      ]);
-      expect(find.text('5分'), findsOneWidget);
-      expect(find.text('6分'), findsNothing);
-      expect(fixture.titlesService.listLoadCount, loadsBefore);
-    },
-  );
-
-  testWidgets(
-    'a completed viewing clears the detail resume position '
-    '(plan 104 follow-up)',
-    (tester) async {
-      usePhoneSize(tester);
-      final fixture = Fixture(titles: resumeTitles());
-      await tester.pumpWidget(fixture.app());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('録画済み'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('録画タイトルA'));
-      await tester.pumpAndSettle();
-      expect(find.text('再開位置'), findsOneWidget);
-      final loadsBefore = fixture.titlesService.listLoadCount;
-
-      // A viewing that ran to the end reports zero, and the
-      // detail stops offering a position.
-      final ref =
-          tester.element(find.byType(TitlesScreen, skipOffstage: false))
-              as WidgetRef;
-      await reportResumePosition(
-        ref: ref,
-        reg: testReg,
-        titleId: '201',
-        position: Duration.zero,
-      );
-      await tester.pump();
-
-      expect(fixture.titlesService.resumePositions, [('201', Duration.zero)]);
-      expect(find.text('再開位置'), findsNothing);
-      expect(fixture.titlesService.listLoadCount, loadsBefore);
-    },
-  );
-
-  testWidgets(
-    'a failed resume report leaves the displayed position '
-    'alone (plan 104 follow-up)',
-    (tester) async {
-      usePhoneSize(tester);
-      final fixture = Fixture(
-        titles: resumeTitles(),
-        titlesResumeReportFails: true,
-      );
-      await tester.pumpWidget(fixture.app());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('録画済み'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('録画タイトルA'));
-      await tester.pumpAndSettle();
-      expect(find.text('6分'), findsOneWidget);
-      final loadsBefore = fixture.titlesService.listLoadCount;
-
-      final ref =
-          tester.element(find.byType(TitlesScreen, skipOffstage: false))
-              as WidgetRef;
-      await expectLater(
-        reportResumePosition(
-          ref: ref,
-          reg: testReg,
-          titleId: '201',
-          position: const Duration(minutes: 5),
-        ),
-        throwsA(isA<NasneError>()),
-      );
-      await tester.pump();
-
-      expect(fixture.titlesService.resumePositions, isEmpty);
-      expect(find.text('6分'), findsOneWidget);
-      expect(fixture.titlesService.listLoadCount, loadsBefore);
-    },
-  );
+    expect(fixture.titlesService.resumePositions, isEmpty);
+    expect(find.text('6分'), findsOneWidget);
+    expect(fixture.titlesService.listLoadCount, loadsBefore);
+  });
 
   testWidgets('a delete the unit refuses with 877 is explained as protection '
       '(plan 98)', (tester) async {
@@ -1302,6 +1286,101 @@ void main() {
     expect(engine.lastRes?.quality, 'mobile');
     await tester.tap(find.text('閉じる'));
     await tester.pumpAndSettle();
+  });
+
+  RecordedTitle mobileTitle() => RecordedTitle(
+    id: '301',
+    title: 'モバイル付きタイトル',
+    scheduledStart: DateTime.parse('2026-11-15T13:00:00+09:00'),
+    scheduledDurationSeconds: 1800,
+    channelName: 'テスト放送',
+    copyCountRemaining: 10,
+    res: const [
+      TitleRes(
+        url: 'http://192.0.2.10:58890/web/video/pvr?id=301&quality=dr',
+        protocolInfo: 'http-get:*:application/x-dtcp1:*',
+        cleartextSize: 200000000,
+        quality: 'dr',
+      ),
+      TitleRes(
+        url: 'http://192.0.2.10:58890/web/video/pvr?id=301&quality=mobile',
+        protocolInfo: 'http-get:*:application/x-dtcp1:*',
+        cleartextSize: 20000000,
+        quality: 'mobile',
+      ),
+    ],
+  );
+
+  Finder qualityButton() => find.descendant(
+    of: find.byType(TitleDetailView),
+    matching: find.byType(SegmentedButton<bool>),
+  );
+
+  testWidgets('title detail quality choice starts from the saved quality and '
+      'writes changes back (playback quality memory)', (tester) async {
+    usePhoneSize(tester);
+    final engine = RecordingPlaybackEngine();
+    final fixture = Fixture(titles: [mobileTitle()], playback: engine);
+    await fixture.keyValues.write('playback_use_mobile', 'true');
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('モバイル付きタイトル'));
+    await tester.pumpAndSettle();
+
+    // The saved mobile choice is the starting selection, and
+    // playback uses it without the choice being touched.
+    expect(tester.widget<SegmentedButton<bool>>(qualityButton()).selected, {
+      true,
+    });
+    await tester.tap(find.text('再生'));
+    await tester.pumpAndSettle();
+    expect(engine.lastRes?.quality, 'mobile');
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+
+    // Changing the choice writes back to the saved value.
+    await tester.tap(find.text('元画質 (DR)'));
+    await tester.pumpAndSettle();
+    expect(await fixture.keyValues.read('playback_use_mobile'), 'false');
+    await tester.tap(find.text('再生'));
+    await tester.pumpAndSettle();
+    expect(engine.lastRes?.quality, 'dr');
+    await tester.tap(find.text('閉じる'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a quality choice made on the title detail persists to the '
+      'next visit (playback quality memory)', (tester) async {
+    usePhoneSize(tester);
+    final engine = RecordingPlaybackEngine();
+    final fixture = Fixture(titles: [mobileTitle()], playback: engine);
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('録画済み'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('モバイル付きタイトル'));
+    await tester.pumpAndSettle();
+
+    // Nothing saved: the original quality is the start.
+    expect(tester.widget<SegmentedButton<bool>>(qualityButton()).selected, {
+      false,
+    });
+
+    await tester.tap(find.text('モバイル'));
+    await tester.pumpAndSettle();
+    expect(await fixture.keyValues.read('playback_use_mobile'), 'true');
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('モバイル付きタイトル'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SegmentedButton<bool>>(qualityButton()).selected, {
+      true,
+    });
   });
 
   testWidgets('title detail without a mobile res shows no quality choice '

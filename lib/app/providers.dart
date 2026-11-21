@@ -197,6 +197,39 @@ final hiddenEpgGenresProvider =
       HiddenEpgGenresNotifier.new,
     );
 
+/// The playback quality every viewing starts with (Discord
+/// request, 2026-11-21): false = the content's original quality
+/// (DR / 3倍 as recorded), true = the mobile transcode. One
+/// value serves live viewing and recordings alike — the plan-33
+/// choice is the same original/mobile pair on both detail
+/// screens. The value is the single one the settings screen's
+/// default and the detail screens' choices both read and
+/// write: changing the quality on a detail screen updates it,
+/// so the next viewing starts where the last one left off.
+/// Nothing stored means the original quality.
+class PlaybackQualityNotifier extends Notifier<bool> {
+  static const _key = 'playback_use_mobile';
+
+  @override
+  bool build() {
+    final store = ref.watch(keyValueStoreProvider);
+    Future.microtask(() async {
+      final value = await store.read(_key);
+      if (value == 'true' && !state) state = true;
+    });
+    return false;
+  }
+
+  Future<void> set(bool useMobile) async {
+    state = useMobile;
+    await ref.read(keyValueStoreProvider).write(_key, '$useMobile');
+  }
+}
+
+final playbackQualityProvider = NotifierProvider<PlaybackQualityNotifier, bool>(
+  PlaybackQualityNotifier.new,
+);
+
 /// The app store directory (file stores and the debug log
 /// destination, plan 28; location rule in plan 47).
 /// The bootstrap overrides this with the real directory; null in

@@ -205,6 +205,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const Divider(),
+          _sectionTitle(context, '再生'),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('再生画質', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: false, label: Text('元画質 (DR)')),
+                    ButtonSegment(value: true, label: Text('モバイル')),
+                  ],
+                  selected: {ref.watch(playbackQualityProvider)},
+                  onSelectionChanged: (selection) => ref
+                      .read(playbackQualityProvider.notifier)
+                      .set(selection.first),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'TV 視聴と録画再生を開始するときの画質です。'
+                  '各視聴画面で画質を変更すると、この値も更新されます。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          const Divider(),
           _sectionTitle(context, '録画再生 (DTCP-IP)'),
           ListTile(
             title: const Text('DTCP-IP 資格情報'),
