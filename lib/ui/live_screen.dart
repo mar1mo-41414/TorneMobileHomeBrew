@@ -5,6 +5,11 @@
 /// the plan-33 quality choice. The official torne name of the
 /// feature, TV視聴, is the screen's title.
 ///
+/// Plan 95: the bands sit under tabs (地デジ / BS / CS, the
+/// guide's wording), one band's channels on screen at a time in
+/// large rows, instead of one long list with band headings;
+/// the guide's subchannel switch applies to the list as well.
+///
 /// The programme information is the snapshot the DIDL items
 /// carried when the list was fetched; the refresh action
 /// re-fetches it (a programme boundary does not update an
@@ -34,6 +39,10 @@ class LiveScreen extends ConsumerStatefulWidget {
 class _LiveScreenState extends ConsumerState<LiveScreen> {
   String? _selectedId;
 
+  /// Container id of the band whose tab is selected; null
+  /// means the first band with channels.
+  String? _selectedBandId;
+
   @override
   Widget build(BuildContext context) {
     final reg = ref.watch(selectedRegistrationProvider);
@@ -57,6 +66,9 @@ class _LiveScreenState extends ConsumerState<LiveScreen> {
           : _LiveList(
               reg: reg,
               selectedId: _selectedId,
+              selectedBandId: _selectedBandId,
+              onSelectBand: (bandId) =>
+                  setState(() => _selectedBandId = bandId),
               onSelect: (channel, twoPane) {
                 if (twoPane) {
                   setState(() => _selectedId = channel.id);
@@ -76,15 +88,29 @@ class _LiveScreenState extends ConsumerState<LiveScreen> {
   }
 }
 
+/// The short tab label of a live band (plan 95): the guide's
+/// 地デジ / BS wording for the measured bands, CS alike; an
+/// unrecognised band keeps the title the device advertises.
+String liveBandTabLabel(LiveBand band) => switch (liveBandKind(band)) {
+  LiveBandKind.terrestrial => '地デジ',
+  LiveBandKind.bs => 'BS',
+  LiveBandKind.cs => 'CS',
+  LiveBandKind.other => band.title,
+};
+
 class _LiveList extends ConsumerWidget {
   const _LiveList({
     required this.reg,
     required this.selectedId,
+    required this.selectedBandId,
+    required this.onSelectBand,
     required this.onSelect,
   });
 
   final RegisteredNasne reg;
   final String? selectedId;
+  final String? selectedBandId;
+  final ValueChanged<String> onSelectBand;
   final void Function(LiveChannel channel, bool twoPane) onSelect;
 
   @override
@@ -102,6 +128,17 @@ class _LiveList extends ConsumerWidget {
       if (channels.isEmpty) {
         return const Center(child: Text('視聴可能なチャンネルがありません'));
       }
+      // One tab per band that actually offers a channel; the
+      // selected band survives refreshes by container id and
+      // falls back to the first tab when it is gone.
+      final tabBands = [
+        for (final band in visibleBands)
+          if (band.channels.isNotEmpty) band,
+      ];
+      final selectedBand = tabBands.firstWhere(
+        (band) => band.containerId == selectedBandId,
+        orElse: () => tabBands.first,
+      );
       return LayoutBuilder(
         builder: (context, constraints) {
           // One width decides both the layout and the tap
@@ -114,38 +151,56 @@ class _LiveList extends ConsumerWidget {
           final twoPane = constraints.maxWidth >= twoPaneBreakpoint;
           final listView = ListView(
             children: [
-              for (final band in visibleBands)
-                if (band.channels.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                    child: Text(
-                      band.title,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
+              for (final channel in selectedBand.channels)
+                ListTile(
+                  selected: channel.id == selectedId,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
-                  for (final channel in band.channels)
-                    ListTile(
-                      selected: channel.id == selectedId,
-                      leading: const Icon(Icons.live_tv_outlined),
-                      title: Text(channel.channelName ?? channel.programTitle),
-                      subtitle: Text(
-                        _channelSubtitle(channel),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      onTap: () => onSelect(channel, twoPane),
-                    ),
-                ],
+                  leading: const Icon(Icons.live_tv_outlined),
+                  title: Text(channel.channelName ?? channel.programTitle),
+                  subtitle: Text(
+                    _channelSubtitle(channel),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () => onSelect(channel, twoPane),
+                ),
             ],
           );
-          if (!twoPane) return listView;
+          final content = Column(
+            children: [
+              if (tabBands.length > 1)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  child: SegmentedButton<String>(
+                    segments: [
+                      for (final band in tabBands)
+                        ButtonSegment<String>(
+                          value: band.containerId,
+                          label: Text(liveBandTabLabel(band)),
+                        ),
+                    ],
+                    selected: {selectedBand.containerId},
+                    onSelectionChanged: (selection) =>
+                        onSelectBand(selection.first),
+                  ),
+                ),
+              Expanded(child: listView),
+            ],
+          );
+          if (!twoPane) return content;
           LiveChannel? selected;
           for (final channel in channels) {
             if (channel.id == selectedId) selected = channel;
           }
           return Row(
             children: [
-              Expanded(flex: 5, child: listView),
+              Expanded(flex: 5, child: content),
               const VerticalDivider(thickness: 1, width: 1),
               Expanded(
                 flex: 6,

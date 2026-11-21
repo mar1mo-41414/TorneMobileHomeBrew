@@ -295,6 +295,10 @@ class RecordingPlaybackEngine implements PlaybackEngine {
 
 /// Two terrestrial live channels (plan 39): the first offers a
 /// mobile resource alongside the original, the second does not.
+/// They sit on different transport streams, so neither is the
+/// other's subchannel (plan 95: the guide's subchannel switch
+/// applies to this list, and these tests are about the detail
+/// view, not about subchannel hiding).
 class FakeLiveCatalog implements LiveCatalogService {
   static TitleRes liveRes(String svid, String quality) => TitleRes(
     url:
@@ -324,10 +328,10 @@ class FakeLiveCatalog implements LiveCatalogService {
           res: [liveRes('de00', 'dr'), liveRes('de00', 'mobile')],
         ),
         LiveChannel(
-          id: '0/video/LiveTuner/DTTB/ch?nid=7880&tsid=7880&svid=de08',
+          id: '0/video/LiveTuner/DTTB/ch?nid=7880&tsid=7881&svid=de08',
           bandId: '0/video/LiveTuner/DTTB',
           networkId: 0x7880,
-          transportStreamId: 0x7880,
+          transportStreamId: 0x7881,
           serviceId: 0xde08,
           channelName: 'テスト放送２',
           programTitle: 'ライブ番組B',
@@ -916,7 +920,8 @@ void main() {
     await tester.tap(find.text('TV視聴'));
     await tester.pumpAndSettle();
 
-    expect(find.text('地上デジタル'), findsOneWidget);
+    // One band only: no band heading and no tab bar (plan 95).
+    expect(find.text('地上デジタル'), findsNothing);
     expect(find.text('テスト放送１'), findsOneWidget);
     expect(find.text('テスト放送２'), findsOneWidget);
     // The on-air programme and its time range ride in the subtitle.
