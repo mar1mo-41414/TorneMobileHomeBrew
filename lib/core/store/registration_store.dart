@@ -11,6 +11,64 @@ import '../models/channel.dart';
 import '../models/device.dart';
 import '../models/epg.dart';
 
+/// Serializes asynchronous operations on one store so that
+/// read-modify-write sequences never interleave (plan 96). An
+/// operation runs only after every previously queued one has
+/// finished; a failure fails its own caller but never poisons
+/// the queue.
+class _OperationQueue {
+  Future<void> _tail = Future<void>.value();
+
+  Future<T> run<T>(Future<T> Function() operation) {
+    final result = _tail.then((_) => operation());
+    _tail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+}
+
+/// The file a store read should use: [file] itself, or — when a
+/// crash interrupted the very first write between the flush and
+/// the rename — its temporary sibling, which holds a complete
+/// state and is adopted rather than lost (plan 96).
+Future<File?> _readableSource(File file) async {
+  if (await file.exists()) return file;
+  final tmp = File('${file.path}.tmp');
+  if (await tmp.exists()) return tmp;
+  return null;
+}
+
+/// Writes [contents] to [file] atomically: the data lands in a
+/// sibling temporary file, flushed to disk, and is then renamed
+/// over the target, so neither a reader nor a crash ever observes
+/// a half-written file (plan 96).
+Future<void> _writeFileAtomically(File file, String contents) async {
+  await file.parent.create(recursive: true);
+  final tmp = File('${file.path}.tmp');
+  await tmp.writeAsString(contents, flush: true);
+  await tmp.rename(file.path);
+}
+
+/// Moves an undecodable store file aside instead of letting the
+/// next write silently destroy its contents (plan 96). These
+/// files hold the user's own data — registrations, settings, a
+/// DTCP revocation list — and the standing rule is that not one
+/// byte is lost without a trace: the corrupt file stays on disk
+/// under a `.corrupt` name. Best-effort; a failure here never
+/// breaks the store itself.
+Future<void> _preserveCorruptFile(File file) async {
+  try {
+    var target = File('${file.path}.corrupt');
+    if (await target.exists()) {
+      target = File(
+        '${file.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}',
+      );
+    }
+    await file.rename(target.path);
+  } on FileSystemException {
+    // Best-effort only.
+  }
+}
+
 /// Stores the user's registered nasne devices.
 abstract interface class RegistrationStore {
   Future<List<RegisteredNasne>> loadAll();
@@ -23,9 +81,9 @@ abstract interface class RegistrationStore {
 
 class InMemoryRegistrationStore implements RegistrationStore {
   InMemoryRegistrationStore([Iterable<RegisteredNasne>? initial])
-      : _byHost = {
-          for (final d in initial ?? const <RegisteredNasne>[]) d.host: d,
-        };
+    : _byHost = {
+        for (final d in initial ?? const <RegisteredNasne>[]) d.host: d,
+      };
 
   final Map<String, RegisteredNasne> _byHost;
 
@@ -45,49 +103,58 @@ class InMemoryRegistrationStore implements RegistrationStore {
 }
 
 /// JSON-file backed store: a list of [RegisteredNasne] JSON objects.
+///
+/// Every operation is serialized through one queue and each write
+/// lands atomically (temporary file + rename), so overlapping
+/// saves can no longer drop each other's devices and a reader
+/// never observes a half-written file (plan 96).
 class JsonFileRegistrationStore implements RegistrationStore {
   JsonFileRegistrationStore(this.file);
 
   final File file;
+  final _OperationQueue _queue = _OperationQueue();
 
-  Future<List<RegisteredNasne>> _read() async {
-    if (!await file.exists()) return [];
+  Future<List<RegisteredNasne>> _readRaw() async {
+    final source = await _readableSource(file);
+    if (source == null) return [];
     try {
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is! List) return [];
+      final decoded = jsonDecode(await source.readAsString());
+      if (decoded is! List) {
+        await _preserveCorruptFile(source);
+        return [];
+      }
       return [
         for (final e in decoded)
-          if (e is Map)
-            RegisteredNasne.fromJson(e.cast<String, dynamic>()),
+          if (e is Map) RegisteredNasne.fromJson(e.cast<String, dynamic>()),
       ];
     } on FormatException {
+      await _preserveCorruptFile(source);
       return [];
     }
   }
 
-  Future<void> _write(List<RegisteredNasne> devices) async {
-    await file.parent.create(recursive: true);
-    await file.writeAsString(
-        jsonEncode([for (final d in devices) d.toJson()]));
-  }
+  Future<void> _writeRaw(List<RegisteredNasne> devices) => _writeFileAtomically(
+    file,
+    jsonEncode([for (final d in devices) d.toJson()]),
+  );
 
   @override
-  Future<List<RegisteredNasne>> loadAll() => _read();
+  Future<List<RegisteredNasne>> loadAll() => _queue.run(_readRaw);
 
   @override
-  Future<void> save(RegisteredNasne device) async {
-    final devices = await _read();
+  Future<void> save(RegisteredNasne device) => _queue.run(() async {
+    final devices = await _readRaw();
     devices.removeWhere((d) => d.host == device.host);
     devices.add(device);
-    await _write(devices);
-  }
+    await _writeRaw(devices);
+  });
 
   @override
-  Future<void> remove(String host) async {
-    final devices = await _read();
+  Future<void> remove(String host) => _queue.run(() async {
+    final devices = await _readRaw();
     devices.removeWhere((d) => d.host == host);
-    await _write(devices);
-  }
+    await _writeRaw(devices);
+  });
 }
 
 /// Minimal string key-value persistence used for caches.
@@ -115,45 +182,62 @@ class InMemoryKeyValueStore implements KeyValueStore {
 }
 
 /// JSON-file backed key-value store (one JSON object per file).
+///
+/// Every operation is serialized through one queue and each write
+/// lands atomically (temporary file + rename). Before plan 96 the
+/// read-modify-write here ran unguarded: overlapping writers —
+/// the device selection, the caches, the settings — silently
+/// dropped each other's keys, and a read that caught the file
+/// mid-write treated it as empty and let the next write wipe
+/// every key in it.
 class JsonFileKeyValueStore implements KeyValueStore {
   JsonFileKeyValueStore(this.file);
 
   final File file;
+  final _OperationQueue _queue = _OperationQueue();
 
-  Future<Map<String, String>> _read() async {
-    if (!await file.exists()) return {};
+  Future<Map<String, String>> _readRaw() async {
+    final source = await _readableSource(file);
+    if (source == null) return {};
     try {
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) return {};
+      final decoded = jsonDecode(await source.readAsString());
+      if (decoded is! Map) {
+        await _preserveCorruptFile(source);
+        return {};
+      }
       return {
         for (final e in decoded.entries) e.key.toString(): e.value.toString(),
       };
     } on FormatException {
+      await _preserveCorruptFile(source);
       return {};
     }
   }
 
-  Future<void> _write(Map<String, String> values) async {
-    await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(values));
-  }
+  Future<void> _writeRaw(Map<String, String> values) =>
+      _writeFileAtomically(file, jsonEncode(values));
 
   @override
-  Future<String?> read(String key) async => (await _read())[key];
+  Future<String?> read(String key) =>
+      _queue.run(() async => (await _readRaw())[key]);
+
+  /// Every key currently stored, as one consistent snapshot.
+  /// Used by the one-time cache/settings split migration
+  /// (app/bootstrap.dart, plan 96).
+  Future<Map<String, String>> readAll() => _queue.run(_readRaw);
 
   @override
-  Future<void> write(String key, String value) async {
-    final values = await _read();
+  Future<void> write(String key, String value) => _queue.run(() async {
+    final values = await _readRaw();
     values[key] = value;
-    await _write(values);
-  }
+    await _writeRaw(values);
+  });
 
   @override
-  Future<void> delete(String key) async {
-    final values = await _read();
-    values.remove(key);
-    await _write(values);
-  }
+  Future<void> delete(String key) => _queue.run(() async {
+    final values = await _readRaw();
+    if (values.remove(key) != null) await _writeRaw(values);
+  });
 }
 
 /// Cache for channel lists, keyed per device and broadcasting type.
@@ -164,8 +248,13 @@ class ChannelCache {
 
   final KeyValueStore _kv;
 
+  /// Prefix of every key this cache writes; the split migration
+  /// (app/bootstrap.dart, plan 96) moves keys with this prefix
+  /// out of the shared settings file into the cache's own file.
+  static const String keyPrefix = 'channels:';
+
   String _key(String host, int broadcastingType) =>
-      'channels:$host:$broadcastingType';
+      '$keyPrefix$host:$broadcastingType';
 
   Future<List<Channel>?> load(String host, int broadcastingType) async {
     final raw = await _kv.read(_key(host, broadcastingType));
@@ -178,8 +267,10 @@ class ChannelCache {
       return [
         for (final e in list)
           if (e is Map)
-            Channel.fromJson(e.cast<String, dynamic>(),
-                broadcastingType: broadcastingType),
+            Channel.fromJson(
+              e.cast<String, dynamic>(),
+              broadcastingType: broadcastingType,
+            ),
       ];
     } on FormatException {
       return null;
@@ -187,7 +278,10 @@ class ChannelCache {
   }
 
   Future<void> save(
-      String host, int broadcastingType, List<Channel> channels) async {
+    String host,
+    int broadcastingType,
+    List<Channel> channels,
+  ) async {
     await _kv.write(
       _key(host, broadcastingType),
       jsonEncode({
@@ -199,20 +293,20 @@ class ChannelCache {
   }
 
   static Map<String, dynamic> _channelToJson(Channel c) => {
-        'networkId': c.networkId,
-        'transportStreamId': c.transportStreamId,
-        'serviceId': c.serviceId,
-        'serviceType': c.serviceType,
-        'channelNumber': c.channelNumber,
-        'branchNumber': c.branchNumber,
-        'serviceName': c.serviceName,
-        if (c.serviceProviderName != null)
-          'serviceProviderName': c.serviceProviderName,
-        if (c.freqChannelNo != null) 'freqChannelNo': c.freqChannelNo,
-        if (c.remoteControlKeyId != null)
-          'remoteControlKeyId': c.remoteControlKeyId,
-        'contract': c.contract,
-      };
+    'networkId': c.networkId,
+    'transportStreamId': c.transportStreamId,
+    'serviceId': c.serviceId,
+    'serviceType': c.serviceType,
+    'channelNumber': c.channelNumber,
+    'branchNumber': c.branchNumber,
+    'serviceName': c.serviceName,
+    if (c.serviceProviderName != null)
+      'serviceProviderName': c.serviceProviderName,
+    if (c.freqChannelNo != null) 'freqChannelNo': c.freqChannelNo,
+    if (c.remoteControlKeyId != null)
+      'remoteControlKeyId': c.remoteControlKeyId,
+    'contract': c.contract,
+  };
 }
 
 /// Persistent accumulation of programme-guide events, keyed per
@@ -224,11 +318,18 @@ class EpgGuideCache {
 
   final KeyValueStore _kv;
 
+  /// Prefix of every key this cache writes; the split migration
+  /// (app/bootstrap.dart, plan 96) moves keys with this prefix
+  /// out of the shared settings file into the cache's own file.
+  static const String keyPrefix = 'epg-guide:';
+
   String _key(String host, int broadcastingType) =>
-      'epg-guide:$host:$broadcastingType';
+      '$keyPrefix$host:$broadcastingType';
 
   Future<Map<int, List<EpgEvent>>> load(
-      String host, int broadcastingType) async {
+    String host,
+    int broadcastingType,
+  ) async {
     final raw = await _kv.read(_key(host, broadcastingType));
     if (raw == null) return const {};
     try {
@@ -249,8 +350,7 @@ class EpgGuideCache {
     }
   }
 
-  Future<void> save(
-      String host, int broadcastingType, EpgGuide guide) async {
+  Future<void> save(String host, int broadcastingType, EpgGuide guide) async {
     await _kv.write(
       _key(host, broadcastingType),
       jsonEncode({
@@ -268,40 +368,39 @@ class EpgGuideCache {
   }
 
   static Map<String, dynamic> _eventToJson(EpgEvent e) => {
-        'eventId': e.eventId,
-        'start': e.start.toIso8601String(),
-        'durationSec': e.duration.inSeconds,
-        if (e.title != null) 'title': e.title,
-        if (e.shortText != null) 'shortText': e.shortText,
-        if (e.description != null) 'description': e.description,
-        if (e.cast != null) 'cast': e.cast,
-        if (e.extendedText != null) 'extendedText': e.extendedText,
-        if (e.genreLevel1 != null) 'genreLevel1': e.genreLevel1,
-        if (e.genreLevel2 != null) 'genreLevel2': e.genreLevel2,
-        'extendedItems': [
-          for (final i in e.extendedItems)
-            {'label': i.label, 'value': i.value},
-        ],
-      };
+    'eventId': e.eventId,
+    'start': e.start.toIso8601String(),
+    'durationSec': e.duration.inSeconds,
+    if (e.title != null) 'title': e.title,
+    if (e.shortText != null) 'shortText': e.shortText,
+    if (e.description != null) 'description': e.description,
+    if (e.cast != null) 'cast': e.cast,
+    if (e.extendedText != null) 'extendedText': e.extendedText,
+    if (e.genreLevel1 != null) 'genreLevel1': e.genreLevel1,
+    if (e.genreLevel2 != null) 'genreLevel2': e.genreLevel2,
+    'extendedItems': [
+      for (final i in e.extendedItems) {'label': i.label, 'value': i.value},
+    ],
+  };
 
   static EpgEvent _eventFromJson(Map<String, dynamic> j) => EpgEvent(
-        eventId: (j['eventId'] as num).toInt(),
-        start: DateTime.parse(j['start'] as String),
-        duration: Duration(seconds: (j['durationSec'] as num).toInt()),
-        title: j['title'] as String?,
-        shortText: j['shortText'] as String?,
-        description: j['description'] as String?,
-        cast: j['cast'] as String?,
-        extendedItems: [
-          for (final i in (j['extendedItems'] as List? ?? const []))
-            if (i is Map)
-              EpgExtendedItem(
-                label: i['label'].toString(),
-                value: i['value'].toString(),
-              ),
-        ],
-        extendedText: j['extendedText'] as String?,
-        genreLevel1: (j['genreLevel1'] as num?)?.toInt(),
-        genreLevel2: (j['genreLevel2'] as num?)?.toInt(),
-      );
+    eventId: (j['eventId'] as num).toInt(),
+    start: DateTime.parse(j['start'] as String),
+    duration: Duration(seconds: (j['durationSec'] as num).toInt()),
+    title: j['title'] as String?,
+    shortText: j['shortText'] as String?,
+    description: j['description'] as String?,
+    cast: j['cast'] as String?,
+    extendedItems: [
+      for (final i in (j['extendedItems'] as List? ?? const []))
+        if (i is Map)
+          EpgExtendedItem(
+            label: i['label'].toString(),
+            value: i['value'].toString(),
+          ),
+    ],
+    extendedText: j['extendedText'] as String?,
+    genreLevel1: (j['genreLevel1'] as num?)?.toInt(),
+    genreLevel2: (j['genreLevel2'] as num?)?.toInt(),
+  );
 }
