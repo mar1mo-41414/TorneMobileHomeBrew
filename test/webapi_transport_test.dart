@@ -112,4 +112,45 @@ void main() {
       );
     });
   });
+
+  group('media-service port (plan 102)', () {
+    test('the resume position POST goes to port 64220 with no token',
+        () async {
+      late Uri seenUrl;
+      late Map<String, String> seenHeaders;
+      late String seenBody;
+      final client = MockClient((request) async {
+        seenUrl = request.url;
+        seenHeaders = request.headers;
+        seenBody = request.body;
+        return http.Response(jsonEncode({'errorcode': 0}), 200);
+      });
+      // No TokenProvider: the endpoint is not auth-required
+      // (the media service does not validate the token,
+      // measured in plan 102).
+      final transport = WebApiTransport('192.0.2.1', client: client);
+      await transport.postJson(
+        WebApiEndpoints.recordedContentResumePositionSet,
+        form: {'id': '10000000000000000001', 'position': '300000'},
+      );
+      expect(
+        seenUrl.toString(),
+        'http://192.0.2.1:64220/recorded/recordedContentResumePositionSet',
+      );
+      expect(seenBody, 'id=10000000000000000001&position=300000');
+      expect(seenHeaders.containsKey('X-DTVToken'), isFalse);
+    });
+
+    test('an endpoint without a port override keeps the WebAPI port',
+        () async {
+      late Uri seenUrl;
+      final client = MockClient((request) async {
+        seenUrl = request.url;
+        return http.Response(jsonEncode({'errorcode': 0}), 200);
+      });
+      final transport = WebApiTransport('192.0.2.1', client: client);
+      await transport.getJson(WebApiEndpoints.recordedContentCountGet);
+      expect(seenUrl.port, WebApiTransport.port);
+    });
+  });
 }

@@ -6,6 +6,14 @@
 /// shape of the payload itself is the job of the typed models.
 library;
 
+/// Port of the unit's media service (plan 102): the
+/// recorded-content write family (resume position, title
+/// update / delete) is served here, not on the WebAPI port.
+/// Measured on a real unit: every form of these paths on
+/// 64210 is a 404, while the POST on this port answers; the
+/// service identifies itself with an X-AV-Server-Info header.
+const int mediaServicePort = 64220;
+
 /// Response payload kind of a WebAPI endpoint.
 enum ApiResponseKind { json, binary }
 
@@ -17,6 +25,7 @@ class WebApiEndpoint {
     this.requiredParams = const [],
     this.authRequired = false,
     this.responseKind = ApiResponseKind.json,
+    this.port,
   });
 
   /// Path including the leading slash, e.g. `/status/boxNameGet`.
@@ -32,6 +41,11 @@ class WebApiEndpoint {
   final bool authRequired;
 
   final ApiResponseKind responseKind;
+
+  /// Port override for the endpoints that live on the media
+  /// service ([mediaServicePort], plan 102); null uses the
+  /// transport's WebAPI port.
+  final int? port;
 
   @override
   String toString() => 'WebApiEndpoint($method $path)';
@@ -102,6 +116,22 @@ abstract final class WebApiEndpoints {
     '/recorded/recordedContentThumbnailGet',
     requiredParams: ['id', 'thumbnailEntryId'],
     responseKind: ApiResponseKind.binary,
+  );
+
+  /// Resume position write-back (plan 102): where playback of
+  /// a title stopped, reported when viewing ends so the unit's
+  /// resume point follows the viewer. A POST on the media
+  /// service port — on 64210 the path is a 404 in every form
+  /// (measured). `position` is in MILLISECONDS; the unit keeps
+  /// whole seconds (truncated) as the XSRS resumePoint, and
+  /// re-stamps lastPlaybackTime on every accepted call. The
+  /// token is not validated on this port (measured: no token
+  /// and a wrong token both succeed), so none is attached.
+  static const recordedContentResumePositionSet = WebApiEndpoint(
+    '/recorded/recordedContentResumePositionSet',
+    method: 'POST',
+    requiredParams: ['id', 'position'],
+    port: mediaServicePort,
   );
   static const pmtMapGet = WebApiEndpoint(
     '/recorded/PMTMapGet',
@@ -186,6 +216,7 @@ abstract final class WebApiEndpoints {
     recordedContentMaxCountGet,
     thumbnailMapGet,
     recordedContentThumbnailGet,
+    recordedContentResumePositionSet,
     pmtMapGet,
     seMapDataGet,
     channelLogoDataGet,

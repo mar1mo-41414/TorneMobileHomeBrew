@@ -3,6 +3,10 @@
 /// GETs are unauthenticated; POST Set operations carry an
 /// X-DTVToken computed by the injected [TokenProvider]. All failures
 /// are converted to [NasneError] here, at the transport boundary.
+///
+/// An endpoint may override the port (plan 102): the
+/// recorded-content write family lives on the unit's media
+/// service, and the request must go there instead.
 library;
 
 import 'dart:async';
@@ -33,7 +37,7 @@ class WebApiTransport {
     return Uri(
       scheme: 'http',
       host: host,
-      port: port,
+      port: endpoint.port ?? port,
       path: endpoint.path,
       queryParameters: params.isEmpty ? null : params,
     );
