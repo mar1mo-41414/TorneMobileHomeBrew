@@ -182,6 +182,48 @@ class RecordedTitle {
     );
   }
 
+  /// A copy of this title with only the resume point changed:
+  /// the position in seconds, and the last-played stamp the
+  /// unit re-stamps on every accepted report (plan 102).
+  ///
+  /// Used to reflect a successful resume report in the loaded
+  /// list at once (plan 104 follow-up): the unit accepted the
+  /// position the playback ended at, so the copy the UI holds
+  /// can be brought in line without waiting for a refetch.
+  /// A reported zero — the viewing ran to the end — clears
+  /// the point, and the stamp still moves: the unit clears
+  /// the point on a zero report but keeps stamping.
+  RecordedTitle withResumePoint(
+    int resumePointSeconds,
+    DateTime lastPlaybackTime,
+  ) {
+    return RecordedTitle(
+      id: id,
+      title: title,
+      scheduledStart: scheduledStart,
+      scheduledDurationSeconds: scheduledDurationSeconds,
+      channel: channel,
+      desiredQualityMode: desiredQualityMode,
+      genreId: genreId,
+      genreType: genreType,
+      reservationCreatorId: reservationCreatorId,
+      protectFlag: protectFlag,
+      newFlag: newFlag,
+      recordingFlag: recordingFlag,
+      recordDestinationId: recordDestinationId,
+      recordSizeRaw: recordSizeRaw,
+      lastPlaybackTime: lastPlaybackTime,
+      resumePointSeconds: resumePointSeconds,
+      sourceItemXml: sourceItemXml,
+      description: description,
+      longDescription: longDescription,
+      channelName: channelName,
+      genre: genre,
+      copyCountRemaining: copyCountRemaining,
+      res: res,
+    );
+  }
+
   /// The original-quality resource (plan 33; selection logic in
   /// [TitleResListSelection], shared with live channels).
   TitleRes? get originalRes => res.originalRes;

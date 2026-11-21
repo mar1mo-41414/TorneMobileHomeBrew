@@ -246,6 +246,8 @@ final schedulesProvider =
 /// A notifier rather than a plain stream provider so a
 /// successful protection update can rewrite the one title's
 /// flag in the loaded list (plan 103, [TitlesNotifier.applyProtection])
+/// and a successful resume report can rewrite the one title's
+/// resume point (plan 104, [TitlesNotifier.applyResumePoint]),
 /// instead of refetching the whole list: the refetch cost grows
 /// with the library, and the unit's own list can lag the update
 /// anyway.
@@ -278,6 +280,34 @@ class TitlesNotifier extends StreamNotifier<TitleListProgress> {
     if (i < 0 || stage.titles[i].protectFlag == protect) return;
     final titles = [...stage.titles];
     titles[i] = titles[i].withProtectFlag(protect);
+    state = AsyncData(
+      TitleListProgress(titles, complete: stage.complete),
+    );
+  }
+
+  /// Rewrites the resume point of the loaded title [titleId]
+  /// in place, after the unit accepted the resume report a
+  /// closing player made (plan 104 follow-up).
+  ///
+  /// The detail's resume row and the resume choice at the
+  /// next play both read this state, so they follow the
+  /// viewing that just ended instead of the snapshot from
+  /// before it: without the patch, a position the unit
+  /// already held looked unrecorded until a manual refresh.
+  /// A reported zero (the viewing ran to the end) clears
+  /// the point. The stamp moves with the point — the unit
+  /// re-stamps lastPlaybackTime on every accepted report
+  /// (plan 102). Does nothing while no stage has loaded, or
+  /// when the title is not in the loaded stage.
+  void applyResumePoint(String titleId, int resumePointSeconds) {
+    final stage = state.value;
+    if (stage == null) return;
+    final i = stage.titles.indexWhere((t) => t.id == titleId);
+    if (i < 0 || stage.titles[i].resumePointSeconds == resumePointSeconds) {
+      return;
+    }
+    final titles = [...stage.titles];
+    titles[i] = titles[i].withResumePoint(resumePointSeconds, DateTime.now());
     state = AsyncData(
       TitleListProgress(titles, complete: stage.complete),
     );
