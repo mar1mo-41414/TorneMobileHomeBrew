@@ -403,7 +403,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .read(registrationServiceProvider)
           .register(device);
       await ref.read(registrationsProvider.notifier).add(registration);
-      ref.read(selectedHostProvider.notifier).select(registration.host);
+      await ref.read(selectedHostProvider.notifier).select(registration.host);
       if (!mounted) return;
       showSnack(context, '登録しました: ${registration.host}');
     } on NasneError catch (e) {
@@ -439,7 +439,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _onRegistrationAction(String action, RegisteredNasne reg) async {
     switch (action) {
       case 'select':
-        ref.read(selectedHostProvider.notifier).select(reg.host);
+        await ref.read(selectedHostProvider.notifier).select(reg.host);
       case 'verify':
         try {
           final ok = await ref.read(registrationServiceProvider).verify(reg);
@@ -462,7 +462,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (!ok) return;
         await ref.read(registrationsProvider.notifier).remove(reg.host);
         if (ref.read(selectedHostProvider) == reg.host) {
-          ref.read(selectedHostProvider.notifier).select(null);
+          await ref.read(selectedHostProvider.notifier).select(null);
         }
         if (!mounted) return;
         showSnack(context, '登録を解除しました');
