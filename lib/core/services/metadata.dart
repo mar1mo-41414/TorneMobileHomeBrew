@@ -15,6 +15,7 @@ import '../parsing/didl.dart';
 import '../transport/soap_transport.dart';
 import 'epg.dart';
 import 'interfaces.dart';
+import 'paged_list.dart';
 
 /// ContentDirectory Browse over UPnP SOAP (plan 12.1).
 class DlnaMetadataService {
@@ -31,25 +32,38 @@ class DlnaMetadataService {
 
   Future<DidlDocument> browse(String objectId) async {
     SoapServices.contentDirectory.action('Browse');
-    final resp = await _soap.call(
-      controlUrl: _controlUrl,
-      serviceType: _serviceType,
-      action: 'Browse',
-      args: {
-        'ObjectID': objectId,
-        'BrowseFlag': 'BrowseDirectChildren',
-        'Filter': '*',
-        'StartingIndex': '0',
-        // 0 = as many as available (measured form, plan 11.8).
-        'RequestedCount': '0',
-        'SortCriteria': '',
+    // A Browse can answer a partial page (the per-response cap
+    // differs by maker, plan 74.10), so pages are fetched until
+    // TotalMatches is covered and merged in response order.
+    final containers = <DidlContainer>[];
+    final items = <DidlItem>[];
+    await fetchAllListPages(
+      requestPage: (startingIndex) => _soap.call(
+        controlUrl: _controlUrl,
+        serviceType: _serviceType,
+        action: 'Browse',
+        args: {
+          'ObjectID': objectId,
+          'BrowseFlag': 'BrowseDirectChildren',
+          'Filter': '*',
+          'StartingIndex': '$startingIndex',
+          // 0 = as many as available (measured form, plan 11.8).
+          'RequestedCount': '0',
+          'SortCriteria': '',
+        },
+      ),
+      consumePage: (resp) {
+        final result = resp.result;
+        if (result == null) {
+          throw NasneError.parse('soap:Browse', cause: 'missing Result');
+        }
+        final page = parseDidl(result, 'soap:Browse');
+        containers.addAll(page.containers);
+        items.addAll(page.items);
+        return page.containers.length + page.items.length;
       },
     );
-    final result = resp.result;
-    if (result == null) {
-      throw NasneError.parse('soap:Browse', cause: 'missing Result');
-    }
-    return parseDidl(result, 'soap:Browse');
+    return DidlDocument(containers: containers, items: items);
   }
 }
 

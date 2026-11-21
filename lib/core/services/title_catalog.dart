@@ -16,6 +16,7 @@ import '../parsing/xsrs.dart';
 import '../transport/soap_transport.dart';
 import '../transport/webapi_transport.dart';
 import 'interfaces.dart';
+import 'paged_list.dart';
 
 class SoapTitleCatalogService implements TitleCatalogService {
   SoapTitleCatalogService({
@@ -35,26 +36,37 @@ class SoapTitleCatalogService implements TitleCatalogService {
 
   @override
   Future<List<RecordedTitle>> listTitles({bool withMetadata = true}) async {
-    final resp = await _soap.call(
-      controlUrl: _controlUrl,
-      serviceType: _serviceType,
-      action: 'X_GetTitleList',
-      args: const {
-        'SearchCriteria': '',
-        'Filter': '*',
-        'StartingIndex': '0',
-        'RequestedCount': '0',
-        'SortCriteria': '',
+    // RequestedCount 0 answers at most the server's default page
+    // (200 items, measured in plan 74.10), so pages are fetched
+    // until TotalMatches is covered.
+    final titles = <RecordedTitle>[];
+    await fetchAllListPages(
+      requestPage: (startingIndex) => _soap.call(
+        controlUrl: _controlUrl,
+        serviceType: _serviceType,
+        action: 'X_GetTitleList',
+        args: {
+          'SearchCriteria': '',
+          'Filter': '*',
+          'StartingIndex': '$startingIndex',
+          'RequestedCount': '0',
+          'SortCriteria': '',
+        },
+      ),
+      consumePage: (resp) {
+        final result = resp.result;
+        if (result == null) {
+          throw NasneError.parse('soap:X_GetTitleList',
+              cause: 'missing Result');
+        }
+        final page = [
+          for (final item in parseXsrsItems(result, 'soap:X_GetTitleList'))
+            recordedTitleFromXsrs(item, source: 'soap:X_GetTitleList'),
+        ];
+        titles.addAll(page);
+        return page.length;
       },
     );
-    final result = resp.result;
-    if (result == null) {
-      throw NasneError.parse('soap:X_GetTitleList', cause: 'missing Result');
-    }
-    final titles = [
-      for (final item in parseXsrsItems(result, 'soap:X_GetTitleList'))
-        recordedTitleFromXsrs(item, source: 'soap:X_GetTitleList'),
-    ];
     if (!withMetadata || titles.isEmpty) return titles;
 
     final didl = await _metadata.browse(MetadataService.allRecordingsContainer);

@@ -41,6 +41,7 @@ export 'services/discovery_scan.dart';
 export 'services/interfaces.dart';
 export 'services/live_catalog.dart';
 export 'services/metadata.dart';
+export 'services/paged_list.dart';
 export 'services/playback.dart';
 export 'services/registration.dart';
 export 'services/schedule_service.dart';
