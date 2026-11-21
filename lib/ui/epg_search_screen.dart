@@ -13,7 +13,14 @@
 /// shown. The search runs over the full dataset, including
 /// subchannels the guide grid may be set to hide — finding
 /// a programme is the point of searching for it.
+///
+/// Plan 98: the search runs over an [EpgSearchIndex] built
+/// once per dataset (see epg_search.dart), and keystrokes
+/// are debounced — a burst of typing applies one search
+/// when it settles, not a full rescan per character.
 library;
+
+import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -39,12 +46,57 @@ class EpgSearchScreen extends ConsumerStatefulWidget {
 class _EpgSearchScreenState extends ConsumerState<EpgSearchScreen> {
   final _queryController = TextEditingController();
   String _query = '';
+
+  /// The query the results actually reflect (plan 98):
+  /// keystrokes land here only once typing settles for
+  /// [queryDebounce], so a burst of input runs one search.
+  String _appliedQuery = '';
+  Timer? _debounce;
   int? _genreLevel1;
+
+  /// The search index over the current dataset, rebuilt
+  /// only when a band's guide object is replaced (a reload),
+  /// never per keystroke or per rebuild.
+  EpgSearchIndex? _index;
+  EpgGuide? _indexedTerrestrial;
+  EpgGuide? _indexedBs;
+
+  /// How long typing may pause before its search runs.
+  static const Duration queryDebounce = Duration(milliseconds: 200);
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _queryController.dispose();
     super.dispose();
+  }
+
+  void _onQueryChanged(String value) {
+    setState(() => _query = value);
+    _debounce?.cancel();
+    _debounce = Timer(queryDebounce, () {
+      if (mounted) setState(() => _appliedQuery = value);
+    });
+  }
+
+  void _clearQuery() {
+    _debounce?.cancel();
+    _queryController.clear();
+    setState(() {
+      _query = '';
+      _appliedQuery = '';
+    });
+  }
+
+  EpgSearchIndex _indexFor(EpgGuide? terrestrial, EpgGuide? bs) {
+    if (_index == null ||
+        !identical(terrestrial, _indexedTerrestrial) ||
+        !identical(bs, _indexedBs)) {
+      _index = EpgSearchIndex.fromGuides([?terrestrial, ?bs]);
+      _indexedTerrestrial = terrestrial;
+      _indexedBs = bs;
+    }
+    return _index!;
   }
 
   @override
@@ -52,19 +104,16 @@ class _EpgSearchScreenState extends ConsumerState<EpgSearchScreen> {
     final terrestrial = ref.watch(epgGuideProvider(widget.reg)).value;
     final bs = ref.watch(bsEpgGuideProvider(widget.reg)).value;
     final guides = <EpgGuide>[?terrestrial, ?bs];
-    final genreValues = epgSearchGenreValues(guides);
+    final index = _indexFor(terrestrial, bs);
+    final genreValues = index.genreValues;
     // A genre picked before the data (re)loaded may not
     // exist in the current dataset; fall back to "all"
     // rather than filtering everything away behind the
     // viewer's back.
     final genre = genreValues.contains(_genreLevel1) ? _genreLevel1 : null;
-    final searched = _query.trim().isNotEmpty || genre != null;
+    final searched = _appliedQuery.trim().isNotEmpty || genre != null;
     final hits = searched
-        ? searchEpgProgrammes(
-            guides: guides,
-            query: _query,
-            genreLevel1: genre,
-          )
+        ? index.search(query: _appliedQuery, genreLevel1: genre)
         : const <EpgSearchHit>[];
 
     return Scaffold(
@@ -85,14 +134,11 @@ class _EpgSearchScreenState extends ConsumerState<EpgSearchScreen> {
                     : IconButton(
                         icon: const Icon(Icons.clear),
                         tooltip: 'クリア',
-                        onPressed: () {
-                          _queryController.clear();
-                          setState(() => _query = '');
-                        },
+                        onPressed: _clearQuery,
                       ),
                 border: const OutlineInputBorder(),
               ),
-              onChanged: (value) => setState(() => _query = value),
+              onChanged: _onQueryChanged,
             ),
           ),
           Padding(

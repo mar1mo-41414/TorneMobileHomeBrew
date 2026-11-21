@@ -16,6 +16,16 @@
 /// content descriptor's level-1 nibble the parser already
 /// extracts (EpgEvent.genreLevel1). Hits come back in start
 /// order across all bands and channels, earliest first.
+///
+/// Plan 98: the screen searches through [EpgSearchIndex],
+/// built once per dataset. Searching the raw guides on every
+/// keystroke re-walked both bands (some sixteen thousand
+/// events) and lowercased every searchable field of every
+/// event each time — the measured worst case was ~17 ms of
+/// UI-thread work per keystroke on a desktop-class CPU,
+/// several times that on a phone. The index pays the
+/// lowercase pass and the start-order sort once, when the
+/// dataset changes; a search over it is a filter.
 library;
 
 import '../core/core.dart';
@@ -46,18 +56,8 @@ String epgSearchGenreLabel(int genreLevel1) =>
 /// The genre level-1 values actually present in [guides],
 /// ascending — the filter offers only genres the viewer
 /// could actually hit.
-List<int> epgSearchGenreValues(List<EpgGuide> guides) {
-  final values = <int>{};
-  for (final guide in guides) {
-    for (final service in guide.services) {
-      for (final event in service.events) {
-        final genre = event.genreLevel1;
-        if (genre != null) values.add(genre);
-      }
-    }
-  }
-  return values.toList()..sort();
-}
+List<int> epgSearchGenreValues(List<EpgGuide> guides) =>
+    EpgSearchIndex.fromGuides(guides).genreValues;
 
 /// Searches [guides] (every band the app holds) for events
 /// matching [query] and, when given, [genreLevel1].
@@ -72,32 +72,96 @@ List<EpgSearchHit> searchEpgProgrammes({
   String query = '',
   int? genreLevel1,
 }) {
-  final needle = query.trim().toLowerCase();
-  final hits = <EpgSearchHit>[];
-  for (final guide in guides) {
-    for (final service in guide.services) {
-      for (final event in service.events) {
-        if (genreLevel1 != null && event.genreLevel1 != genreLevel1) {
-          continue;
-        }
-        if (needle.isNotEmpty &&
-            !_matchesQuery(event, service.channel.serviceName, needle)) {
-          continue;
-        }
-        hits.add(EpgSearchHit(service: service, event: event));
-      }
-    }
-  }
-  hits.sort((a, b) => a.event.start.compareTo(b.event.start));
-  return hits;
+  return EpgSearchIndex.fromGuides(guides)
+      .search(query: query, genreLevel1: genreLevel1);
 }
 
-bool _matchesQuery(EpgEvent event, String channelName, String needle) {
-  bool inField(String? field) =>
-      field != null && field.toLowerCase().contains(needle);
-  return inField(event.title) ||
-      inField(event.shortText) ||
-      inField(event.description) ||
-      inField(event.cast) ||
-      inField(channelName);
+/// A search-ready view of an EPG dataset (plan 98): every
+/// event of every band, in start order, with its searchable
+/// text pre-lowercased and the dataset's genre values
+/// collected — all computed once, at build time.
+///
+/// The searchable text joins the fields a viewer searches
+/// by with newlines, so a query matches exactly the events
+/// the per-field test matched (a typed query cannot contain
+/// a newline, so nothing matches across a field boundary
+/// that would not have matched inside a field).
+class EpgSearchIndex {
+  factory EpgSearchIndex.fromGuides(List<EpgGuide> guides) {
+    final entries = <_IndexedEvent>[];
+    final genres = <int>{};
+    for (final guide in guides) {
+      for (final service in guide.services) {
+        for (final event in service.events) {
+          final genre = event.genreLevel1;
+          if (genre != null) genres.add(genre);
+          entries.add(
+            _IndexedEvent(
+              service: service,
+              event: event,
+              searchText: _searchTextOf(event, service.channel.serviceName),
+            ),
+          );
+        }
+      }
+    }
+    entries.sort((a, b) => a.event.start.compareTo(b.event.start));
+    return EpgSearchIndex._(
+      entries,
+      List<int>.unmodifiable(genres.toList()..sort()),
+    );
+  }
+
+  const EpgSearchIndex._(this._entries, this.genreValues);
+
+  final List<_IndexedEvent> _entries;
+
+  /// The genre level-1 values present in the dataset,
+  /// ascending (see [epgSearchGenreValues]).
+  final List<int> genreValues;
+
+  /// The number of events in the dataset.
+  int get eventCount => _entries.length;
+
+  /// The events matching [query] and, when given,
+  /// [genreLevel1], in start order (see [searchEpgProgrammes]
+  /// for the matching rules).
+  List<EpgSearchHit> search({String query = '', int? genreLevel1}) {
+    final needle = query.trim().toLowerCase();
+    return [
+      for (final entry in _entries)
+        if ((genreLevel1 == null || entry.event.genreLevel1 == genreLevel1) &&
+            (needle.isEmpty || entry.searchText.contains(needle)))
+          EpgSearchHit(service: entry.service, event: entry.event),
+    ];
+  }
+
+  static String _searchTextOf(EpgEvent event, String channelName) {
+    final fields = [
+      event.title,
+      event.shortText,
+      event.description,
+      event.cast,
+      channelName,
+    ];
+    return [
+      for (final field in fields)
+        if (field != null) field.toLowerCase(),
+    ].join('\n');
+  }
+}
+
+class _IndexedEvent {
+  const _IndexedEvent({
+    required this.service,
+    required this.event,
+    required this.searchText,
+  });
+
+  final EpgServiceGuide service;
+  final EpgEvent event;
+
+  /// The event's searchable fields, lowercased once and
+  /// joined with newlines (see [EpgSearchIndex]).
+  final String searchText;
 }

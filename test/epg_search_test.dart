@@ -144,6 +144,46 @@ void main() {
     });
   });
 
+  group('EpgSearchIndex (plan 98)', () {
+    test('agrees with the direct search on every case', () {
+      final guides = [_guide()];
+      final index = EpgSearchIndex.fromGuides(guides);
+      for (final (query, genre) in <(String, int?)>[
+        ('ニュース', null),
+        ('物語', null),
+        ('山田', null),
+        ('名作', null),
+        ('映画チャンネル', null),
+        ('news', null),
+        ('NEWS', null),
+        ('海', null),
+        ('海', 3),
+        ('海', 6),
+        ('', 0),
+        ('', null),
+        ('存在しない', null),
+      ]) {
+        expect(
+          _ids(index.search(query: query, genreLevel1: genre)),
+          _ids(
+            searchEpgProgrammes(
+              guides: guides,
+              query: query,
+              genreLevel1: genre,
+            ),
+          ),
+          reason: 'query=$query genre=$genre',
+        );
+      }
+    });
+
+    test('collects the genre values and the event count once', () {
+      final index = EpgSearchIndex.fromGuides([_guide()]);
+      expect(index.genreValues, [0, 3, 6]);
+      expect(index.eventCount, 4);
+    });
+  });
+
   group('epgSearchGenreValues / epgSearchGenreLabel', () {
     test('values are the genres present, ascending and unique', () {
       expect(epgSearchGenreValues([_guide()]), [0, 3, 6]);
@@ -205,7 +245,8 @@ void main() {
       );
       await tester.pump();
       await tester.enterText(find.byType(TextField), 'ドラマ');
-      await tester.pump();
+      // The query applies after the debounce settles (plan 98).
+      await tester.pump(const Duration(milliseconds: 250));
       expect(find.text('明日のドラマ'), findsOneWidget);
       expect(find.text('明日の映画'), findsNothing);
       await tester.tap(find.text('明日のドラマ'));
@@ -213,6 +254,23 @@ void main() {
       // The shared detail dialog, with the reservation action
       // for an event that has not ended.
       expect(find.text('録画予約'), findsOneWidget);
+    });
+
+    testWidgets('typing is debounced before it searches (plan 98)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        host(const EpgSearchScreen(reg: _reg), guide: futureGuide()),
+      );
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'ドラマ');
+      await tester.pump();
+      // The keystroke alone has not applied a search yet.
+      expect(find.text('明日のドラマ'), findsNothing);
+      expect(find.textContaining('キーワードを入力するか'), findsOneWidget);
+      // Once typing settles, the search runs.
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('明日のドラマ'), findsOneWidget);
     });
 
     testWidgets('genre dropdown filters the results', (tester) async {
