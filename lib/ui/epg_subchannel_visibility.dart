@@ -11,9 +11,11 @@ import '../core/core.dart';
 /// BS multichannel IDs (secondary/tertiary services), not all BS services
 /// sharing the same transport stream. In particular, WOWOW 191-193 and
 /// BS10 200-202 are independent services and must remain visible.
+/// 103 is the unnamed NHK BS auxiliary service (no events at all in
+/// the measured capture, plan 116); under the per-transport-stream
+/// rule used for terrestrial it is a subchannel of 101 like 102.
 bool _isBsAuxiliaryServiceId(int id) =>
-    id == 102 ||
-    id == 104 ||
+    (id >= 102 && id <= 104) ||
     (id >= 142 && id <= 149) ||
     (id >= 152 && id <= 159) ||
     (id >= 162 && id <= 169) ||

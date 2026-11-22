@@ -35,7 +35,7 @@ List<int> ids(EpgGuide guide) => [
 void main() {
   test('BS: OFF hides known auxiliary services but keeps independent channels', () {
     final original = guide(3, [
-      channel(101), channel(102),
+      channel(101), channel(102), channel(103), channel(104),
       channel(141), channel(142), channel(143),
       channel(151), channel(152),
       channel(161), channel(162),
@@ -60,6 +60,13 @@ void main() {
       channel(144, broadcastingType: 2),
       channel(152),
     ]), {152});
+  });
+
+  test('BS: 103 is an auxiliary service like 102 (plan 116)', () {
+    expect(bsSubchannelServiceIds([channel(101), channel(103)]), {103});
+    final original = guide(3, [channel(101), channel(103)]);
+    expect(ids(guideWithSubchannelSetting(original, false)), [101]);
+    expect(ids(guideWithSubchannelSetting(original, true)), [101, 103]);
   });
 
   test('Terrestrial: original same-transport subchannel rule is unchanged', () {
