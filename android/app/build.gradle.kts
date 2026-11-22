@@ -55,6 +55,8 @@ android {
         applicationId = "com.markun.tmhb"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
+        // The standard edition's floor. The "tv" product flavor
+        // below overrides it with its own lower value.
         minSdk = 29
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
@@ -63,6 +65,31 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    // Editions of the app (product flavors). "standard" is the
+    // long-standing build — the values in defaultConfig above,
+    // unchanged. "tv" is the Android TV / Fire TV edition: its
+    // own applicationId (so the two editions can coexist on one
+    // device), the TV entry point (build with
+    // `flutter build apk --flavor tv -t lib/main_tv.dart`), and a
+    // lower minSdk so Fire OS 6 / Android TV hardware below API
+    // 29 can install it. 24 is the floor: the Flutter tool
+    // migrates lower values back to flutter.minSdkVersion (24 in
+    // Flutter 3.50), and flutter_secure_storage /
+    // flutter_plugin_android_lifecycle also declare 24.
+    flavorDimensions += "edition"
+
+    productFlavors {
+        create("standard") {
+            dimension = "edition"
+        }
+
+        create("tv") {
+            dimension = "edition"
+            applicationId = "com.markun.tmhb.tv"
+            minSdk = 24
+        }
     }
 
     buildTypes {

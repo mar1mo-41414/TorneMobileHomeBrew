@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- TV edition (product flavor "tv"): merged over the main
+         manifest. The launcher name is the TV edition's, and the
+         TV declarations stay optional — leanback is declared
+         required=false so Fire TV (which has no leanback
+         certification) still installs the app, and a touchscreen
+         is not required so remote-only devices qualify. -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false"/>
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false"/>
+    <application
+        android:label="torne mobile HB TV"
+        tools:replace="android:label"/>
+</manifest>

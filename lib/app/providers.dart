@@ -17,6 +17,7 @@ import 'file_pick.dart';
 import 'log_folder.dart';
 import 'log_share.dart';
 import 'multicast_lock.dart';
+import 'variant.dart';
 import 'wakelock.dart';
 
 final httpClientProvider = Provider<http.Client>((ref) => http.Client());
@@ -206,18 +207,21 @@ final hiddenEpgGenresProvider =
 /// default and the detail screens' choices both read and
 /// write: changing the quality on a detail screen updates it,
 /// so the next viewing starts where the last one left off.
-/// Nothing stored means the original quality.
+/// Nothing stored means the variant's starting quality
+/// (app/variant.dart): the original quality for the standard
+/// edition, the mobile transcode for the TV edition.
 class PlaybackQualityNotifier extends Notifier<bool> {
   static const _key = 'playback_use_mobile';
 
   @override
   bool build() {
+    final variant = ref.watch(appVariantProvider);
     final store = ref.watch(keyValueStoreProvider);
     Future.microtask(() async {
       final value = await store.read(_key);
-      if (value == 'true' && !state) state = true;
+      if (value != null) state = value == 'true';
     });
-    return false;
+    return variant.defaultUseMobilePlayback;
   }
 
   Future<void> set(bool useMobile) async {
