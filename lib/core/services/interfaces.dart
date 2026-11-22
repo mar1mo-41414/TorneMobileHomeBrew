@@ -125,6 +125,25 @@ abstract interface class TitleCatalogService {
   /// a viewing is the caller's job; every accepted call
   /// re-stamps the title's last-playback time.
   Future<void> setResumePosition(String id, Duration position);
+
+  /// The title's chapter positions (plan 112): the
+  /// unit's silence-cut chapter points, read from
+  /// X_GetTitleInfo (X_PvrControl) and validated against
+  /// the recording's duration — the unit also serves
+  /// broken chapter data for some titles (plan 110),
+  /// and a title whose data fails validation, like one
+  /// with no chapters, simply returns an empty list.
+  /// Best-effort decoration in the [fetchThumbnail]
+  /// sense: any failure — transport, fault, unparseable
+  /// or invalid data — comes back as an empty list,
+  /// never as an error playback has to handle.
+  /// [durationSeconds] is the title's listed duration,
+  /// the bound the validation checks the points
+  /// against.
+  Future<List<Duration>> fetchChapters(
+    String id, {
+    required int durationSeconds,
+  });
 }
 
 /// Settings reads and the verified writes (WebAPI, plan 12.1).

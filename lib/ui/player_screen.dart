@@ -151,6 +151,23 @@
 /// button row sit above the gesture area, and the
 /// interruption banner pads itself the same way (see
 /// player_safe_area_policy).
+///
+/// Plan 112: chapter skip for recordings. The points
+/// are the unit's own silence-cut chapters, fetched
+/// once as the screen opens ([PlayerScreen.loadChapters])
+/// and validated on the way in (see the core chapter
+/// parsing) — a title whose data is absent or broken
+/// simply has no chapter controls, and no interval
+/// fallback stands in for them. The transport rows
+/// gain previous / next chapter buttons beside the
+/// ±10 s skips, following the same seekable signal,
+/// and the seek bar gains a tick at each point: the
+/// bar is media_kit's, built inside its controls with
+/// no slot for markers, so the ticks are an overlay
+/// aligned to the bar from the same theme values the
+/// controls lay it out with (see player_chapter_policy
+/// and _ChapterTicksOverlay). Live viewing has no
+/// chapters and is untouched.
 library;
 
 import 'dart:async';
@@ -164,6 +181,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../app/providers.dart';
 import '../core/core.dart';
 import 'player_cache_policy.dart';
+import 'player_chapter_policy.dart';
 import 'player_error_policy.dart';
 import 'player_resume_policy.dart';
 import 'player_safe_area_policy.dart';
@@ -180,6 +198,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
     this.live = false,
     this.initialStart,
     this.onResumePosition,
+    this.loadChapters,
   });
 
   /// Display heading: a recording's title, or a live channel's
@@ -222,6 +241,18 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// player_teardown_policy for why dispose touches no ref
   /// and lets no step's failure starve the rest.
   final Future<void> Function(Duration position)? onResumePosition;
+
+  /// Where this recording's chapter points come from
+  /// (plan 112): called once as the screen opens and
+  /// expected to answer the title's validated points.
+  /// An empty answer — no chapters, or data that failed
+  /// validation — simply leaves the screen without
+  /// chapter controls. Null (live viewing has no
+  /// chapters) disables the feature. The load runs
+  /// beside the open, never before it, and a failure is
+  /// logged and dropped: chapters decorate playback and
+  /// must not delay or fail it.
+  final Future<List<Duration>> Function()? loadChapters;
 
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
@@ -303,6 +334,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// dies with it; the notifier itself holds nothing that
   /// needs releasing.
   final ValueNotifier<bool> _seekable = ValueNotifier<bool>(false);
+
+  /// The recording's chapter points (plan 112), loaded
+  /// once as the screen opens (see [_loadChapters]).
+  /// Empty — live viewing, a title without chapters, a
+  /// load that failed — keeps the chapter buttons out
+  /// of the transport rows and the ticks off the seek
+  /// bar.
+  List<Duration> _chapters = const [];
 
   /// How long playback may take to reach the playing state before
   /// the screen gives up with a timeout error (plan 29). Kept
@@ -479,6 +518,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     );
     _observeSeekable();
     _open();
+    _loadChapters();
   }
 
   void _onStartTimeout() {
@@ -692,6 +732,61 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
   }
 
+  /// Loads the recording's chapter points once (plan
+  /// 112). Runs beside the open, not before it: playback
+  /// starts without waiting, and the chapter controls
+  /// join the transport rows when the points land. Any
+  /// failure — including a synchronous throw from the
+  /// loader resolving the unit's services through the
+  /// caller's ref — is logged and dropped.
+  Future<void> _loadChapters() async {
+    final loader = widget.loadChapters;
+    if (loader == null || widget.live) return;
+    try {
+      final chapters = await loader();
+      _diag(
+        DiagCategory.playback,
+        'player: chapters: ${chapters.length} points loaded (plan 112)',
+      );
+      if (mounted && chapters.isNotEmpty) {
+        setState(() => _chapters = chapters);
+      }
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: chapter load failed: $e');
+    }
+  }
+
+  /// Seeks to the next or previous chapter point (plan
+  /// 112), chosen from the player's current position by
+  /// player_chapter_policy. Reached only through the
+  /// chapter buttons, which exist only when the title
+  /// has points and follow the same seekable signal as
+  /// the skip buttons; a side with no point is a no-op.
+  Future<void> _seekToChapter({required bool forward}) async {
+    final position = _player.state.position;
+    final target = forward
+        ? nextChapterTarget(chapters: _chapters, position: position)
+        : previousChapterTarget(chapters: _chapters, position: position);
+    if (target == null) {
+      _diag(
+        DiagCategory.playback,
+        'player: chapter seek ${forward ? 'next' : 'previous'}: '
+        'no point from ${position.inSeconds}s (plan 112)',
+      );
+      return;
+    }
+    _diag(
+      DiagCategory.playback,
+      'player: chapter seek ${forward ? 'next' : 'previous'} '
+      'to ${target.inSeconds}s (plan 112)',
+    );
+    try {
+      await _player.seek(target);
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: chapter seek failed: $e');
+    }
+  }
+
   Future<void> _open() async {
     _diag(DiagCategory.playback, 'player: opening ${widget.session.mediaUri}');
     try {
@@ -848,11 +943,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   /// The Material transport row for recordings: media_kit's
   /// stock row with a ±10 s skip button flanking the
-  /// play/pause button on each side (player UI follow-up).
+  /// play/pause button on each side (player UI follow-up),
+  /// and — when the title has chapter points — a chapter
+  /// button outside each skip button (plan 112).
   List<Widget> _recordedPrimaryButtonBar({required double playIconSize}) => [
     const Spacer(flex: 2),
     const MaterialSkipPreviousButton(),
     const Spacer(),
+    if (_chapters.isNotEmpty) ...[
+      _ChapterSkipButton(
+        seekable: _seekable,
+        forward: false,
+        onSeek: () => _seekToChapter(forward: false),
+      ),
+      const Spacer(),
+    ],
     _SkipSeekButton(
       seekable: _seekable,
       offset: -skipSeekStep,
@@ -866,6 +971,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       offset: skipSeekStep,
       onSkip: _skipSeek,
     ),
+    if (_chapters.isNotEmpty) ...[
+      const Spacer(),
+      _ChapterSkipButton(
+        seekable: _seekable,
+        forward: true,
+        onSeek: () => _seekToChapter(forward: true),
+      ),
+    ],
     const Spacer(),
     const MaterialSkipNextButton(),
     const Spacer(flex: 2),
@@ -873,7 +986,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   /// The desktop bottom row for recordings: the stock row
   /// with the ±10 s skip buttons after the skip-next button
-  /// (player UI follow-up).
+  /// (player UI follow-up) and, when the title has chapter
+  /// points, the chapter buttons after them (plan 112).
   List<Widget> _recordedDesktopButtonBar() => [
     const MaterialDesktopSkipPreviousButton(),
     const MaterialDesktopPlayOrPauseButton(),
@@ -890,11 +1004,43 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       onSkip: _skipSeek,
       iconSize: 28,
     ),
+    if (_chapters.isNotEmpty) ...[
+      _ChapterSkipButton(
+        seekable: _seekable,
+        forward: false,
+        onSeek: () => _seekToChapter(forward: false),
+        iconSize: 28,
+      ),
+      _ChapterSkipButton(
+        seekable: _seekable,
+        forward: true,
+        onSeek: () => _seekToChapter(forward: true),
+        iconSize: 28,
+      ),
+    ],
     const MaterialDesktopVolumeButton(),
     const MaterialDesktopPositionIndicator(),
     const Spacer(),
     const MaterialDesktopFullscreenButton(),
   ];
+
+  /// The video controls with the chapter ticks overlaid
+  /// on the seek bar (plan 112): the stock adaptive
+  /// controls, plus the ticks layer aligned to their
+  /// seek bar. Only built while the title has chapter
+  /// points — the plain adaptive controls serve live
+  /// viewing and chapterless recordings, exactly as
+  /// before.
+  Widget _controlsWithChapterTicks(VideoState state) {
+    return Stack(
+      children: [
+        AdaptiveVideoControls(state),
+        Positioned.fill(
+          child: _ChapterTicksOverlay(player: _player, chapters: _chapters),
+        ),
+      ],
+    );
+  }
 
   /// The position leaving this screen reports to the unit,
   /// or null when nothing is to be reported (plan 102; the
@@ -1133,7 +1279,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                   child: MaterialDesktopVideoControlsTheme(
                     normal: _desktopControlsTheme(),
                     fullscreen: _desktopControlsTheme(),
-                    child: Video(controller: _videoController),
+                    child: Video(
+                      controller: _videoController,
+                      // The stock adaptive controls, with
+                      // the chapter ticks overlaid while
+                      // the title has points (plan 112).
+                      controls: _chapters.isEmpty
+                          ? AdaptiveVideoControls
+                          : _controlsWithChapterTicks,
+                    ),
                   ),
                 ),
                 if (_interrupted) _buildInterruptionBanner(),
@@ -1251,4 +1405,272 @@ class _SkipSeekButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A chapter skip button for the video controls' button
+/// bars (plan 112): seeks to the adjacent chapter point
+/// (see player_chapter_policy for which point that is).
+/// Like the ±10 s skip buttons it follows the seekable
+/// signal — enabled and white while the stream is
+/// seekable, disabled and dimmed while it is not — and
+/// the bars only include it when the title has chapter
+/// points at all.
+class _ChapterSkipButton extends StatelessWidget {
+  const _ChapterSkipButton({
+    required this.seekable,
+    required this.forward,
+    required this.onSeek,
+    this.iconSize = 36,
+  });
+
+  /// The observed seekable signal (see _PlayerScreenState).
+  final ValueListenable<bool> seekable;
+
+  /// True for the next-chapter button, false for the
+  /// previous-chapter one; also picks the icon.
+  final bool forward;
+
+  /// Invoked when the button is tapped.
+  final VoidCallback onSeek;
+
+  /// Icon size, matching the neighbouring transport
+  /// buttons (see _SkipSeekButton).
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: seekable,
+      builder: (context, canSeek, _) => IconButton(
+        tooltip: forward ? '次のチャプター' : '前のチャプター',
+        iconSize: iconSize,
+        color: Colors.white,
+        onPressed: canSeek ? onSeek : null,
+        icon: Icon(forward ? Icons.fast_forward : Icons.fast_rewind),
+      ),
+    );
+  }
+}
+
+/// The chapter ticks on the seek bar (plan 112): one
+/// mark per chapter point, drawn over the stock seek
+/// bar's line.
+///
+/// media_kit's controls expose neither a slot in their
+/// seek bar nor their own visibility, so two alignments
+/// are maintained here, both best-effort:
+///
+/// - Geometry: the line's extent and centre are
+///   computed from the effective controls theme — the
+///   same values the controls lay the bar out with —
+///   via player_chapter_policy, so the ticks follow
+///   the app's theming (including the safe-area lift
+///   of plan 105, which reaches the ticks through the
+///   theme's seek bar margin, and the fullscreen
+///   safe-area padding the controls substitute).
+/// - Visibility: the stock controls show on
+///   interaction and fade after their hover duration.
+///   This overlay mirrors that from the pointer
+///   activity it can observe through a translucent
+///   listener, fading on the same duration. The one
+///   divergence the mirror cannot see is a tap meant
+///   to hide the controls: the ticks then stay for
+///   the remainder of the hover duration.
+class _ChapterTicksOverlay extends StatefulWidget {
+  const _ChapterTicksOverlay({required this.player, required this.chapters});
+
+  final Player player;
+
+  /// The title's chapter points (see
+  /// _PlayerScreenState._chapters).
+  final List<Duration> chapters;
+
+  @override
+  State<_ChapterTicksOverlay> createState() => _ChapterTicksOverlayState();
+}
+
+class _ChapterTicksOverlayState extends State<_ChapterTicksOverlay> {
+  bool _visible = false;
+  Timer? _hideTimer;
+  StreamSubscription<Duration>? _durationSubscription;
+  Duration _duration = Duration.zero;
+
+  /// The hover duration of the controls theme resolved
+  /// by the latest build; the hide timer mirrors it.
+  Duration _hoverDuration = const Duration(seconds: 3);
+
+  @override
+  void initState() {
+    super.initState();
+    _duration = widget.player.state.duration;
+    _durationSubscription = widget.player.stream.duration.listen((duration) {
+      if (mounted && duration != _duration) {
+        setState(() => _duration = duration);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    _durationSubscription?.cancel();
+    super.dispose();
+  }
+
+  /// Notes an interaction: the ticks show, and the
+  /// hide timer restarts — the mirror of the stock
+  /// controls' show-and-fade (see the class comment).
+  void _poke() {
+    if (!_visible) setState(() => _visible = true);
+    _hideTimer?.cancel();
+    _hideTimer = Timer(_hoverDuration, () {
+      if (mounted) setState(() => _visible = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fractions = chapterTickFractions(
+      chapters: widget.chapters,
+      duration: _duration,
+    );
+    if (fractions.isEmpty) return const SizedBox.expand();
+    final platform = Theme.of(context).platform;
+    final fullscreen = isFullscreen(context);
+    final themePadding = fullscreen
+        ? MediaQuery.of(context).padding
+        : EdgeInsets.zero;
+    // The line's geometry depends on the video area's
+    // size, which the layout constraints give (the
+    // overlay fills the controls' stack).
+    ({double left, double right, double centerY}) lineFor(Size area) {
+      if (platform == TargetPlatform.android ||
+          platform == TargetPlatform.iOS) {
+        final themeWidget = MaterialVideoControlsTheme.maybeOf(context);
+        final data = fullscreen
+            ? (themeWidget?.fullscreen ??
+                  kDefaultMaterialVideoControlsThemeDataFullscreen)
+            : (themeWidget?.normal ?? kDefaultMaterialVideoControlsThemeData);
+        _hoverDuration = data.controlsHoverDuration;
+        return materialChapterSeekBarLine(
+          areaWidth: area.width,
+          areaHeight: area.height,
+          columnPadding: data.padding ?? themePadding,
+          seekBarMargin: data.seekBarMargin,
+          seekBarHeight: data.seekBarHeight,
+        );
+      }
+      final themeWidget = MaterialDesktopVideoControlsTheme.maybeOf(context);
+      final data = fullscreen
+          ? (themeWidget?.fullscreen ??
+                kDefaultMaterialDesktopVideoControlsThemeDataFullscreen)
+          : (themeWidget?.normal ??
+                kDefaultMaterialDesktopVideoControlsThemeData);
+      _hoverDuration = data.controlsHoverDuration;
+      return desktopChapterSeekBarLine(
+        areaWidth: area.width,
+        areaHeight: area.height,
+        columnPadding: data.padding ?? themePadding,
+        seekBarMargin: data.seekBarMargin,
+        seekBarContainerHeight: data.seekBarContainerHeight,
+        buttonBarExtent:
+            data.buttonBarHeight +
+            data.bottomButtonBarMargin.top +
+            data.bottomButtonBarMargin.bottom,
+        seekBarTranslate: data.bottomButtonBar.isNotEmpty
+            ? desktopSeekBarTranslateWithButtonBar
+            : 0,
+      );
+    }
+
+    if (platform != TargetPlatform.android &&
+        platform != TargetPlatform.iOS &&
+        platform != TargetPlatform.macOS &&
+        platform != TargetPlatform.windows &&
+        platform != TargetPlatform.linux) {
+      // No stock seek bar on this platform (the
+      // adaptive controls show none), so no ticks.
+      return const SizedBox.expand();
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final line = lineFor(Size(constraints.maxWidth, constraints.maxHeight));
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _poke(),
+          onPointerMove: (_) => _poke(),
+          onPointerHover: (_) => _poke(),
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: _visible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              child: CustomPaint(
+                painter: _ChapterTicksPainter(
+                  fractions: fractions,
+                  left: line.left,
+                  right: line.right,
+                  centerY: line.centerY,
+                ),
+                size: Size.infinite,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Paints the chapter ticks: a short vertical mark at
+/// each chapter fraction, centred on the seek bar's
+/// line (see _ChapterTicksOverlay for how the line is
+/// located).
+class _ChapterTicksPainter extends CustomPainter {
+  const _ChapterTicksPainter({
+    required this.fractions,
+    required this.left,
+    required this.right,
+    required this.centerY,
+  });
+
+  /// Chapter positions as fractions of the duration.
+  final List<double> fractions;
+
+  /// The seek bar line's horizontal extent and
+  /// vertical centre, in the overlay's coordinates.
+  final double left;
+  final double right;
+  final double centerY;
+
+  /// Tick dimensions: taller than the 4 px line so
+  /// the marks read as its divisions, narrow enough
+  /// not to be mistaken for the thumb.
+  static const double tickHeight = 12;
+  static const double tickWidth = 2;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final width = right - left;
+    if (width <= 0) return;
+    final paint = Paint()..color = const Color(0xE6FFFFFF);
+    for (final fraction in fractions) {
+      final x = left + width * fraction;
+      canvas.drawRect(
+        Rect.fromLTWH(
+          x - tickWidth / 2,
+          centerY - tickHeight / 2,
+          tickWidth,
+          tickHeight,
+        ),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ChapterTicksPainter oldDelegate) =>
+      !listEquals(oldDelegate.fractions, fractions) ||
+      oldDelegate.left != left ||
+      oldDelegate.right != right ||
+      oldDelegate.centerY != centerY;
 }

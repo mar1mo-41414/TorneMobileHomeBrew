@@ -12,6 +12,7 @@ import 'dart:typed_data';
 import '../endpoints.dart';
 import '../errors.dart';
 import '../models/title.dart';
+import '../parsing/chapter.dart';
 import '../parsing/thumbnail.dart';
 import '../parsing/xsrs.dart';
 import '../transport/soap_transport.dart';
@@ -25,6 +26,7 @@ class SoapTitleCatalogService implements TitleCatalogService {
     required Uri xsrsControlUrl,
     required this._webApi,
     required this._metadata,
+    this._pvrControlUrl,
   }) : _controlUrl = xsrsControlUrl;
 
   final SoapTransport _soap;
@@ -32,8 +34,16 @@ class SoapTitleCatalogService implements TitleCatalogService {
   final WebApiTransport _webApi;
   final MetadataService _metadata;
 
+  /// The X_PvrControl control URL (X_GetTitleInfo's
+  /// service), or null when the device description
+  /// carried none — chapters are then simply absent.
+  final Uri? _pvrControlUrl;
+
   static const String _serviceType =
       'urn:schemas-xsrs-org:service:X_ScheduledRecording:2';
+
+  static const String _pvrServiceType =
+      'urn:schemas-s-bras-org:service:X_PvrControl:1';
 
   /// Entries the first X_GetTitleList request of a progressive
   /// load asks for (plan 100). The point is the time to the
@@ -246,6 +256,41 @@ class SoapTitleCatalogService implements TitleCatalogService {
       WebApiEndpoints.recordedContentResumePositionSet,
       form: {'id': id, 'position': '${clamped.inMilliseconds}'},
     );
+  }
+
+  @override
+  Future<List<Duration>> fetchChapters(
+    String id, {
+    required int durationSeconds,
+  }) async {
+    // Chapter points from X_GetTitleInfo on X_PvrControl
+    // (plan 110 / 112): an xsrs document whose root
+    // carries chapterNum / chapterTime / startPTS
+    // directly. The parse validates before converting —
+    // the unit serves broken chapter data for some
+    // titles — and every failure is simply "no
+    // chapters": a missing control URL, a transport
+    // error, a fault, bad data. Chapters decorate
+    // playback; they must never break it.
+    final controlUrl = _pvrControlUrl;
+    if (controlUrl == null) return const [];
+    try {
+      final resp = await _soap.call(
+        controlUrl: controlUrl,
+        serviceType: _pvrServiceType,
+        action: 'X_GetTitleInfo',
+        args: {'TitleID': id},
+      );
+      final result = resp.result;
+      if (result == null) return const [];
+      final fields = parseTitleInfoDocument(result, 'soap:X_GetTitleInfo');
+      return chapterPositionsFromTitleInfo(
+        fields,
+        durationSeconds: durationSeconds,
+      );
+    } catch (_) {
+      return const [];
+    }
   }
 
   @override

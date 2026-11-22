@@ -22,6 +22,7 @@ export 'models/live_channel.dart';
 export 'models/live_status.dart';
 export 'models/schedule.dart';
 export 'models/title.dart';
+export 'parsing/chapter.dart';
 export 'parsing/didl.dart';
 export 'parsing/epg.dart';
 export 'parsing/xsrs.dart';
