@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/core.dart';
 import 'providers.dart';
+import 'variant.dart';
 
 /// File and directory names used inside the store directory.
 const registrationFileName = 'registrations.json';
@@ -32,10 +33,14 @@ const debugLogsDirectoryName = 'debug_logs';
 /// different volatility never share a file (plan 96). Existing
 /// installs are migrated by [migrateLegacyKeyValueFiles], which
 /// [main] runs before building this container.
-ProviderContainer fileStoreContainer(Directory storeDirectory) {
+ProviderContainer fileStoreContainer(
+  Directory storeDirectory, {
+  AppVariant variant = AppVariant.standard,
+}) {
   File file(String name) => File('${storeDirectory.path}/$name');
   return ProviderContainer(
     overrides: [
+      appVariantProvider.overrideWithValue(variant),
       registrationStoreProvider.overrideWithValue(
         JsonFileRegistrationStore(file(registrationFileName)),
       ),

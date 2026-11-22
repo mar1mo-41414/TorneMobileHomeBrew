@@ -15,20 +15,27 @@ import 'package:media_kit/media_kit.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'app/bootstrap.dart';
+import 'app/variant.dart';
 import 'ui/widgets.dart';
 import 'app/lifecycle_log.dart';
 import 'app/providers.dart';
 import 'app/store_directory.dart';
 import 'ui/app_shell.dart';
 
-Future<void> main() async {
+Future<void> main() => runTmhbApp(AppVariant.standard);
+
+/// Shared startup for every entry point: lib/main.dart runs the
+/// standard edition, lib/main_tv.dart the TV edition. Only the
+/// [variant] differs; the stores, the migration and the app
+/// widget are the same code either way.
+Future<void> runTmhbApp(AppVariant variant) async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   final storeDirectory = await resolveStoreDirectory();
   // Split the legacy shared key-value file into per-purpose
   // files before anything reads the stores (plan 96).
   await migrateLegacyKeyValueFiles(storeDirectory);
-  final container = fileStoreContainer(storeDirectory);
+  final container = fileStoreContainer(storeDirectory, variant: variant);
   // App lifecycle transitions go to the debug log (plan 36), so a
   // field log shows when the process was suspended and resumed
   // around a playback session (the wakelock sleep investigation).
