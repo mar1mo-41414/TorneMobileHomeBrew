@@ -30,6 +30,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // libtmhb_fcntl: the JNI fcntl(2) bridge used by FcntlCompat in
+    // MainActivity.kt (Os.fcntlInt is API 30+ only).
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
     if (tmhbSigningAvailable) {
         signingConfigs {
             create("release") {
@@ -58,6 +67,12 @@ android {
 
     buildTypes {
         release {
+            // Keeps the JNI entry point name in FcntlCompat resolvable
+            // when R8 runs (see proguard-rules.pro).
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // Sign with the distribution key when TMHB_KEY_PROPERTIES is
             // provided; otherwise fall back to the debug keys so that
             // `flutter run --release` works from a plain clone.

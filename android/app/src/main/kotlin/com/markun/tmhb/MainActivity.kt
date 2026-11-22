@@ -197,6 +197,28 @@ class MainActivity : FlutterActivity() {
     }
 }
 
+/// fcntl(2) via JNI (libtmhb_fcntl). android.system.Os.fcntlInt only
+/// exists on API 30+, and calling it on an older device kills the
+/// calling thread with NoSuchMethodError — the AKE socket connects on
+/// a worker thread at the start of playback, so playback crashed on
+/// API 29 (and on every API below 30) devices. The native call has
+/// the exact semantics of Os.fcntlInt on every API level, so there is
+/// a single code path: it returns the fcntl(2) result, or -errno on
+/// failure, which is converted to ErrnoException here just like Os.
+private object FcntlCompat {
+    init {
+        System.loadLibrary("tmhb_fcntl")
+    }
+
+    private external fun nativeFcntlInt(fd: FileDescriptor, cmd: Int, arg: Int): Int
+
+    fun fcntlInt(fd: FileDescriptor, cmd: Int, arg: Int): Int {
+        val result = nativeFcntlInt(fd, cmd, arg)
+        if (result < 0) throw ErrnoException("fcntl", -result)
+        return result
+    }
+}
+
 /// One native AKE socket (plan 28): a BSD socket with IP TTL 3 and
 /// TCP_NODELAY set via setsockopt before connect (the DTCP-IP
 /// proximity requirement the reference client implements), with
@@ -218,8 +240,8 @@ private class AkeSocketConnection(
             Os.setsockoptInt(descriptor, OsConstants.IPPROTO_IP, OsConstants.IP_TTL, 3)
             Os.setsockoptInt(descriptor, OsConstants.IPPROTO_TCP, OsConstants.TCP_NODELAY, 1)
             val address = InetAddress.getByName(host)
-            val flags = Os.fcntlInt(descriptor, OsConstants.F_GETFL, 0)
-            Os.fcntlInt(descriptor, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
+            val flags = FcntlCompat.fcntlInt(descriptor, OsConstants.F_GETFL, 0)
+            FcntlCompat.fcntlInt(descriptor, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
             var inProgress = false
             try {
                 Os.connect(descriptor, address, port)
@@ -242,7 +264,7 @@ private class AkeSocketConnection(
                 // the SDK stubs, hence getpeername.)
                 Os.getpeername(descriptor)
             }
-            Os.fcntlInt(descriptor, OsConstants.F_SETFL, flags)
+            FcntlCompat.fcntlInt(descriptor, OsConstants.F_SETFL, flags)
         } catch (e: Exception) {
             try {
                 Os.close(descriptor)
