@@ -230,16 +230,39 @@ final channelLogosProvider =
 
 /// Reservations in chronological order (the device returns them in
 /// its own order; the UI contract is time order, plan 5.6).
+///
+/// The whole list is read, paging past the service's 50-item page:
+/// the device holds up to 100 reservations, and a consumer that
+/// only saw the first page would silently miss the rest (the
+/// guide's reserved marking, plan 120, is one such consumer).
+/// Paging stops at a short page, or at a page that adds no new
+/// reservation id — the second rule keeps doubles that ignore
+/// paging from looping forever.
 final schedulesProvider =
     FutureProvider.family<List<RecordSchedule>, RegisteredNasne>((
       ref,
       reg,
     ) async {
-      final list = await ref
-          .watch(deviceServicesProvider(reg))
-          .schedules
-          .listSchedules();
-      return [...list]..sort((a, b) => a.start.compareTo(b.start));
+      final service = ref.watch(deviceServicesProvider(reg)).schedules;
+      final all = <RecordSchedule>[];
+      final seen = <String>{};
+      var index = 0;
+      while (true) {
+        final page = await service.listSchedules(
+          startingIndex: index,
+          requestedCount: 50,
+        );
+        var added = 0;
+        for (final s in page) {
+          if (seen.add(s.id)) {
+            all.add(s);
+            added++;
+          }
+        }
+        if (page.length < 50 || added == 0) break;
+        index += page.length;
+      }
+      return all..sort((a, b) => a.start.compareTo(b.start));
     });
 
 /// Recorded titles, loaded progressively (plan 100): the stream

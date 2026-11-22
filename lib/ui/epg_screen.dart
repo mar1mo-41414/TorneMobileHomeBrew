@@ -13,6 +13,7 @@ library;
 
 import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -22,6 +23,7 @@ import '../app/state.dart';
 import '../app/bs_epg_providers.dart';
 import '../core/core.dart';
 import 'epg_genre.dart';
+import 'epg_reserved.dart';
 import 'epg_search_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
@@ -395,6 +397,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
               icon: const Icon(Icons.refresh),
               tooltip: '更新',
               onPressed: () {
+                ref.invalidate(schedulesProvider(reg));
                 if (_selectedBand == terrestrialBroadcastingType) {
                   ref.invalidate(epgGuideProvider(reg));
                   ref.invalidate(channelLogosProvider(reg));
@@ -429,6 +432,15 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
               const <int, List<int>>{})
         : (ref.watch(channelLogosProvider(reg)).value ??
               const <int, List<int>>{});
+    // Reserved marking (plan 120): the same reservation list the
+    // schedules tab shows, shared through schedulesProvider, so a
+    // reservation created or deleted anywhere — including from
+    // this guide — repaints the grid when the provider is
+    // invalidated. While the list is loading or failed the guide
+    // simply shows no frames; it never blocks on it.
+    final reservedIndex = EpgReservedIndex.fromSchedules(
+      ref.watch(schedulesProvider(reg)).value ?? const <RecordSchedule>[],
+    );
 
     return Column(
       children: [
@@ -455,6 +467,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
             error: (e, _) => ErrorView(
               message: userMessageForError(e),
               onRetry: () {
+                ref.invalidate(schedulesProvider(reg));
                 if (isBs) {
                   ref.invalidate(bsChannelsProvider(reg));
                   ref.invalidate(bsEpgGuideProvider(reg));
@@ -465,6 +478,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
             ),
             data: (guide) => _GuideView(
               reg: reg,
+              reservedIndex: reservedIndex,
               guide: guideWithSubchannelSetting(
                 guide,
                 ref.watch(showSubchannelsProvider),
@@ -498,6 +512,7 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
 class _GuideView extends StatelessWidget {
   const _GuideView({
     required this.reg,
+    required this.reservedIndex,
     required this.guide,
     required this.hiddenGenres,
     required this.onWatchEvent,
@@ -512,6 +527,9 @@ class _GuideView extends StatelessWidget {
   });
 
   final RegisteredNasne reg;
+
+  /// Which events already have a reservation (plan 120).
+  final EpgReservedIndex reservedIndex;
   final EpgGuide guide;
 
   /// Genres the viewer marked as not watched (plan 95):
@@ -605,6 +623,7 @@ class _GuideView extends StatelessWidget {
                         Expanded(
                           child: _DayGrid(
                             reg: reg,
+                            reservedIndex: reservedIndex,
                             services: guide.services,
                             hiddenGenres: hiddenGenres,
                             onWatchEvent: onWatchEvent,
@@ -747,6 +766,7 @@ class _TimeRuler extends StatelessWidget {
 class _DayGrid extends StatelessWidget {
   const _DayGrid({
     required this.reg,
+    required this.reservedIndex,
     required this.services,
     required this.hiddenGenres,
     required this.onWatchEvent,
@@ -756,6 +776,7 @@ class _DayGrid extends StatelessWidget {
   });
 
   final RegisteredNasne reg;
+  final EpgReservedIndex reservedIndex;
   final List<EpgServiceGuide> services;
   final Set<int> hiddenGenres;
   final void Function(Channel channel) onWatchEvent;
@@ -813,8 +834,11 @@ class _DayGrid extends StatelessWidget {
                               event.genreLevel1,
                               hiddenGenres,
                             ),
-                            onWatch: () =>
-                                onWatchEvent(services[i].channel),
+                            reserved: reservedIndex.isReserved(
+                              services[i].channel,
+                              event,
+                            ),
+                            onWatch: () => onWatchEvent(services[i].channel),
                           ),
                       ],
                     ),
@@ -844,6 +868,7 @@ class _EventTile extends StatelessWidget {
     required this.reg,
     required this.dayStart,
     required this.suppressed,
+    required this.reserved,
     required this.onWatch,
   });
 
@@ -858,6 +883,13 @@ class _EventTile extends StatelessWidget {
   /// surface colour — no tint, no text — so it does not draw
   /// the eye. The slot and the tap (the detail dialog) stay.
   final bool suppressed;
+
+  /// The event already has a recording reservation
+  /// (plan 120): the tile is framed in red, over whatever
+  /// tint (or suppression blank) it otherwise paints, so
+  /// the reservation reads at a glance without hiding
+  /// the genre.
+  final bool reserved;
 
   /// Opens live viewing for this tile's channel (plan 95);
   /// the detail dialog offers it only while the event is on
@@ -886,86 +918,92 @@ class _EventTile extends StatelessWidget {
       left: 1,
       right: 1,
       height: height.toDouble(),
-      child: Material(
-        // Tiles are tinted by the event's genre (plan 86,
-        // plan 85 item 10); events without a known genre
-        // keep the neutral colour they have always had.
-        // A suppressed genre (plan 95) paints the plain
-        // surface instead, with no text below.
-        color: suppressed
-            ? theme.colorScheme.surface
-            : epgGenreTileColor(
-                genreLevel1: event.genreLevel1,
-                surface: theme.colorScheme.surface,
-                fallback: theme.colorScheme.surfaceContainerHighest,
-              ),
-        borderRadius: BorderRadius.circular(3),
-        // Tiles too short for their text must not paint outside
-        // their box: spilled glyphs used to bleed into the tile
-        // below and get half-covered there (plan 22).
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(3),
-          onTap: () => showEpgEventDetail(
-            context,
-            reg: reg,
-            channel: channel,
-            channelName: channelName,
-            event: event,
-            onWatch: onWatch,
-          ),
-          child: suppressed
-              ? const SizedBox.expand()
-              : maxTitleLines >= 1
-              ? Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 2,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(timeText, style: timeStyle),
-                      if (title != null)
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: theme.textTheme.bodySmall,
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: maxTitleLines.clamp(1, 4),
-                          ),
-                        ),
-                    ],
-                  ),
-                )
-              : Padding(
-                  // Compact form for tiles too short for two lines:
-                  // time and title share one small line.
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        timeText,
-                        style: timeStyle?.copyWith(fontSize: 10, height: 1.1),
-                      ),
-                      if (title != null) ...[
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 10,
-                              height: 1.1,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
+      child: Container(
+        // The reserved frame (plan 120) is a foreground
+        // decoration: it paints over the tile's edge and
+        // leaves the genre tint inside untouched.
+        foregroundDecoration: epgReservedFrame(reserved),
+        child: Material(
+          // Tiles are tinted by the event's genre (plan 86,
+          // plan 85 item 10); events without a known genre
+          // keep the neutral colour they have always had.
+          // A suppressed genre (plan 95) paints the plain
+          // surface instead, with no text below.
+          color: suppressed
+              ? theme.colorScheme.surface
+              : epgGenreTileColor(
+                  genreLevel1: event.genreLevel1,
+                  surface: theme.colorScheme.surface,
+                  fallback: theme.colorScheme.surfaceContainerHighest,
                 ),
+          borderRadius: BorderRadius.circular(3),
+          // Tiles too short for their text must not paint outside
+          // their box: spilled glyphs used to bleed into the tile
+          // below and get half-covered there (plan 22).
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(3),
+            onTap: () => showEpgEventDetail(
+              context,
+              reg: reg,
+              channel: channel,
+              channelName: channelName,
+              event: event,
+              onWatch: onWatch,
+            ),
+            child: suppressed
+                ? const SizedBox.expand()
+                : maxTitleLines >= 1
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(timeText, style: timeStyle),
+                        if (title != null)
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: theme.textTheme.bodySmall,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: maxTitleLines.clamp(1, 4),
+                            ),
+                          ),
+                      ],
+                    ),
+                  )
+                : Padding(
+                    // Compact form for tiles too short for two lines:
+                    // time and title share one small line.
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          timeText,
+                          style: timeStyle?.copyWith(fontSize: 10, height: 1.1),
+                        ),
+                        if (title != null) ...[
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontSize: 10,
+                                height: 1.1,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+          ),
         ),
       ),
     );
