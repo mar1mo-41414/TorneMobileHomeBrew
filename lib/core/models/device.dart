@@ -170,6 +170,13 @@ class DeviceInfo {
 }
 
 /// One entry of `status/HDDListGet`.
+///
+/// Entries are told apart by [id]: id 0 is the internal drive and
+/// any other id is an external one (plan 89.8). The response's
+/// `internalFlag` does not follow its name — the internal drive
+/// reports 0 and an external drive reported 1 — so [internal]
+/// keeps the raw flag value and must not be used to tell the
+/// drives apart (plan 116).
 class HddEntry {
   const HddEntry({
     required this.id,
@@ -179,6 +186,9 @@ class HddEntry {
   });
 
   final int id;
+
+  /// Raw `internalFlag` value; inverted from its name (see the
+  /// class doc). Use [id] to tell internal from external.
   final bool internal;
   final bool mounted;
   final bool registered;

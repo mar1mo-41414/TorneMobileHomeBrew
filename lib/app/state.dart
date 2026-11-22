@@ -126,8 +126,9 @@ final deviceInfoProvider = FutureProvider.family<DeviceInfo, RegisteredNasne>(
       ref.watch(deviceServicesProvider(reg)).deviceInfo.getDeviceInfo(),
 );
 
-/// One HDD list entry together with its detail (null when the detail
-/// fetch failed; the entry alone still renders).
+/// One HDD list entry together with its detail (null when the
+/// entry is not mounted/registered or the detail fetch failed;
+/// the entry alone still renders).
 class HddDetail {
   const HddDetail(this.entry, this.info);
 
@@ -142,10 +143,16 @@ final hddDetailsProvider =
       final details = <HddDetail>[];
       for (final entry in entries) {
         HddInfo? info;
-        try {
-          info = await service.getHddInfo(entry.id);
-        } on NasneError {
-          info = null;
+        // An entry that is not mounted or not registered has no
+        // detail to fetch (the endpoint fails for it, plan 116);
+        // the tile renders such an external entry as not
+        // connected instead of as a fetch failure.
+        if (entry.mounted && entry.registered) {
+          try {
+            info = await service.getHddInfo(entry.id);
+          } on NasneError {
+            info = null;
+          }
         }
         details.add(HddDetail(entry, info));
       }

@@ -62,6 +62,32 @@ RecordSchedule sampleSchedule({
 }
 
 class FakeDeviceInfo implements DeviceInfoService {
+  FakeDeviceInfo({List<HddEntry>? hddEntries, Map<int, HddInfo>? hddInfos})
+    : hddEntries =
+          hddEntries ??
+          const [
+            HddEntry(id: 0, internal: true, mounted: true, registered: true),
+          ],
+      hddInfos =
+          hddInfos ??
+          const {
+            0: HddInfo(
+              id: 0,
+              internal: true,
+              format: 'xfs',
+              name: '内蔵HDD',
+              usedBytes: 300000000000,
+              freeBytes: 200000000000,
+              totalBytes: 500000000000,
+            ),
+          };
+
+  final List<HddEntry> hddEntries;
+  final Map<int, HddInfo> hddInfos;
+
+  /// Ids passed to [getHddInfo], in call order.
+  final List<int> hddInfoCalls = [];
+
   @override
   Future<DeviceInfo> getDeviceInfo() async => const DeviceInfo(
     name: 'テストnasne',
@@ -71,20 +97,17 @@ class FakeDeviceInfo implements DeviceInfoService {
   );
 
   @override
-  Future<List<HddEntry>> listHdds() async => const [
-    HddEntry(id: 0, internal: true, mounted: true, registered: true),
-  ];
+  Future<List<HddEntry>> listHdds() async => hddEntries;
 
   @override
-  Future<HddInfo> getHddInfo(int id) async => const HddInfo(
-    id: 0,
-    internal: true,
-    format: 'xfs',
-    name: '内蔵HDD',
-    usedBytes: 300000000000,
-    freeBytes: 200000000000,
-    totalBytes: 500000000000,
-  );
+  Future<HddInfo> getHddInfo(int id) async {
+    hddInfoCalls.add(id);
+    final info = hddInfos[id];
+    if (info == null) {
+      throw NasneError.http(404, 'fake:/status/HDDInfoGet');
+    }
+    return info;
+  }
 
   @override
   Future<NetworkInfo> getNetworkInfo() async => const NetworkInfo(
@@ -521,6 +544,7 @@ class Fixture {
   Fixture({
     List<RegisteredNasne>? registrations,
     FakeSchedules? schedules,
+    FakeDeviceInfo? deviceInfo,
     this.titles,
     this.playback,
     this.thumbnails,
@@ -530,6 +554,7 @@ class Fixture {
     this.titlesResumeReportFails = false,
     this.titlesProgressive = false,
   }) : schedules = schedules ?? FakeSchedules(),
+       deviceInfo = deviceInfo ?? FakeDeviceInfo(),
        store = InMemoryRegistrationStore(registrations ?? [testReg]),
        titlesService = FakeTitles(
          items: titles,
@@ -542,6 +567,7 @@ class Fixture {
        );
 
   final FakeSchedules schedules;
+  final FakeDeviceInfo deviceInfo;
   final InMemoryRegistrationStore store;
 
   /// The app's key-value store, exposed so tests can seed and
@@ -559,7 +585,7 @@ class Fixture {
 
   Widget app() {
     final bundle = DeviceServices(
-      deviceInfo: FakeDeviceInfo(),
+      deviceInfo: deviceInfo,
       settings: FakeSettings(),
       schedules: schedules,
       titles: titlesService,
@@ -611,6 +637,70 @@ void main() {
     expect(find.textContaining('空き'), findsOneWidget);
     expect(find.text('メッセージはありません'), findsOneWidget);
     expect(find.text('録画失敗はありません'), findsOneWidget);
+  });
+
+  testWidgets('home labels the internal HDD by id, not the inverted flag', (
+    tester,
+  ) async {
+    usePhoneSize(tester);
+    // The measured HDDListGet shape (plan 89.8/116): the internal
+    // drive (id 0) reports internalFlag 0 and its detail name is
+    // 'hdd0'. The label must still be the internal one.
+    final deviceInfo = FakeDeviceInfo(
+      hddEntries: const [
+        HddEntry(id: 0, internal: false, mounted: true, registered: true),
+      ],
+      hddInfos: const {
+        0: HddInfo(
+          id: 0,
+          internal: false,
+          format: 'xfs',
+          name: 'hdd0',
+          usedBytes: 448000000000,
+          freeBytes: 16600000000,
+          totalBytes: 464600000000,
+        ),
+      },
+    );
+    await tester.pumpWidget(Fixture(deviceInfo: deviceInfo).app());
+    await tester.pumpAndSettle();
+
+    expect(find.text('内蔵 HDD: hdd0'), findsOneWidget);
+    expect(find.text('外付け HDD: hdd0'), findsNothing);
+  });
+
+  testWidgets('home shows an unconnected external HDD as not connected', (
+    tester,
+  ) async {
+    usePhoneSize(tester);
+    // Internal drive plus an external entry with nothing
+    // connected (plan 116): the external entry must render as
+    // not connected, not as a failed "internal" detail fetch,
+    // and its detail must not be queried at all.
+    final deviceInfo = FakeDeviceInfo(
+      hddEntries: const [
+        HddEntry(id: 0, internal: false, mounted: true, registered: true),
+        HddEntry(id: 1, internal: true, mounted: false, registered: false),
+      ],
+      hddInfos: const {
+        0: HddInfo(
+          id: 0,
+          internal: false,
+          format: 'xfs',
+          name: 'hdd0',
+          usedBytes: 448000000000,
+          freeBytes: 16600000000,
+          totalBytes: 464600000000,
+        ),
+      },
+    );
+    await tester.pumpWidget(Fixture(deviceInfo: deviceInfo).app());
+    await tester.pumpAndSettle();
+
+    expect(find.text('内蔵 HDD: hdd0'), findsOneWidget);
+    expect(find.text('外付け HDD (未接続)'), findsOneWidget);
+    expect(find.text('内蔵 HDD (詳細を取得できませんでした)'), findsNothing);
+    expect(deviceInfo.hddInfoCalls, [0]);
   });
 
   testWidgets('schedules list shows the existing reservation', (tester) async {

@@ -151,7 +151,19 @@ class _HddTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final entry = detail.entry;
     final info = detail.info;
-    final label = entry.internal ? '内蔵 HDD' : '外付け HDD';
+    // Drives are told apart by id (id 0 is internal): the list
+    // response's internalFlag is inverted from its name, so
+    // HddEntry.internal must not drive this label (plan 89.8/116).
+    final label = entry.id == 0 ? '内蔵 HDD' : '外付け HDD';
+    // An external entry that is not mounted or not registered is
+    // shown as not connected, like the official UI, instead of
+    // as a detail fetch failure (plan 116).
+    if (entry.id != 0 && (!entry.mounted || !entry.registered)) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 4),
+        child: Text('外付け HDD (未接続)'),
+      );
+    }
     if (info == null) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
