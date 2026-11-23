@@ -32,6 +32,7 @@ export 'dtcp/credential_store.dart';
 export 'dtcp/credentials_env.dart';
 export 'dtcp/dtcp_crypto.dart';
 export 'dtcp/dtcp_proxy.dart';
+export 'dtcp/native_aes.dart';
 export 'dtcp/pcp.dart';
 export 'dtcp/srm.dart';
 export 'services/device_info.dart';
