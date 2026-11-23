@@ -63,6 +63,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app/providers.dart';
 import '../app/state.dart';
+import '../app/variant.dart';
 import '../core/core.dart';
 import 'error_messages.dart';
 import 'format.dart';
@@ -686,7 +687,11 @@ class _TitleLeading extends ConsumerWidget {
 
 /// The detail view's thumbnail banner (plan 86.6): a 16:9
 /// picture above the title when the unit provides one, and
-/// nothing at all when it does not (no empty box).
+/// nothing at all when it does not (no empty box). On the TV
+/// variant the banner's height is capped (see build): at TV
+/// widths a full 16:9 banner is taller than the screen and
+/// pushes everything, the play button included, below the
+/// fold.
 class _TitleThumbnailBanner extends ConsumerWidget {
   const _TitleThumbnailBanner({required this.reg, required this.titleId});
 
@@ -699,18 +704,31 @@ class _TitleThumbnailBanner extends ConsumerWidget {
         .watch(titleThumbnailProvider((reg: reg, titleId: titleId)))
         .value;
     if (bytes == null) return const SizedBox.shrink();
+    final image = Image.memory(
+      bytes,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: Image.memory(
-            bytes,
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => const SizedBox.shrink(),
-          ),
-        ),
+        // TV: at full width the 16:9 banner is taller than the
+        // whole screen (at 1080p the list is 1888 wide, so the
+        // banner alone is 1062 tall), and the title, the fields
+        // and the play button all start below the fold — the
+        // thumbnail is literally in the way of playback. Cap
+        // the banner at 40% of the screen height (the frame is
+        // centre-cropped by BoxFit.cover) so the play button
+        // sits on the first screen. The standard variant keeps
+        // the exact 16:9 banner it has always had.
+        child: ref.watch(appVariantProvider).isTv
+            ? SizedBox(
+                height: MediaQuery.sizeOf(context).height * 0.4,
+                width: double.infinity,
+                child: image,
+              )
+            : AspectRatio(aspectRatio: 16 / 9, child: image),
       ),
     );
   }
