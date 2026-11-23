@@ -27,6 +27,7 @@ import 'format.dart';
 import 'playback_launcher.dart';
 import 'player_screen.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 class LiveScreen extends ConsumerStatefulWidget {
@@ -380,7 +381,15 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text(ch.programTitle, style: Theme.of(context).textTheme.titleLarge),
+        // TV: the heading and the closing note are display-only;
+        // both hold focus (TvFocusAnchor) so D-pad traversal can
+        // scroll to both ends of the detail (plan 123).
+        TvFocusAnchor(
+          child: Text(
+            ch.programTitle,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+        ),
         const SizedBox(height: 12),
         if (ch.channelName != null)
           FieldRow(label: 'チャンネル', value: ch.channelName!),
@@ -426,7 +435,9 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
           label: const Text('視聴'),
         ),
         const SizedBox(height: 8),
-        const Text('視聴には DTCP-IP の資格情報が必要です (設定画面からインポートできます)。'),
+        const TvFocusAnchor(
+          child: Text('視聴には DTCP-IP の資格情報が必要です (設定画面からインポートできます)。'),
+        ),
       ],
     );
   }

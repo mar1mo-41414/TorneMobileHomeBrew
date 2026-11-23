@@ -6,6 +6,7 @@
 library;
 
 export 'app_version.dart';
+export 'playback_buffer.dart';
 export 'endpoints.dart';
 export 'errors.dart';
 export 'diagnostics.dart';
@@ -28,10 +29,12 @@ export 'parsing/epg.dart';
 export 'parsing/xsrs.dart';
 export 'arib_b24.dart';
 export 'dtcp/ake.dart';
+export 'dtcp/credential_candidates.dart';
 export 'dtcp/credential_store.dart';
 export 'dtcp/credentials_env.dart';
 export 'dtcp/dtcp_crypto.dart';
 export 'dtcp/dtcp_proxy.dart';
+export 'dtcp/native_aes.dart';
 export 'dtcp/pcp.dart';
 export 'dtcp/srm.dart';
 export 'services/device_info.dart';

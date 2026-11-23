@@ -19,6 +19,7 @@ import 'dtcp_credential_screen.dart';
 import 'epg_hidden_genres_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -54,7 +55,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
-          _sectionTitle(context, '登録済み nasne'),
+          // TV: the first and last items of the list hold focus
+          // (TvFocusAnchor) so D-pad traversal can scroll to both
+          // ends of the list (plan 123; the footer below was
+          // unreachable by remote before this, plan 121).
+          TvFocusAnchor(child: _sectionTitle(context, '登録済み nasne')),
           registrations.when(
             loading: () => const Padding(
               padding: EdgeInsets.all(24),
@@ -171,7 +176,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
+                AppTextField(
                   controller: _manualHost,
                   decoration: const InputDecoration(
                     labelText: 'IP アドレス / ホスト名',
@@ -238,6 +243,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ],
             ),
           ),
+          // The playback buffer setting is mobile / TV only
+          // this round (plan 126); the desktop builds do not
+          // show it.
+          if (!isDesktopStorePlatform) const PlaybackBufferSetting(),
           const Divider(),
           _sectionTitle(context, '録画再生 (DTCP-IP)'),
           ListTile(
@@ -318,12 +327,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              '発見にはローカルネットワークへのアクセス許可が必要です (iOS では許可ダイアログが'
-              '表示される場合があります)。発見できない環境では手動登録を使ってください。\n\n'
-              'torne mobile HB $appVersionLabel',
+          TvFocusAnchor(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                '発見にはローカルネットワークへのアクセス許可が必要です (iOS では許可ダイアログが'
+                '表示される場合があります)。発見できない環境では手動登録を使ってください。\n\n'
+                'torne mobile HB $appVersionLabel',
+              ),
             ),
           ),
         ],
@@ -501,5 +512,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (!mounted) return;
         showSnack(context, '登録を解除しました');
     }
+  }
+}
+
+/// The playback buffer choice (plan 126): how much content
+/// the playback path banks ahead of the play position, as a
+/// segmented choice mirroring the quality choice above.
+/// Seconds are the unit a viewer can reason about; the
+/// conversion to per-layer byte caps lives in
+/// core/playback_buffer.dart. The standard segment keeps the
+/// long-standing caps (see the policy file).
+class PlaybackBufferSetting extends ConsumerWidget {
+  const PlaybackBufferSetting({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('再生バッファ', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          SegmentedButton<int>(
+            segments: [
+              for (final seconds in playbackBufferChoicesSeconds)
+                ButtonSegment(
+                  value: seconds,
+                  label: Text(
+                    seconds == playbackBufferStandardSeconds
+                        ? '標準'
+                        : '$seconds 秒',
+                  ),
+                ),
+            ],
+            selected: {ref.watch(playbackBufferProvider)},
+            onSelectionChanged: (selection) =>
+                ref.read(playbackBufferProvider.notifier).set(selection.first),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '再生位置より先の内容をためておく量です。回線が不安定な環境では、'
+            '大きくすると途切れにくくなります。大きくするほどメモリの使用量が増えます。'
+            '次の再生から反映されます。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
   }
 }

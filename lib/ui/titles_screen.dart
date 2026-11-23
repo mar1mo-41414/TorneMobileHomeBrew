@@ -63,6 +63,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app/providers.dart';
 import '../app/state.dart';
+import '../app/variant.dart';
 import '../core/core.dart';
 import 'error_messages.dart';
 import 'format.dart';
@@ -70,6 +71,7 @@ import 'playback_launcher.dart';
 import 'player_screen.dart';
 import 'title_list_filter.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 /// The resume start a title offers (plan 86): the position the
@@ -130,7 +132,11 @@ Future<bool?> showResumeChoiceDialog(
           onPressed: () => Navigator.of(context).pop(false),
           child: const Text('最初から再生'),
         ),
+        // TV: focus starts on the primary choice; without an
+        // autofocus element the dialog opens with no focus in
+        // it at all (plan 134; the plan 131 observation).
         FilledButton(
+          autofocus: isTvVariant(context),
           onPressed: () => Navigator.of(context).pop(true),
           child: const Text('続きから再生'),
         ),
@@ -274,6 +280,7 @@ Future<void> _showDeleteRefusal(BuildContext context, String message) {
       content: Text(message),
       actions: [
         TextButton(
+          autofocus: isTvVariant(context),
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),
@@ -426,7 +433,7 @@ class _TitleListState extends ConsumerState<_TitleList> {
           ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: TextField(
+          child: AppTextField(
             controller: _searchController,
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search),
@@ -685,7 +692,11 @@ class _TitleLeading extends ConsumerWidget {
 
 /// The detail view's thumbnail banner (plan 86.6): a 16:9
 /// picture above the title when the unit provides one, and
-/// nothing at all when it does not (no empty box).
+/// nothing at all when it does not (no empty box). On the TV
+/// variant the banner's height is capped (see build): at TV
+/// widths a full 16:9 banner is taller than the screen and
+/// pushes everything, the play button included, below the
+/// fold.
 class _TitleThumbnailBanner extends ConsumerWidget {
   const _TitleThumbnailBanner({required this.reg, required this.titleId});
 
@@ -698,18 +709,31 @@ class _TitleThumbnailBanner extends ConsumerWidget {
         .watch(titleThumbnailProvider((reg: reg, titleId: titleId)))
         .value;
     if (bytes == null) return const SizedBox.shrink();
+    final image = Image.memory(
+      bytes,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: Image.memory(
-            bytes,
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => const SizedBox.shrink(),
-          ),
-        ),
+        // TV: at full width the 16:9 banner is taller than the
+        // whole screen (at 1080p the list is 1888 wide, so the
+        // banner alone is 1062 tall), and the title, the fields
+        // and the play button all start below the fold — the
+        // thumbnail is literally in the way of playback. Cap
+        // the banner at 40% of the screen height (the frame is
+        // centre-cropped by BoxFit.cover) so the play button
+        // sits on the first screen. The standard variant keeps
+        // the exact 16:9 banner it has always had.
+        child: ref.watch(appVariantProvider).isTv
+            ? SizedBox(
+                height: MediaQuery.sizeOf(context).height * 0.4,
+                width: double.infinity,
+                child: image,
+              )
+            : AspectRatio(aspectRatio: 16 / 9, child: image),
       ),
     );
   }
@@ -883,9 +907,27 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
         : '元画質 (${resQualityLabel(originalRes!.quality)})';
     return ListView(
       padding: const EdgeInsets.all(16),
+      // TV: D-pad traversal can only move to children the
+      // sliver has laid out, and the stretch between the
+      // protection switch and the play controls — the size /
+      // resume / quality rows plus the description sections —
+      // is far longer than the default cache extent, so focus
+      // stopped dead at the switch and the play button could
+      // never be reached by remote (measured on a real unit:
+      // the gap is ~750 px). Lay out the whole page up front;
+      // it is a page of text, so the cost is negligible. The
+      // standard variant keeps the default extent.
+      scrollCacheExtent: ref.watch(appVariantProvider).isTv
+          ? const ScrollCacheExtent.pixels(3000)
+          : null,
       children: [
         if (!t.recordingFlag) _TitleThumbnailBanner(reg: reg, titleId: t.id),
-        Text(t.title, style: Theme.of(context).textTheme.titleLarge),
+        // TV: the heading is display-only; it holds focus
+        // (TvFocusAnchor) so D-pad traversal can scroll back to
+        // the top of the detail (plan 123).
+        TvFocusAnchor(
+          child: Text(t.title, style: Theme.of(context).textTheme.titleLarge),
+        ),
         const SizedBox(height: 12),
         if (t.scheduledStart != null)
           FieldRow(
