@@ -1,10 +1,14 @@
 package com.markun.tmhb
 
+import android.Manifest
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.view.WindowManager
@@ -12,6 +16,8 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.system.StructPollfd
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -26,6 +32,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var pendingDownloadsScanResult: MethodChannel.Result? = null
     private var akeEventSink: EventChannel.EventSink? = null
     private val akeConnections = mutableMapOf<Int, AkeSocketConnection>()
     private val akeExecutor = Executors.newCachedThreadPool()
@@ -117,6 +124,13 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CREDENTIAL_DOWNLOADS_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "scanDownloads" -> startDownloadsScan(result)
+                    else -> result.notImplemented()
+                }
+            }
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, AKE_SOCKET_EVENTS_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -188,12 +202,110 @@ class MainActivity : FlutterActivity() {
         startActivity(Intent.createChooser(intent, "デバッグログを共有"))
     }
 
+    // Downloads scan for credential files (plan 127): Android TV
+    // has no usable file picker, so the import screen can look in
+    // the public Downloads folder instead. The legacy storage
+    // model (API 32 and below, which covers the Fire TV targets)
+    // needs READ_EXTERNAL_STORAGE for that; it is requested here
+    // on first use and the scan runs once the user answers. On
+    // API 33+ scoped storage refuses direct reads of non-media
+    // files other apps put there, and the scan reports
+    // permission_denied so the Dart side can say so plainly.
+    private fun startDownloadsScan(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT <= 32 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            if (pendingDownloadsScanResult != null) {
+                result.error("scan_failed", "a downloads scan is already waiting for permission", null)
+                return
+            }
+            pendingDownloadsScanResult = result
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
+                REQUEST_READ_EXTERNAL_STORAGE,
+            )
+            return
+        }
+        runDownloadsScan(result)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_READ_EXTERNAL_STORAGE) return
+        val pending = pendingDownloadsScanResult ?: return
+        pendingDownloadsScanResult = null
+        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            runDownloadsScan(pending)
+        } else {
+            pending.error("permission_denied", "READ_EXTERNAL_STORAGE was not granted", null)
+        }
+    }
+
+    private fun runDownloadsScan(result: MethodChannel.Result) {
+        try {
+            val downloads =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val found = ArrayList<Map<String, Any>>()
+            collectCredentialFiles(downloads, 0, found)
+            result.success(found)
+        } catch (e: SecurityException) {
+            result.error("permission_denied", e.message, null)
+        } catch (e: Exception) {
+            result.error("scan_failed", e.message, null)
+        }
+    }
+
+    // Collects files whose names follow the credentials*.env
+    // shape (the same rule the Dart side re-checks), descending
+    // a few levels so a file dropped in a subfolder is still
+    // found. Only small files are read: a credentials.env is a
+    // few hundred bytes, and nothing larger can be one.
+    private fun collectCredentialFiles(
+        dir: File,
+        depth: Int,
+        out: ArrayList<Map<String, Any>>,
+    ) {
+        if (out.size >= MAX_DOWNLOADS_SCAN_FILES) return
+        val entries = dir.listFiles() ?: run {
+            if (depth == 0) throw SecurityException("cannot list ${dir.path}")
+            return
+        }
+        for (entry in entries) {
+            if (out.size >= MAX_DOWNLOADS_SCAN_FILES) return
+            if (entry.isDirectory) {
+                if (depth < MAX_DOWNLOADS_SCAN_DEPTH) {
+                    collectCredentialFiles(entry, depth + 1, out)
+                }
+            } else if (isCredentialEnvFileName(entry.name) &&
+                entry.length() in 1..MAX_DOWNLOADS_SCAN_FILE_BYTES
+            ) {
+                out.add(mapOf("name" to entry.name, "bytes" to entry.readBytes()))
+            }
+        }
+    }
+
+    private fun isCredentialEnvFileName(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.startsWith("credentials") && lower.endsWith(".env")
+    }
+
     companion object {
         private const val MULTICAST_LOCK_CHANNEL = "com.markun.tmhb/multicast_lock"
         private const val WAKELOCK_CHANNEL = "com.markun.tmhb/wakelock"
         private const val SHARE_FILES_CHANNEL = "com.markun.tmhb/share_files"
         private const val AKE_SOCKET_CHANNEL = "com.markun.tmhb/ake_socket"
         private const val AKE_SOCKET_EVENTS_CHANNEL = "com.markun.tmhb/ake_socket_events"
+        private const val CREDENTIAL_DOWNLOADS_CHANNEL = "com.markun.tmhb/credential_downloads"
+        private const val REQUEST_READ_EXTERNAL_STORAGE = 7411
+        private const val MAX_DOWNLOADS_SCAN_DEPTH = 3
+        private const val MAX_DOWNLOADS_SCAN_FILES = 64
+        private const val MAX_DOWNLOADS_SCAN_FILE_BYTES = 256L * 1024L
     }
 }
 

@@ -13,6 +13,15 @@
 /// Since plan 84 a failed file pick is logged and shown as an
 /// error instead of escaping silently (the plan 69.5 leftover).
 ///
+/// Since plan 127, on Android the file can also be found instead
+/// of picked: the Downloads folder is scanned for
+/// `credentials*.env`-shaped files, and only those whose parsed
+/// pair passes the credential store's own validation are listed
+/// (by name only). Importing a listed file still takes a
+/// per-file confirmation and the same validation + save as every
+/// other path. Android TV has no usable file picker, which is
+/// what this path exists for.
+///
 /// Plan 86.2 (plan 85 item 2): the surface speaks plainly. The
 /// internal facts a viewer never acts on — byte counts, the
 /// certificate's SHA-1, the device ID in hex, the env file's
@@ -24,13 +33,14 @@
 library;
 
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app/providers.dart';
 import '../core/core.dart';
+import 'format.dart';
 
 class DtcpCredentialScreen extends ConsumerStatefulWidget {
   const DtcpCredentialScreen({super.key});
@@ -135,6 +145,138 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
     await _import(certificate: env.certificate, privateKey: env.privateKey);
   }
 
+  /// Finds importable credential files in the Downloads folder
+  /// (plan 127; the button is shown only where the scanner
+  /// provider is non-null, i.e. Android). Only files whose parsed
+  /// pair passes the credential store's own validation are
+  /// listed, by name only; importing one takes the per-file
+  /// confirmation and then the exact same validation + vault
+  /// save as the picked-file import above. A scan that cannot
+  /// read the folder is reported in plain words, with the
+  /// platform failure itself recorded in the diagnostics log.
+  Future<void> _scanDownloads() async {
+    final scanner = ref.read(credentialDownloadsScannerProvider);
+    if (scanner == null) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final files = await scanner.scan();
+      if (!mounted) return;
+      final store = ref.read(credentialStoreProvider);
+      final candidates = selectCredentialCandidates(
+        files.map((f) => (name: f.name, bytes: f.bytes)),
+        validate: (env) => store.validates(
+          certificate: env.certificate,
+          privateKey: env.privateKey,
+        ),
+      );
+      if (candidates.isEmpty) {
+        setState(
+          () => _error = 'ダウンロードフォルダに、取り込める資格情報ファイルが'
+              '見つかりませんでした。ファイル名が credentials で始まる'
+              ' .env ファイルになっているか確認してください。',
+        );
+        return;
+      }
+      final chosen = await _chooseCandidate(candidates);
+      if (chosen == null || !mounted) return;
+      final confirmed = await _confirmCandidate(chosen);
+      if (confirmed != true || !mounted) return;
+      await _import(
+        certificate: chosen.env.certificate,
+        privateKey: chosen.env.privateKey,
+      );
+    } on PlatformException catch (e) {
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'credential downloads scan failed: $e',
+      );
+      if (mounted) {
+        setState(
+          () => _error = e.code == 'permission_denied'
+              ? 'ダウンロードフォルダを読み取る許可がないため、探せませんでした。'
+                  '端末の設定でこのアプリにストレージの許可を与えてから、'
+                  'もう一度お試しください。'
+              : 'ダウンロードフォルダを探せませんでした。もう一度お試しください。',
+        );
+      }
+    } catch (e) {
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'credential downloads scan failed: $e',
+      );
+      if (mounted) {
+        setState(
+          () => _error = 'ダウンロードフォルダを探せませんでした。もう一度お試しください。',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Lists the importable files found in Downloads, by name and
+  /// size only — never their contents — and returns the one the
+  /// user picked, or null when the list was dismissed.
+  Future<CredentialFileCandidate?> _chooseCandidate(
+    List<CredentialFileCandidate> candidates,
+  ) {
+    return showDialog<CredentialFileCandidate>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('資格情報ファイルが見つかりました'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: candidates.length,
+            itemBuilder: (context, index) {
+              final candidate = candidates[index];
+              return ListTile(
+                leading: const Icon(Icons.insert_drive_file),
+                title: Text(candidate.name),
+                subtitle: Text(formatBytes(candidate.sizeBytes)),
+                onTap: () => Navigator.pop(context, candidate),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('キャンセル'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The per-file confirmation before a found file is imported:
+  /// nothing from Downloads reaches the vault without it.
+  Future<bool?> _confirmCandidate(CredentialFileCandidate candidate) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('資格情報を取り込む'),
+        content: Text(
+          '「${candidate.name}」から証明書と秘密鍵を取り込みます。よろしいですか？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('取り込む'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _import({Uint8List? certificate, Uint8List? privateKey}) async {
     FocusScope.of(context).unfocus();
     setState(() {
@@ -222,6 +364,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
   @override
   Widget build(BuildContext context) {
     final summary = ref.watch(credentialSummaryProvider);
+    final downloadsScanner = ref.watch(credentialDownloadsScannerProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('DTCP-IP 資格情報')),
       body: ListView(
@@ -274,6 +417,20 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
             icon: const Icon(Icons.folder_open),
             label: const Text('ファイルを選択'),
           ),
+          if (downloadsScanner != null) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'テレビなどファイルを選ぶ画面が使えない環境では、'
+              'ダウンロードフォルダに資格情報ファイルを置いておくと、'
+              'そこから探して取り込むこともできます。',
+            ),
+            const SizedBox(height: 6),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _scanDownloads,
+              icon: const Icon(Icons.search),
+              label: const Text('Downloads から探す'),
+            ),
+          ],
           const SizedBox(height: 16),
           Text('テキストで入力する', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 6),

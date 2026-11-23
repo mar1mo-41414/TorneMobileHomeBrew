@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 
 import '../core/core.dart';
 import 'ake_socket.dart';
+import 'credential_downloads.dart';
 import 'debug_log.dart';
 import 'file_pick.dart';
 import 'log_folder.dart';
@@ -328,6 +329,15 @@ final debugLogFolderOpenerProvider = Provider<DebugLogFolderOpener?>((ref) {
 final fileBytesPickerProvider = Provider<FileBytesPicker>(
   (ref) => FileBytesPicker(),
 );
+
+/// Scans the Downloads folder for credential files (plan 127).
+/// Android only: the other platforms have a working file picker
+/// and no Downloads convention this app targets, so the provider
+/// is null there and the import screen hides the entry.
+final credentialDownloadsScannerProvider =
+    Provider<CredentialDownloadsScanner?>(
+      (ref) => Platform.isAndroid ? CredentialDownloadsScanner() : null,
+    );
 
 final playbackEngineProvider = Provider<PlaybackEngine>(
   (ref) => DtcpPlaybackEngine(
