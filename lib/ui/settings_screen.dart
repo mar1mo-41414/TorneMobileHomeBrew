@@ -73,6 +73,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 for (final reg in list)
                   ListTile(
+                    // Tapping the row selects the device, as the
+                    // radio icon promises; the popup menu keeps
+                    // the same action for discoverability.
+                    onTap: selected?.host == reg.host
+                        ? null
+                        : () => _onRegistrationAction('select', reg),
                     leading: Icon(
                       selected?.host == reg.host
                           ? Icons.radio_button_checked

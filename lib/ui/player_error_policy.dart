@@ -59,16 +59,43 @@ bool isUnseekableStreamError(String error) =>
     error.contains('Cannot seek in this stream') ||
     error.contains('force-seekable');
 
+/// True when [error] is one of mpv's codec complaints:
+/// "Could not open codec." or "Error decoding audio.".
+///
+/// Measured on a real Android device (2026-11-23, Sony and
+/// Buffalo nasne, live and recorded playback alike): both
+/// messages arrived while playback was demonstrably under
+/// way — picture and sound continued normally — yet the
+/// player screen latched them as an interruption banner
+/// over the healthy playback. The complaints evidently
+/// answer an auxiliary stream or a transient decode failure
+/// at the join, not the death of the stream being watched.
+/// Before playback starts they keep the fatal treatment (a
+/// codec that cannot open at all must fail the start, with
+/// the watchdog as backstop); once playback has started
+/// they are non-fatal, and a stream that truly dies is
+/// arbitrated by the playing→stopped policy below. The
+/// accepted cost: an audio track that genuinely died
+/// mid-stream would now play on silently instead of
+/// raising the banner.
+bool isCodecError(String error) =>
+    error.contains('Could not open codec') ||
+    error.contains('Error decoding audio');
+
 /// Whether a player [error] must fail playback. The
 /// unseekable-stream complaint is non-fatal for live
 /// viewing and, once playback has started
 /// ([alreadyPlaying]), for recordings as well (see the
-/// library comment); everything else is fatal, as before.
+/// library comment); the codec complaints are non-fatal
+/// once playback has started; everything else is fatal,
+/// as before.
 bool playerErrorIsFatal(
   String error, {
   required bool live,
   bool alreadyPlaying = false,
-}) => !((live || alreadyPlaying) && isUnseekableStreamError(error));
+}) =>
+    !((live || alreadyPlaying) && isUnseekableStreamError(error)) &&
+    !(alreadyPlaying && isCodecError(error));
 
 /// Whether a playing→stopped transition means the playback
 /// died mid-stream (plan 80), as opposed to ending normally
