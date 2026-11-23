@@ -89,6 +89,21 @@ class PlaybackKeySource {
     }
   }
 
+  /// Forces a fresh authentication even when the current
+  /// session already holds keys (plan 129): after a long link
+  /// outage the source-side session is the prime suspect, and
+  /// the proxy's reconnect path re-authenticates before
+  /// reissuing the content request. The fresh session replaces
+  /// the current one (the old one is closed by
+  /// [_reauthenticateOnce]), so the key cache the ended session
+  /// held is invalidated with it; the wait for the fresh
+  /// session's first exchange key is bounded like the start
+  /// path's.
+  Future<void> forceReauthenticate() async {
+    final fresh = await _reauthenticateOnce();
+    await fresh.waitFirstExchangeKey(timeout: const Duration(seconds: 20));
+  }
+
   Future<ExchangeKeySession> _reauthenticateOnce() async {
     final inFlight = _reauthInFlight;
     if (inFlight != null) return inFlight;
@@ -111,6 +126,7 @@ class DtcpPlaybackEngine implements PlaybackEngine {
     required this.credentialStore,
     required SrmStore srmStore,
     this.diag = const DiagLog.none(),
+    this.autoReconnect = false,
     AkeConnectionFactory? akeConnectionFactory,
     AkeClient Function(DeviceCredentials credentials)? clientFactory,
     DtcpMediaFetcher Function()? fetcherFactory,
@@ -137,6 +153,16 @@ class DtcpPlaybackEngine implements PlaybackEngine {
 
   /// Diagnostics sink (plan 28), categories playback/network/ake.
   final DiagLog diag;
+
+  /// Whether the proxy recovers upstream drops automatically
+  /// (plan 129): live streams reconnect with backoff and a
+  /// fresh authentication, recordings resume at the reader's
+  /// byte. The providers enable it on Android — the platform
+  /// of the motivating environments (in-car Fire TV, phones on
+  /// tethering links) — and every other platform keeps the
+  /// long-standing drop behaviour until field data says
+  /// otherwise.
+  final bool autoReconnect;
   final AkeClient Function(DeviceCredentials credentials) _clientFactory;
   final DtcpMediaFetcher Function() _fetcherFactory;
 
@@ -185,13 +211,14 @@ class DtcpPlaybackEngine implements PlaybackEngine {
       'res quality=${res.quality ?? '(none)'}; '
       'credentials -> HEAD -> AKE -> proxy',
     );
-    return _start(res);
+    return _start(res, isLive: true);
   }
 
   Future<PlaybackSession> _start(
     TitleRes res, {
     int? seekTotalBytes,
     Duration? seekTotalDuration,
+    bool isLive = false,
   }) async {
     final stopwatch = Stopwatch()..start();
     var stage = 'credentials';
@@ -263,6 +290,9 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         totalDuration: seekTotalDuration,
         windowCapBytesOverride: bufferCapBytes,
         prefetchCapBytesOverride: bufferCapBytes,
+        isLive: isLive,
+        autoReconnect: autoReconnect,
+        onReauthenticate: autoReconnect ? keySource.forceReauthenticate : null,
       );
       diag(
         DiagCategory.playback,

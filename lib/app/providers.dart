@@ -368,6 +368,10 @@ final playbackEngineProvider = Provider<PlaybackEngine>(
     credentialStore: ref.watch(credentialStoreProvider),
     srmStore: ref.watch(srmStoreProvider),
     diag: ref.watch(diagLogProvider),
+    // Automatic drop recovery (plan 129) is Android-only: the
+    // platform of the in-car / tethering environments it was
+    // built for. Other platforms keep the previous behaviour.
+    autoReconnect: Platform.isAndroid,
     bufferSecondsSource: () => ref.read(playbackBufferProvider),
     akeConnectionFactory: (host, port) =>
         nativeAkeConnectionFactory(host, port, diag: ref.read(diagLogProvider)),
@@ -456,6 +460,7 @@ DeviceServices assembleDeviceServices(
     live: DlnaLiveCatalogService(metadata: metadata),
     playback: DtcpPlaybackEngine(
       bufferSecondsSource: bufferSecondsSource,
+      autoReconnect: Platform.isAndroid,
       credentialStore: credentialStore ?? SecureCredentialStore(),
       srmStore:
           srmStore ??
