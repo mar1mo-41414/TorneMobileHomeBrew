@@ -451,16 +451,63 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
         context: context,
         ref: ref,
         start: () => engine.startLivePlayback(channel, res),
-        buildPlayer: (session) => PlayerScreen(
-          title: channel.channelName ?? channel.programTitle,
-          session: session,
-          live: true,
-        ),
+        buildPlayer: (session) {
+          final zap = _zapTargetsFor(engine);
+          return PlayerScreen(
+            title: channel.channelName ?? channel.programTitle,
+            session: session,
+            live: true,
+            zapTargets: zap?.targets,
+            zapIndex: zap?.index ?? 0,
+          );
+        },
         unsupportedSubject: 'TV視聴',
         startFailureMessage: '視聴を開始できませんでした',
       );
     } finally {
       if (mounted) setState(() => _starting = false);
     }
+  }
+
+  /// The zap targets for viewing [channel] (channel
+  /// movement inside the player, owner request
+  /// 2026-11-23): the playable channels of the same band,
+  /// in the order the live list shows them — the
+  /// subchannel setting applied, as the list applies it —
+  /// each with the start this view's own viewing runs, at
+  /// this visit's quality, and the index of [channel]
+  /// among them. Null when the channel list is not at hand
+  /// (its fetch has not landed) or the band offers no
+  /// second playable channel: the player then keeps its
+  /// plain title and offers no movement.
+  ({List<PlayerZapTarget> targets, int index})? _zapTargetsFor(
+    PlaybackEngine engine,
+  ) {
+    final bands = ref.read(liveChannelsProvider(reg)).value;
+    if (bands == null) return null;
+    final visible = liveBandsWithSubchannelSetting(
+      bands,
+      ref.read(showSubchannelsProvider),
+    );
+    for (final band in visible) {
+      if (!band.channels.any((c) => c.id == channel.id)) continue;
+      final useMobile = _useMobile;
+      final targets = <PlayerZapTarget>[];
+      var index = -1;
+      for (final c in band.channels) {
+        if (c.res.isEmpty) continue;
+        if (c.id == channel.id) index = targets.length;
+        final res = (useMobile ? c.mobileRes : c.originalRes) ?? c.res.first;
+        targets.add(
+          PlayerZapTarget(
+            name: c.channelName ?? c.programTitle,
+            start: () => engine.startLivePlayback(c, res),
+          ),
+        );
+      }
+      if (targets.length < 2 || index < 0) return null;
+      return (targets: targets, index: index);
+    }
+    return null;
   }
 }
