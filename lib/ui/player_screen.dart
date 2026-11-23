@@ -1053,13 +1053,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         final cacheMode = mpvCacheMode(live: widget.live);
         await platform.setProperty('cache', cacheMode);
         if (!widget.live) {
-          await platform.setProperty(
-            'demuxer-max-bytes',
-            '$recordingDemuxerMaxBytes',
-          );
+          // The forward demuxer limit follows the viewer's
+          // playback buffer choice (plan 126); the back limit
+          // stays at its long-standing value (backward scans
+          // are not link buffering — see player_cache_policy).
+          final bufferSeconds = ref.read(playbackBufferProvider);
+          final demuxerMaxBytes = recordingDemuxerMaxBytesFor(bufferSeconds);
+          await platform.setProperty('demuxer-max-bytes', '$demuxerMaxBytes');
           await platform.setProperty(
             'demuxer-max-back-bytes',
             '$recordingDemuxerMaxBackBytes',
+          );
+          _diag(
+            DiagCategory.playback,
+            'player: mpv demuxer-max-bytes=$demuxerMaxBytes '
+            '(playback buffer: '
+            '${bufferSeconds == playbackBufferStandardSeconds ? 'standard' : '$bufferSeconds s'})',
           );
         }
         _diag(

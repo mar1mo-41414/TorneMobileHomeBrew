@@ -238,6 +238,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ],
             ),
           ),
+          // The playback buffer setting is mobile / TV only
+          // this round (plan 126); the desktop builds do not
+          // show it.
+          if (!isDesktopStorePlatform) const PlaybackBufferSetting(),
           const Divider(),
           _sectionTitle(context, '録画再生 (DTCP-IP)'),
           ListTile(
@@ -501,5 +505,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (!mounted) return;
         showSnack(context, '登録を解除しました');
     }
+  }
+}
+
+/// The playback buffer choice (plan 126): how much content
+/// the playback path banks ahead of the play position, as a
+/// segmented choice mirroring the quality choice above.
+/// Seconds are the unit a viewer can reason about; the
+/// conversion to per-layer byte caps lives in
+/// core/playback_buffer.dart. The standard segment keeps the
+/// long-standing caps (see the policy file).
+class PlaybackBufferSetting extends ConsumerWidget {
+  const PlaybackBufferSetting({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('再生バッファ', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          SegmentedButton<int>(
+            segments: [
+              for (final seconds in playbackBufferChoicesSeconds)
+                ButtonSegment(
+                  value: seconds,
+                  label: Text(
+                    seconds == playbackBufferStandardSeconds
+                        ? '標準'
+                        : '$seconds 秒',
+                  ),
+                ),
+            ],
+            selected: {ref.watch(playbackBufferProvider)},
+            onSelectionChanged: (selection) =>
+                ref.read(playbackBufferProvider.notifier).set(selection.first),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '再生位置より先の内容をためておく量です。回線が不安定な環境では、'
+            '大きくすると途切れにくくなります。大きくするほどメモリの使用量が増えます。'
+            '次の再生から反映されます。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
   }
 }
