@@ -14,6 +14,7 @@ import '../dtcp/credential_store.dart';
 import '../dtcp/dtcp_crypto.dart';
 import '../dtcp/dtcp_proxy.dart';
 import '../errors.dart';
+import '../playback_buffer.dart';
 import '../models/live_channel.dart';
 import '../models/title.dart';
 import 'interfaces.dart';
@@ -113,7 +114,10 @@ class DtcpPlaybackEngine implements PlaybackEngine {
     AkeConnectionFactory? akeConnectionFactory,
     AkeClient Function(DeviceCredentials credentials)? clientFactory,
     DtcpMediaFetcher Function()? fetcherFactory,
-  }) : _clientFactory =
+    int Function()? bufferSecondsSource,
+  }) : _bufferSecondsSource = // ignore: prefer_initializing_formals
+           bufferSecondsSource,
+       _clientFactory =
            clientFactory ??
            ((credentials) => akeConnectionFactory == null
                ? AkeClient(
@@ -135,6 +139,13 @@ class DtcpPlaybackEngine implements PlaybackEngine {
   final DiagLog diag;
   final AkeClient Function(DeviceCredentials credentials) _clientFactory;
   final DtcpMediaFetcher Function() _fetcherFactory;
+
+  /// Reads the viewer's playback buffer choice (seconds; the
+  /// standard value keeps the proxy's long-standing caps) at
+  /// each start, so a settings change applies from the next
+  /// playback without rebuilding the engine (plan 126). Null
+  /// in headless / test contexts: the standard value then.
+  final int Function()? _bufferSecondsSource;
 
   /// The engine itself is implemented; whether a credential pair
   /// has been imported is checked asynchronously in [startPlayback].
@@ -233,6 +244,16 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         },
         diag: diag,
       );
+      final bufferSeconds =
+          _bufferSecondsSource?.call() ?? playbackBufferStandardSeconds;
+      final bufferCapBytes = playbackBufferCapBytes(bufferSeconds);
+      diag(
+        DiagCategory.playback,
+        bufferCapBytes == null
+            ? 'playback buffer: standard (the long-standing caps)'
+            : 'playback buffer: $bufferSeconds s '
+                  '(cap $bufferCapBytes bytes per layer)',
+      );
       final proxy = await DtcpProxy.start(
         contentUrl: contentUrl,
         keyForLabel: keySource.keyForLabel,
@@ -240,6 +261,8 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         diag: diag,
         totalBytes: seekTotalBytes,
         totalDuration: seekTotalDuration,
+        windowCapBytesOverride: bufferCapBytes,
+        prefetchCapBytesOverride: bufferCapBytes,
       );
       diag(
         DiagCategory.playback,

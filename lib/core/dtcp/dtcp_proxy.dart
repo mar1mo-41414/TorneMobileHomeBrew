@@ -320,9 +320,11 @@ class DtcpProxy {
     int? totalBytes,
     Duration? totalDuration,
     int? windowCapBytesOverride,
+    int? prefetchCapBytesOverride,
   }) : _window = _WindowCache(
          capBytes: windowCapBytesOverride ?? windowCapBytes,
        ),
+       _prefetchCapBytes = prefetchCapBytesOverride ?? prefetchCapBytes,
        _contentUrl = contentUrl, // ignore: prefer_initializing_formals
        _keyForLabel = keyForLabel, // ignore: prefer_initializing_formals
        _fetcher = fetcher, // ignore: prefer_initializing_formals
@@ -349,6 +351,12 @@ class DtcpProxy {
   /// Seekable mode (plan 61) requires both the size and the
   /// duration: the size is the advertised content length, the
   /// duration drives the byte->time conversion.
+  /// The prefetch queue bound in force (plan 126).
+  int get prefetchCapBytesInForce => _prefetchCapBytes;
+
+  /// The seekable window bound in force (plan 126).
+  int get windowCapBytesInForce => _window.capBytes;
+
   bool get _seekable =>
       _totalBytes != null &&
       _totalBytes > 0 &&
@@ -356,6 +364,11 @@ class DtcpProxy {
       _totalDuration > Duration.zero;
 
   final _PlaintextQueue _queue = _PlaintextQueue();
+
+  /// The prefetch bound in force for this proxy: the caller's
+  /// override (the playback buffer setting, plan 126) or the
+  /// long-standing [prefetchCapBytes].
+  final int _prefetchCapBytes;
   int _cipherBytes = 0;
   int _servedBytes = 0;
   int _requestCount = 0;
@@ -430,6 +443,7 @@ class DtcpProxy {
     int? totalBytes,
     Duration? totalDuration,
     int? windowCapBytesOverride,
+    int? prefetchCapBytesOverride,
   }) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final proxy = DtcpProxy._(
@@ -442,8 +456,15 @@ class DtcpProxy {
       totalBytes: totalBytes,
       totalDuration: totalDuration,
       windowCapBytesOverride: windowCapBytesOverride,
+      prefetchCapBytesOverride: prefetchCapBytesOverride,
     );
     server.listen(proxy._handle);
+    diag(
+      DiagCategory.playback,
+      'proxy: buffer caps in force: prefetch '
+      '${proxy.prefetchCapBytesInForce} bytes, window '
+      '${proxy.windowCapBytesInForce} bytes',
+    );
     if (proxy._seekable) {
       proxy._seekMap = _SeekMap(
         totalBytes: totalBytes!,
@@ -498,7 +519,7 @@ class DtcpProxy {
       _iterator = iterator;
       try {
         while (!_stopRequested) {
-          if (_queue.bufferedBytes >= prefetchCapBytes) {
+          if (_queue.bufferedBytes >= _prefetchCapBytes) {
             await _waitForDrain();
             continue;
           }
@@ -562,7 +583,7 @@ class DtcpProxy {
   Future<void> _waitForDrain() async {
     while (!_stopRequested &&
         !_queue.isClosed &&
-        _queue.bufferedBytes >= prefetchCapBytes) {
+        _queue.bufferedBytes >= _prefetchCapBytes) {
       await _queue.waitChange();
     }
   }
@@ -1283,6 +1304,9 @@ class _WindowCache {
   /// [DtcpProxy.windowCapBytes]; tests override it so the
   /// pause/pin behaviour is reachable with small fixtures).
   final int _capBytes;
+
+  /// The window bound in force (see [_capBytes]).
+  int get capBytes => _capBytes;
 
   final List<Uint8List> _chunks = [];
   int _start = 0;

@@ -6,6 +6,7 @@
 library;
 
 export 'app_version.dart';
+export 'playback_buffer.dart';
 export 'endpoints.dart';
 export 'errors.dart';
 export 'diagnostics.dart';
