@@ -5,6 +5,14 @@
     <!-- Lets the app hold a WifiManager.MulticastLock so SSDP
          M-SEARCH responses are not filtered by the Wi-Fi driver. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    <!-- Lets the credential import look for a credentials.env
+         file in the Downloads folder (plan 127). Only the legacy
+         storage model needs it, hence the maxSdkVersion cap; on
+         newer Android the platform side reports the folder as
+         unreadable instead and the picker path remains. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
     <application
         android:label="torne mobile HB"
         android:name="${applicationName}"
