@@ -70,6 +70,7 @@ import 'playback_launcher.dart';
 import 'player_screen.dart';
 import 'title_list_filter.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 /// The resume start a title offers (plan 86): the position the
@@ -426,7 +427,7 @@ class _TitleListState extends ConsumerState<_TitleList> {
           ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: TextField(
+          child: AppTextField(
             controller: _searchController,
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search),
@@ -885,7 +886,12 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
       padding: const EdgeInsets.all(16),
       children: [
         if (!t.recordingFlag) _TitleThumbnailBanner(reg: reg, titleId: t.id),
-        Text(t.title, style: Theme.of(context).textTheme.titleLarge),
+        // TV: the heading is display-only; it holds focus
+        // (TvFocusAnchor) so D-pad traversal can scroll back to
+        // the top of the detail (plan 123).
+        TvFocusAnchor(
+          child: Text(t.title, style: Theme.of(context).textTheme.titleLarge),
+        ),
         const SizedBox(height: 12),
         if (t.scheduledStart != null)
           FieldRow(

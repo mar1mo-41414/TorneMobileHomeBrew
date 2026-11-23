@@ -24,6 +24,7 @@ import 'error_messages.dart';
 import 'format.dart';
 import 'schedule_channel_selection.dart';
 import 'schedule_destination.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 enum ScheduleFormMode { create, edit, timeChange }
@@ -208,9 +209,14 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
           // The programme being reserved (plan 28): shown for
           // confirmation; the fields below start from its values
           // and stay editable.
-          Text(
-            widget.prefill!.title ?? '番組情報なし',
-            style: Theme.of(context).textTheme.titleMedium,
+          // TV: the programme heading is display-only; it holds
+          // focus (TvFocusAnchor) so D-pad traversal can scroll
+          // back to the top of the form (plan 123).
+          TvFocusAnchor(
+            child: Text(
+              widget.prefill!.title ?? '番組情報なし',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -309,7 +315,7 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
           ],
         ),
         const SizedBox(height: 8),
-        TextField(
+        AppTextField(
           controller: _durationMinutes,
           decoration: const InputDecoration(
             labelText: '長さ (分)',
@@ -553,9 +559,14 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        FieldRow(
-          label: '開始',
-          value: formatDateTimeWithWeekdayJst(original.start),
+        // TV: the head rows are display-only; the first row
+        // holds focus (TvFocusAnchor) so D-pad traversal can
+        // scroll back to the top of the form (plan 123).
+        TvFocusAnchor(
+          child: FieldRow(
+            label: '開始',
+            value: formatDateTimeWithWeekdayJst(original.start),
+          ),
         ),
         FieldRow(
           label: '長さ',
@@ -572,14 +583,14 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
           value: _priority,
           onChanged: (v) => setState(() => _priority = v),
         ),
-        TextField(
+        AppTextField(
           controller: _condition,
           decoration: const InputDecoration(labelText: '条件 ID'),
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => FocusScope.of(context).unfocus(),
         ),
         const SizedBox(height: 16),
-        TextField(
+        AppTextField(
           controller: _destination,
           decoration: const InputDecoration(labelText: '録画先'),
           textInputAction: TextInputAction.done,
