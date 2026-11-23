@@ -902,6 +902,19 @@ class _TitleDetailViewState extends ConsumerState<TitleDetailView> {
         : '元画質 (${resQualityLabel(originalRes!.quality)})';
     return ListView(
       padding: const EdgeInsets.all(16),
+      // TV: D-pad traversal can only move to children the
+      // sliver has laid out, and the stretch between the
+      // protection switch and the play controls — the size /
+      // resume / quality rows plus the description sections —
+      // is far longer than the default cache extent, so focus
+      // stopped dead at the switch and the play button could
+      // never be reached by remote (measured on a real unit:
+      // the gap is ~750 px). Lay out the whole page up front;
+      // it is a page of text, so the cost is negligible. The
+      // standard variant keeps the default extent.
+      scrollCacheExtent: ref.watch(appVariantProvider).isTv
+          ? const ScrollCacheExtent.pixels(3000)
+          : null,
       children: [
         if (!t.recordingFlag) _TitleThumbnailBanner(reg: reg, titleId: t.id),
         // TV: the heading is display-only; it holds focus
