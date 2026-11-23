@@ -490,6 +490,8 @@ class _EpgScreenState extends ConsumerState<EpgScreen> {
                 reg: reg,
                 channel: channel,
               ),
+              onDeleteReserved: (schedule) =>
+                  deleteScheduleAndInvalidate(ref, reg, schedule),
               logos: logos,
               selectedDay: _selectedDay,
               onSelectDay: (day) => setState(() {
@@ -516,6 +518,7 @@ class _GuideView extends StatelessWidget {
     required this.guide,
     required this.hiddenGenres,
     required this.onWatchEvent,
+    required this.onDeleteReserved,
     required this.logos,
     required this.selectedDay,
     required this.onSelectDay,
@@ -539,6 +542,10 @@ class _GuideView extends StatelessWidget {
   /// Opens live viewing for a guide channel (plan 95);
   /// offered from the event detail while the event is on air.
   final void Function(Channel channel) onWatchEvent;
+
+  /// Deletes the reservation covering a guide event
+  /// (plan 124); wired by the screen to the device.
+  final Future<void> Function(RecordSchedule schedule) onDeleteReserved;
   final Map<int, List<int>> logos;
   final DateTime? selectedDay;
   final ValueChanged<DateTime> onSelectDay;
@@ -627,6 +634,7 @@ class _GuideView extends StatelessWidget {
                             services: guide.services,
                             hiddenGenres: hiddenGenres,
                             onWatchEvent: onWatchEvent,
+                            onDeleteReserved: onDeleteReserved,
                             dayStart: dayStart,
                             dayEnd: dayEnd,
                             controller: bodyController,
@@ -770,6 +778,7 @@ class _DayGrid extends StatelessWidget {
     required this.services,
     required this.hiddenGenres,
     required this.onWatchEvent,
+    required this.onDeleteReserved,
     required this.dayStart,
     required this.dayEnd,
     required this.controller,
@@ -780,6 +789,10 @@ class _DayGrid extends StatelessWidget {
   final List<EpgServiceGuide> services;
   final Set<int> hiddenGenres;
   final void Function(Channel channel) onWatchEvent;
+
+  /// Deletes the reservation covering a guide event
+  /// (plan 124); wired by the screen to the device.
+  final Future<void> Function(RecordSchedule schedule) onDeleteReserved;
   final DateTime dayStart;
   final DateTime dayEnd;
   final ScrollController controller;
@@ -838,6 +851,11 @@ class _DayGrid extends StatelessWidget {
                               services[i].channel,
                               event,
                             ),
+                            reservedSchedule: reservedIndex.scheduleFor(
+                              services[i].channel,
+                              event,
+                            ),
+                            onDeleteReserved: onDeleteReserved,
                             onWatch: () => onWatchEvent(services[i].channel),
                           ),
                       ],
@@ -869,6 +887,8 @@ class _EventTile extends StatelessWidget {
     required this.dayStart,
     required this.suppressed,
     required this.reserved,
+    required this.reservedSchedule,
+    required this.onDeleteReserved,
     required this.onWatch,
   });
 
@@ -890,6 +910,14 @@ class _EventTile extends StatelessWidget {
   /// the reservation reads at a glance without hiding
   /// the genre.
   final bool reserved;
+
+  /// The reservation covering this event, when there is
+  /// one (plan 124): the detail dialog offers deleting it
+  /// instead of a new reservation.
+  final RecordSchedule? reservedSchedule;
+
+  /// Deletes [reservedSchedule] on the device (plan 124).
+  final Future<void> Function(RecordSchedule schedule) onDeleteReserved;
 
   /// Opens live viewing for this tile's channel (plan 95);
   /// the detail dialog offers it only while the event is on
@@ -950,6 +978,8 @@ class _EventTile extends StatelessWidget {
               channelName: channelName,
               event: event,
               onWatch: onWatch,
+              reservedSchedule: reservedSchedule,
+              onDeleteReserved: onDeleteReserved,
             ),
             child: suppressed
                 ? const SizedBox.expand()
@@ -1028,6 +1058,12 @@ class _EventTile extends StatelessWidget {
 /// start and after the end there is nothing of this event to
 /// watch (the live stream carries whatever is on air then),
 /// so the action is not shown at all.
+///
+/// Delete from the guide (plan 124): when the event is
+/// already reserved — [reservedSchedule] is the concrete
+/// reservation the guide's marking matched (plan 120) —
+/// the dialog offers deleting that reservation instead of
+/// the reservation form, through [onDeleteReserved].
 void showEpgEventDetail(
   BuildContext context, {
   required RegisteredNasne reg,
@@ -1035,6 +1071,8 @@ void showEpgEventDetail(
   required String channelName,
   required EpgEvent event,
   VoidCallback? onWatch,
+  RecordSchedule? reservedSchedule,
+  Future<void> Function(RecordSchedule schedule)? onDeleteReserved,
 }) {
   final now = DateTime.now();
   final watchable =
@@ -1064,8 +1102,49 @@ void showEpgEventDetail(
               onWatch();
             }
           : null,
+      onDeleteReservation: reservedSchedule != null && onDeleteReserved != null
+          ? () => _deleteReservedFromDetail(
+              context,
+              dialogContext,
+              reservedSchedule,
+              onDeleteReserved,
+            )
+          : null,
     ),
   );
+}
+
+/// The delete flow behind the detail dialog's
+/// delete-reservation action (plan 124): confirm, delete
+/// the matched reservation on the device, then close the
+/// detail and report. The reservation-list invalidation
+/// rides along in [onDeleteReserved], so the guide's red
+/// frame clears with the same repaint as the schedules
+/// tab. A refusal from the device keeps the detail open
+/// and shows the reason, the way the schedules tab's
+/// delete does.
+Future<void> _deleteReservedFromDetail(
+  BuildContext context,
+  BuildContext dialogContext,
+  RecordSchedule schedule,
+  Future<void> Function(RecordSchedule schedule) onDeleteReserved,
+) async {
+  final ok = await confirmDialog(
+    context,
+    title: '予約を削除',
+    message: '${formatDateTimeWithWeekdayJst(schedule.start)} の予約を削除しますか？',
+  );
+  if (!ok) return;
+  try {
+    await onDeleteReserved(schedule);
+  } on NasneError catch (e) {
+    if (context.mounted) showSnack(context, userMessageForError(e));
+    return;
+  }
+  if (context.mounted) {
+    Navigator.of(dialogContext).pop();
+    showSnack(context, '予約を削除しました');
+  }
 }
 
 class EpgEventDetailDialog extends StatelessWidget {
@@ -1075,6 +1154,7 @@ class EpgEventDetailDialog extends StatelessWidget {
     required this.channelName,
     this.onReserve,
     this.onWatch,
+    this.onDeleteReservation,
   });
 
   final EpgEvent event;
@@ -1087,6 +1167,12 @@ class EpgEventDetailDialog extends StatelessWidget {
   /// Opens the channel's live viewing (plan 95); null unless
   /// the event is on air now.
   final VoidCallback? onWatch;
+
+  /// Deletes the reservation this event already has
+  /// (plan 124); when given, it replaces the reservation
+  /// action — a reserved event is un-reserved from here,
+  /// not reserved twice.
+  final VoidCallback? onDeleteReservation;
 
   @override
   Widget build(BuildContext context) {
@@ -1149,7 +1235,13 @@ class EpgEventDetailDialog extends StatelessWidget {
             icon: const Icon(Icons.live_tv, size: 18),
             label: const Text('試聴'),
           ),
-        if (onReserve != null)
+        if (onDeleteReservation != null)
+          FilledButton.icon(
+            onPressed: onDeleteReservation,
+            icon: const Icon(Icons.delete_outline, size: 18),
+            label: const Text('予約を削除'),
+          )
+        else if (onReserve != null)
           FilledButton.icon(
             onPressed: onReserve,
             icon: const Icon(Icons.fiber_manual_record, size: 18),

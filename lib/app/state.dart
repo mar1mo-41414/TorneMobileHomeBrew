@@ -287,10 +287,8 @@ class TitlesNotifier extends StreamNotifier<TitleListProgress> {
   final RegisteredNasne reg;
 
   @override
-  Stream<TitleListProgress> build() => ref
-      .watch(deviceServicesProvider(reg))
-      .titles
-      .listTitlesProgressively();
+  Stream<TitleListProgress> build() =>
+      ref.watch(deviceServicesProvider(reg)).titles.listTitlesProgressively();
 
   /// Rewrites the protection flag of the loaded title [titleId]
   /// in place, after the unit accepted the update (plan 103).
@@ -310,9 +308,7 @@ class TitlesNotifier extends StreamNotifier<TitleListProgress> {
     if (i < 0 || stage.titles[i].protectFlag == protect) return;
     final titles = [...stage.titles];
     titles[i] = titles[i].withProtectFlag(protect);
-    state = AsyncData(
-      TitleListProgress(titles, complete: stage.complete),
-    );
+    state = AsyncData(TitleListProgress(titles, complete: stage.complete));
   }
 
   /// Rewrites the resume point of the loaded title [titleId]
@@ -338,9 +334,7 @@ class TitlesNotifier extends StreamNotifier<TitleListProgress> {
     }
     final titles = [...stage.titles];
     titles[i] = titles[i].withResumePoint(resumePointSeconds, DateTime.now());
-    state = AsyncData(
-      TitleListProgress(titles, complete: stage.complete),
-    );
+    state = AsyncData(TitleListProgress(titles, complete: stage.complete));
   }
 }
 
@@ -403,4 +397,22 @@ void invalidateDeviceData(WidgetRef ref, RegisteredNasne reg) {
   ref.invalidate(titlesProvider(reg));
   ref.invalidate(titleCountsProvider(reg));
   ref.invalidate(liveChannelsProvider(reg));
+}
+
+/// Deletes [schedule] on [reg]'s device and invalidates the
+/// reservation list, so every consumer of it — the schedules
+/// tab, the guide's reserved marking (plan 120) — repaints
+/// from the device. Used by the guide detail's delete action
+/// on a reserved event (plan 124); the schedules tab keeps
+/// its own flow, which also pops its detail pane.
+Future<void> deleteScheduleAndInvalidate(
+  WidgetRef ref,
+  RegisteredNasne reg,
+  RecordSchedule schedule,
+) async {
+  await ref
+      .read(deviceServicesProvider(reg))
+      .schedules
+      .deleteSchedule(schedule.id);
+  ref.invalidate(schedulesProvider(reg));
 }
