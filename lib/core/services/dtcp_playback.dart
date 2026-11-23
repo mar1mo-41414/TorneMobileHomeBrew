@@ -14,6 +14,7 @@ import '../dtcp/credential_store.dart';
 import '../dtcp/dtcp_crypto.dart';
 import '../dtcp/dtcp_proxy.dart';
 import '../errors.dart';
+import '../playback_buffer.dart';
 import '../models/live_channel.dart';
 import '../models/title.dart';
 import 'interfaces.dart';
@@ -88,6 +89,21 @@ class PlaybackKeySource {
     }
   }
 
+  /// Forces a fresh authentication even when the current
+  /// session already holds keys (plan 129): after a long link
+  /// outage the source-side session is the prime suspect, and
+  /// the proxy's reconnect path re-authenticates before
+  /// reissuing the content request. The fresh session replaces
+  /// the current one (the old one is closed by
+  /// [_reauthenticateOnce]), so the key cache the ended session
+  /// held is invalidated with it; the wait for the fresh
+  /// session's first exchange key is bounded like the start
+  /// path's.
+  Future<void> forceReauthenticate() async {
+    final fresh = await _reauthenticateOnce();
+    await fresh.waitFirstExchangeKey(timeout: const Duration(seconds: 20));
+  }
+
   Future<ExchangeKeySession> _reauthenticateOnce() async {
     final inFlight = _reauthInFlight;
     if (inFlight != null) return inFlight;
@@ -110,10 +126,14 @@ class DtcpPlaybackEngine implements PlaybackEngine {
     required this.credentialStore,
     required SrmStore srmStore,
     this.diag = const DiagLog.none(),
+    this.autoReconnect = false,
     AkeConnectionFactory? akeConnectionFactory,
     AkeClient Function(DeviceCredentials credentials)? clientFactory,
     DtcpMediaFetcher Function()? fetcherFactory,
-  }) : _clientFactory =
+    int Function()? bufferSecondsSource,
+  }) : _bufferSecondsSource = // ignore: prefer_initializing_formals
+           bufferSecondsSource,
+       _clientFactory =
            clientFactory ??
            ((credentials) => akeConnectionFactory == null
                ? AkeClient(
@@ -133,8 +153,25 @@ class DtcpPlaybackEngine implements PlaybackEngine {
 
   /// Diagnostics sink (plan 28), categories playback/network/ake.
   final DiagLog diag;
+
+  /// Whether the proxy recovers upstream drops automatically
+  /// (plan 129): live streams reconnect with backoff and a
+  /// fresh authentication, recordings resume at the reader's
+  /// byte. The providers enable it on Android — the platform
+  /// of the motivating environments (in-car Fire TV, phones on
+  /// tethering links) — and every other platform keeps the
+  /// long-standing drop behaviour until field data says
+  /// otherwise.
+  final bool autoReconnect;
   final AkeClient Function(DeviceCredentials credentials) _clientFactory;
   final DtcpMediaFetcher Function() _fetcherFactory;
+
+  /// Reads the viewer's playback buffer choice (seconds; the
+  /// standard value keeps the proxy's long-standing caps) at
+  /// each start, so a settings change applies from the next
+  /// playback without rebuilding the engine (plan 126). Null
+  /// in headless / test contexts: the standard value then.
+  final int Function()? _bufferSecondsSource;
 
   /// The engine itself is implemented; whether a credential pair
   /// has been imported is checked asynchronously in [startPlayback].
@@ -174,13 +211,14 @@ class DtcpPlaybackEngine implements PlaybackEngine {
       'res quality=${res.quality ?? '(none)'}; '
       'credentials -> HEAD -> AKE -> proxy',
     );
-    return _start(res);
+    return _start(res, isLive: true);
   }
 
   Future<PlaybackSession> _start(
     TitleRes res, {
     int? seekTotalBytes,
     Duration? seekTotalDuration,
+    bool isLive = false,
   }) async {
     final stopwatch = Stopwatch()..start();
     var stage = 'credentials';
@@ -233,6 +271,16 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         },
         diag: diag,
       );
+      final bufferSeconds =
+          _bufferSecondsSource?.call() ?? playbackBufferStandardSeconds;
+      final bufferCapBytes = playbackBufferCapBytes(bufferSeconds);
+      diag(
+        DiagCategory.playback,
+        bufferCapBytes == null
+            ? 'playback buffer: standard (the long-standing caps)'
+            : 'playback buffer: $bufferSeconds s '
+                  '(cap $bufferCapBytes bytes per layer)',
+      );
       final proxy = await DtcpProxy.start(
         contentUrl: contentUrl,
         keyForLabel: keySource.keyForLabel,
@@ -240,6 +288,11 @@ class DtcpPlaybackEngine implements PlaybackEngine {
         diag: diag,
         totalBytes: seekTotalBytes,
         totalDuration: seekTotalDuration,
+        windowCapBytesOverride: bufferCapBytes,
+        prefetchCapBytesOverride: bufferCapBytes,
+        isLive: isLive,
+        autoReconnect: autoReconnect,
+        onReauthenticate: autoReconnect ? keySource.forceReauthenticate : null,
       );
       diag(
         DiagCategory.playback,

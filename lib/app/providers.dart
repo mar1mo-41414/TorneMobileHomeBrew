@@ -236,6 +236,40 @@ final playbackQualityProvider = NotifierProvider<PlaybackQualityNotifier, bool>(
   PlaybackQualityNotifier.new,
 );
 
+/// The viewer's playback buffer choice (plan 126): how much
+/// content the playback path banks ahead of the play position,
+/// in seconds (see core/playback_buffer.dart for the design).
+/// The state is one of playbackBufferChoicesSeconds; the
+/// standard value (0) keeps every layer's long-standing cap,
+/// so nothing stored reproduces the behaviour from before
+/// this setting existed. One value serves live viewing and
+/// recordings alike, like the quality above. The playback
+/// engine and the player screen read it at each start, so a
+/// change applies from the next playback.
+class PlaybackBufferNotifier extends Notifier<int> {
+  static const _key = 'playback_buffer_seconds';
+
+  @override
+  int build() {
+    final store = ref.watch(keyValueStoreProvider);
+    Future.microtask(() async {
+      final value = await store.read(_key);
+      state = parsePlaybackBufferSeconds(value);
+    });
+    return playbackBufferStandardSeconds;
+  }
+
+  Future<void> set(int seconds) async {
+    final normalized = normalizePlaybackBufferSeconds(seconds);
+    state = normalized;
+    await ref.read(keyValueStoreProvider).write(_key, '$normalized');
+  }
+}
+
+final playbackBufferProvider = NotifierProvider<PlaybackBufferNotifier, int>(
+  PlaybackBufferNotifier.new,
+);
+
 /// The app store directory (file stores and the debug log
 /// destination, plan 28; location rule in plan 47).
 /// The bootstrap overrides this with the real directory; null in
@@ -334,6 +368,11 @@ final playbackEngineProvider = Provider<PlaybackEngine>(
     credentialStore: ref.watch(credentialStoreProvider),
     srmStore: ref.watch(srmStoreProvider),
     diag: ref.watch(diagLogProvider),
+    // Automatic drop recovery (plan 129) is Android-only: the
+    // platform of the in-car / tethering environments it was
+    // built for. Other platforms keep the previous behaviour.
+    autoReconnect: Platform.isAndroid,
+    bufferSecondsSource: () => ref.read(playbackBufferProvider),
     akeConnectionFactory: (host, port) =>
         nativeAkeConnectionFactory(host, port, diag: ref.read(diagLogProvider)),
   ),
@@ -371,6 +410,7 @@ DeviceServices assembleDeviceServices(
   CredentialStore? credentialStore,
   SrmStore? srmStore,
   DiagLog? diagLog,
+  int Function()? bufferSecondsSource,
 }) {
   final device = describedDevice ?? NasneDevice.direct(reg.host);
   final plain = WebApiTransport(reg.host, client: client);
@@ -419,6 +459,8 @@ DeviceServices assembleDeviceServices(
     metadata: metadata,
     live: DlnaLiveCatalogService(metadata: metadata),
     playback: DtcpPlaybackEngine(
+      bufferSecondsSource: bufferSecondsSource,
+      autoReconnect: Platform.isAndroid,
       credentialStore: credentialStore ?? SecureCredentialStore(),
       srmStore:
           srmStore ??
@@ -442,5 +484,6 @@ final deviceServicesProvider = Provider.family<DeviceServices, RegisteredNasne>(
     credentialStore: ref.watch(credentialStoreProvider),
     srmStore: ref.watch(srmStoreProvider),
     diagLog: ref.watch(diagLogProvider),
+    bufferSecondsSource: () => ref.read(playbackBufferProvider),
   ),
 );
