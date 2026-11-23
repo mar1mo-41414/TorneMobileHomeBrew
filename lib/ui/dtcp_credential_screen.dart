@@ -177,7 +177,8 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
       );
       if (candidates.isEmpty) {
         setState(
-          () => _error = 'ダウンロードフォルダに、取り込める資格情報ファイルが'
+          () => _error =
+              'ダウンロードフォルダに、取り込める資格情報ファイルが'
               '見つかりませんでした。ファイル名が credentials で始まる'
               ' .env ファイルになっているか確認してください。',
         );
@@ -200,8 +201,8 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         setState(
           () => _error = e.code == 'permission_denied'
               ? 'ダウンロードフォルダを読み取る許可がないため、探せませんでした。'
-                  '端末の設定でこのアプリにストレージの許可を与えてから、'
-                  'もう一度お試しください。'
+                    '端末の設定でこのアプリにストレージの許可を与えてから、'
+                    'もう一度お試しください。'
               : 'ダウンロードフォルダを探せませんでした。もう一度お試しください。',
         );
       }
@@ -211,9 +212,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         'credential downloads scan failed: $e',
       );
       if (mounted) {
-        setState(
-          () => _error = 'ダウンロードフォルダを探せませんでした。もう一度お試しください。',
-        );
+        setState(() => _error = 'ダウンロードフォルダを探せませんでした。もう一度お試しください。');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -263,9 +262,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('資格情報を取り込む'),
-        content: Text(
-          '「${candidate.name}」から証明書と秘密鍵を取り込みます。よろしいですか？',
-        ),
+        content: Text('「${candidate.name}」から証明書と秘密鍵を取り込みます。よろしいですか？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
