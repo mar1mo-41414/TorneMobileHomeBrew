@@ -75,12 +75,12 @@ jobs:
       - name: APK ビルド
         run: |
           flutter pub get
-          flutter build apk --release
+          flutter build apk --release --flavor standard
 
       - name: 成果物の配置
         run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk \
+          cp build/app/outputs/flutter-apk/app-standard-release.apk \
             "dist/TorneMobileHomeBrew-dev.apk"
 
       - name: artifact アップロード
