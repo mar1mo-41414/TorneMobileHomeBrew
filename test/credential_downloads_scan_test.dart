@@ -157,5 +157,82 @@ void main() {
       expect(find.textContaining('取り込める資格情報ファイルが'), findsOneWidget);
       expect(find.text('資格情報ファイルが見つかりました'), findsNothing);
     });
+
+    testWidgets('one file seen from two folders is listed once', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final bytes = _envBytes(katSinkCert, katSinkPriv);
+      // The platform scans both Downloads spellings (plan 132);
+      // a file reachable from both arrives as two sightings of
+      // one path and must be offered once.
+      final scanner = _scanner([
+        DownloadsScannedFile(
+          name: 'credentials.env',
+          path: '/storage/emulated/0/Downloads/credentials.env',
+          bytes: bytes,
+        ),
+        DownloadsScannedFile(
+          name: 'credentials.env',
+          path: '/storage/emulated/0/Downloads/credentials.env',
+          bytes: bytes,
+        ),
+      ]);
+      await tester.pumpWidget(_app(_store(), scanner));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Downloads から探す'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('資格情報ファイルが見つかりました'), findsOneWidget);
+      expect(find.text('credentials.env'), findsOneWidget);
+    });
+  });
+
+  group('CredentialDownloadsScanner path dedupe (plan 132)', () {
+    test('two sightings of one path collapse to a single file', () async {
+      final bytes = _envBytes(katSinkCert, katSinkPriv);
+      final files = await _scanner([
+        DownloadsScannedFile(
+          name: 'credentials.env',
+          path: '/storage/emulated/0/Downloads/credentials.env',
+          bytes: bytes,
+        ),
+        DownloadsScannedFile(
+          name: 'credentials.env',
+          path: '/storage/emulated/0/Downloads/credentials.env',
+          bytes: bytes,
+        ),
+      ]).scan();
+      expect(files, hasLength(1));
+    });
+
+    test('the same name at different paths stays two files', () async {
+      final bytes = _envBytes(katSinkCert, katSinkPriv);
+      final files = await _scanner([
+        DownloadsScannedFile(
+          name: 'credentials.env',
+          path: '/storage/emulated/0/Download/credentials.env',
+          bytes: bytes,
+        ),
+        DownloadsScannedFile(
+          name: 'credentials.env',
+          path: '/storage/emulated/0/Downloads/credentials.env',
+          bytes: bytes,
+        ),
+      ]).scan();
+      expect(files, hasLength(2));
+    });
+
+    test('files without a path always pass through', () async {
+      final bytes = _envBytes(katSinkCert, katSinkPriv);
+      final files = await _scanner([
+        DownloadsScannedFile(name: 'credentials.env', bytes: bytes),
+        DownloadsScannedFile(name: 'credentials.env', bytes: bytes),
+      ]).scan();
+      expect(files, hasLength(2));
+    });
   });
 }
