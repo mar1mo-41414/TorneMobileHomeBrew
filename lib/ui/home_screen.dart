@@ -11,6 +11,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app/state.dart';
 import '../core/core.dart';
 import 'format.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -65,12 +66,16 @@ class _StatusList extends ConsumerWidget {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          _DeviceSection(reg: reg),
+          // TV: the status list is display-only content; its
+          // first and last sections hold focus (TvFocusAnchor)
+          // so D-pad traversal can scroll through the whole
+          // list (plan 123).
+          TvFocusAnchor(child: _DeviceSection(reg: reg)),
           _HddSection(reg: reg),
           _LiveSection(reg: reg),
           _RecNgSection(reg: reg),
           _NetworkSection(reg: reg),
-          _BcasSection(reg: reg),
+          TvFocusAnchor(child: _BcasSection(reg: reg)),
           const SizedBox(height: 12),
         ],
       ),

@@ -19,6 +19,7 @@ import 'dtcp_credential_screen.dart';
 import 'epg_hidden_genres_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -54,7 +55,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
-          _sectionTitle(context, '登録済み nasne'),
+          // TV: the first and last items of the list hold focus
+          // (TvFocusAnchor) so D-pad traversal can scroll to both
+          // ends of the list (plan 123; the footer below was
+          // unreachable by remote before this, plan 121).
+          TvFocusAnchor(child: _sectionTitle(context, '登録済み nasne')),
           registrations.when(
             loading: () => const Padding(
               padding: EdgeInsets.all(24),
@@ -171,7 +176,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
+                AppTextField(
                   controller: _manualHost,
                   decoration: const InputDecoration(
                     labelText: 'IP アドレス / ホスト名',
@@ -322,12 +327,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              '発見にはローカルネットワークへのアクセス許可が必要です (iOS では許可ダイアログが'
-              '表示される場合があります)。発見できない環境では手動登録を使ってください。\n\n'
-              'torne mobile HB $appVersionLabel',
+          TvFocusAnchor(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                '発見にはローカルネットワークへのアクセス許可が必要です (iOS では許可ダイアログが'
+                '表示される場合があります)。発見できない環境では手動登録を使ってください。\n\n'
+                'torne mobile HB $appVersionLabel',
+              ),
             ),
           ),
         ],

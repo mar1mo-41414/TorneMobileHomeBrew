@@ -41,6 +41,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app/providers.dart';
 import '../core/core.dart';
 import 'format.dart';
+import 'tv_focus.dart';
 
 class DtcpCredentialScreen extends ConsumerStatefulWidget {
   const DtcpCredentialScreen({super.key});
@@ -121,7 +122,8 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
       text = utf8.decode(bytes);
     } on FormatException {
       setState(
-        () => _error = 'ファイルを読み取れませんでした。'
+        () => _error =
+            'ファイルを読み取れませんでした。'
             '資格情報ファイル (credentials.env) かどうか確認してください。',
       );
       return;
@@ -136,7 +138,8 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
       );
       if (mounted) {
         setState(
-          () => _error = 'ファイルから証明書と秘密鍵を取り出せませんでした。'
+          () => _error =
+              'ファイルから証明書と秘密鍵を取り出せませんでした。'
               '資格情報ファイル (credentials.env) かどうか確認してください。',
         );
       }
@@ -297,7 +300,8 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
           'credential entry decode failed: $e',
         );
         setState(
-          () => _error = '貼り付けた内容を読み取れませんでした。'
+          () => _error =
+              '貼り付けた内容を読み取れませんでした。'
               '証明書・秘密鍵の内容がそのまま入っているか確認してください。',
         );
         return;
@@ -312,7 +316,8 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
           'credential pair validation failed: $e',
         );
         setState(
-          () => _error = '証明書と秘密鍵のペアとして確認できませんでした。'
+          () => _error =
+              '証明書と秘密鍵のペアとして確認できませんでした。'
               '同じ機器から取り出したペアになっているか、'
               '内容が欠けていないか確認してください。',
         );
@@ -371,9 +376,15 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(16),
         children: [
-          const Text(
-            '録画を再生するには、お持ちの対応機器から取り出した'
-            '「証明書」と「秘密鍵」のペアが必要です。',
+          // TV: the intro text holds focus (TvFocusAnchor) so
+          // D-pad traversal can scroll back to the top of the
+          // list (plan 123). The last item is a button and
+          // already takes focus.
+          const TvFocusAnchor(
+            child: Text(
+              '録画を再生するには、お持ちの対応機器から取り出した'
+              '「証明書」と「秘密鍵」のペアが必要です。',
+            ),
           ),
           const SizedBox(height: 16),
           Text('用意のしかた', style: Theme.of(context).textTheme.titleSmall),
@@ -402,10 +413,7 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
             error: (e, _) => const ListTile(title: Text('状態を確認できませんでした')),
           ),
           const Divider(),
-          Text(
-            'ファイルから読み込む',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
+          Text('ファイルから読み込む', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 6),
           const Text(
             '資格情報ファイル (credentials.env) を選ぶと、'
@@ -501,8 +509,9 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
             ),
           )
         else ...[
-          TextField(
+          AppTextField(
             controller: controller,
+            tvEditTitle: label,
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
               hintText: '内容をそのまま貼り付け',
