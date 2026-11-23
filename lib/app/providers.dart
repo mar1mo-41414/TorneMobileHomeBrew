@@ -42,10 +42,12 @@ final playbackWakelockProvider = Provider<PlaybackWakelock>(
   ),
 );
 
-/// Discovery chain (plan 16.3): SSDP first; when it finds nothing
-/// (multicast-restricted environments such as iOS sideloading), the
-/// unicast subnet scan runs. Manual registration stays available in
-/// the settings screen regardless. On Android the SSDP step holds a
+/// Discovery chain (plan 16.3): SSDP and the unicast subnet
+/// scan both run and their results are merged — a device that
+/// stays silent on SSDP (measured: Buffalo NS-N100) is missed
+/// if the scan only runs when SSDP finds nothing. Manual
+/// registration stays available in the settings screen
+/// regardless. On Android the SSDP step holds a
 /// WifiManager.MulticastLock while searching (plan 17).
 final discoveryServiceProvider = Provider<DiscoveryService>(
   (ref) => CompositeDiscoveryService([

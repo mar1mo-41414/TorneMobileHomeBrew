@@ -66,8 +66,8 @@ class SubnetScanDiscoveryService implements DiscoveryService {
     this.concurrency = 64,
     SubnetBaseProvider? subnetBases,
     this._describer,
-  })  : _client = client ?? http.Client(),
-        _subnetBases = subnetBases ?? localSubnetBases;
+  }) : _client = client ?? http.Client(),
+       _subnetBases = subnetBases ?? localSubnetBases;
 
   final http.Client _client;
 
@@ -115,8 +115,7 @@ class SubnetScanDiscoveryService implements DiscoveryService {
     for (var start = 0; start < hosts.length; start += concurrency) {
       final batch = hosts.skip(start).take(concurrency);
       final results = await Future.wait([
-        for (final host in batch)
-          _probe(host).then((ok) => (host, ok)),
+        for (final host in batch) _probe(host).then((ok) => (host, ok)),
       ]);
       for (final (host, ok) in results) {
         if (ok) candidates.add(host);
@@ -135,12 +134,14 @@ class SubnetScanDiscoveryService implements DiscoveryService {
   Future<bool> _probe(String host) async {
     try {
       final resp = await _client
-          .get(Uri(
-            scheme: 'http',
-            host: host,
-            port: 64210,
-            path: WebApiEndpoints.boxNameGet.path,
-          ))
+          .get(
+            Uri(
+              scheme: 'http',
+              host: host,
+              port: 64210,
+              path: WebApiEndpoints.boxNameGet.path,
+            ),
+          )
           .timeout(probeTimeout);
       if (resp.statusCode != 200) return false;
       final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
@@ -171,9 +172,24 @@ class SubnetScanDiscoveryService implements DiscoveryService {
       _describeService.describe(location);
 }
 
-/// Tries discovery implementations in order and returns the first
-/// non-empty result (plan 16.3): SSDP first, subnet scan as the
-/// fallback for multicast-restricted environments.
+/// Runs every discovery implementation in order and merges
+/// their results, deduplicated by host (plan 16.3, revised
+/// after the 2026-11-23 Buffalo measurement below).
+///
+/// The original composition returned the first non-empty
+/// result, with the subnet scan as a fallback for
+/// multicast-restricted environments. Measured on a real
+/// two-nasne home (Sony nasne + Buffalo NS-N100, 2026-11-23):
+/// the Buffalo answers the WebAPI — registration, status,
+/// titles, EPG, live and recorded playback all work once it
+/// is registered — but it does not answer the SSDP search,
+/// so SSDP found the Sony alone and the scan never ran.
+/// First-non-empty therefore structurally misses a
+/// SSDP-silent device whenever any other device answers.
+/// Merging costs one scan sweep (bounded by probeTimeout ×
+/// batches, ~3.2 s per subnet at the defaults) on every
+/// search; the settings screen shows its searching state
+/// meanwhile.
 class CompositeDiscoveryService implements DiscoveryService {
   const CompositeDiscoveryService(this._chain);
 
@@ -183,14 +199,16 @@ class CompositeDiscoveryService implements DiscoveryService {
   Future<List<NasneDevice>> discover({
     Duration timeout = const Duration(seconds: 3),
   }) async {
+    final byHost = <String, NasneDevice>{};
     for (final service in _chain) {
       final found = await service.discover(timeout: timeout);
-      if (found.isNotEmpty) return found;
+      for (final device in found) {
+        byHost.putIfAbsent(device.host, () => device);
+      }
     }
-    return const [];
+    return byHost.values.toList();
   }
 
   @override
-  Future<NasneDevice> describe(Uri location) =>
-      _chain.first.describe(location);
+  Future<NasneDevice> describe(Uri location) => _chain.first.describe(location);
 }
