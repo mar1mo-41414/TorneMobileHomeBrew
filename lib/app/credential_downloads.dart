@@ -11,6 +11,12 @@
 /// which of them can actually be imported is Dart-side work
 /// (core/dtcp/credential_candidates.dart).
 ///
+/// The folder goes by two spellings in the field (plan 132):
+/// the system Downloads directory and a plural "Downloads"
+/// sibling can both exist, so the platform side scans both and
+/// reports each file's path; the same file seen from both
+/// spellings collapses to one entry here, by path.
+///
 /// Failures propagate to the caller as the platform threw them —
 /// a PlatformException, with code `permission_denied` when the
 /// folder cannot be read — and the caller turns them into a
@@ -22,10 +28,20 @@ import 'package:flutter/services.dart';
 
 /// One file found by the platform scan: base name and contents.
 class DownloadsScannedFile {
-  const DownloadsScannedFile({required this.name, required this.bytes});
+  const DownloadsScannedFile({
+    required this.name,
+    required this.bytes,
+    this.path,
+  });
 
   final String name;
   final Uint8List bytes;
+
+  /// The file's full path on the device, when the platform
+  /// reported one (metadata only; never displayed). Two scanned
+  /// files that share a path are the same file seen from two
+  /// folders; two that share only a name are not.
+  final String? path;
 }
 
 /// The platform scan call behind [CredentialDownloadsScanner]:
@@ -52,11 +68,24 @@ class CredentialDownloadsScanner {
           DownloadsScannedFile(
             name: entry['name'] as String,
             bytes: entry['bytes'] as Uint8List,
+            path: entry['path'] as String?,
           ),
     ];
   }
 
   /// The candidate-shaped files currently in Downloads. Throws
   /// whatever the platform side throws (see the library comment).
-  Future<List<DownloadsScannedFile>> scan() => _scanDownloads();
+  ///
+  /// Sightings that carry the same path are one file seen from
+  /// more than one scanned folder (plan 132) and collapse to
+  /// the first sighting. Files without a path cannot be told
+  /// apart that way and always pass through.
+  Future<List<DownloadsScannedFile>> scan() async {
+    final files = await _scanDownloads();
+    final seenPaths = <String>{};
+    return [
+      for (final file in files)
+        if (file.path == null || seenPaths.add(file.path!)) file,
+    ];
+  }
 }

@@ -211,6 +211,11 @@ class MainActivity : FlutterActivity() {
     // API 33+ scoped storage refuses direct reads of non-media
     // files other apps put there, and the scan reports
     // permission_denied so the Dart side can say so plainly.
+    // The folder itself goes by two spellings in the field
+    // (plan 132): the system constant names the singular
+    // "Download", but devices also carry a plural "Downloads"
+    // next to it — the Fire TV this was found on has both, with
+    // the user's file in the plural one — so both are scanned.
     private fun startDownloadsScan(result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT <= 32 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
@@ -249,10 +254,17 @@ class MainActivity : FlutterActivity() {
 
     private fun runDownloadsScan(result: MethodChannel.Result) {
         try {
-            val downloads =
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val found = ArrayList<Map<String, Any>>()
-            collectCredentialFiles(downloads, 0, found)
+            val seenPaths = HashSet<String>()
+            var listedAny = false
+            for (root in downloadsScanRoots()) {
+                if (collectCredentialFiles(root, 0, found, seenPaths)) {
+                    listedAny = true
+                }
+            }
+            if (!listedAny) {
+                throw SecurityException("cannot list the downloads folders")
+            }
             result.success(found)
         } catch (e: SecurityException) {
             result.error("permission_denied", e.message, null)
@@ -261,33 +273,67 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // The folders the scan looks in (plan 132): the public
+    // Downloads directory, plus a sibling named "Downloads"
+    // (plural) when the device has one. Which spelling a file
+    // lands in depends on the tool that put it there, so both
+    // are scanned; roots that resolve to the same directory
+    // (the two spellings can be one folder) are scanned once.
+    private fun downloadsScanRoots(): List<File> {
+        val roots = ArrayList<File>()
+        val seenRoots = HashSet<String>()
+        fun addRoot(dir: File?) {
+            if (dir == null || !dir.isDirectory) return
+            if (seenRoots.add(dir.canonicalPath)) roots.add(dir)
+        }
+        addRoot(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        )
+        addRoot(Environment.getExternalStorageDirectory()?.let { File(it, "Downloads") })
+        return roots
+    }
+
     // Collects files whose names follow the credentials*.env
     // shape (the same rule the Dart side re-checks), descending
     // a few levels so a file dropped in a subfolder is still
     // found. Only small files are read: a credentials.env is a
     // few hundred bytes, and nothing larger can be one.
+    //
+    // Returns whether [dir] itself could be listed; only the
+    // top-level caller uses that, to tell "no scan root could
+    // be read at all" (reported as permission_denied) apart
+    // from "read fine, nothing matched". [seenPaths] holds the
+    // canonical path of every file already collected: with
+    // more than one scan root the same file can be reachable
+    // twice, and it is collected once.
     private fun collectCredentialFiles(
         dir: File,
         depth: Int,
         out: ArrayList<Map<String, Any>>,
-    ) {
-        if (out.size >= MAX_DOWNLOADS_SCAN_FILES) return
-        val entries = dir.listFiles() ?: run {
-            if (depth == 0) throw SecurityException("cannot list ${dir.path}")
-            return
-        }
+        seenPaths: MutableSet<String>,
+    ): Boolean {
+        if (out.size >= MAX_DOWNLOADS_SCAN_FILES) return true
+        val entries = dir.listFiles() ?: return false
         for (entry in entries) {
-            if (out.size >= MAX_DOWNLOADS_SCAN_FILES) return
+            if (out.size >= MAX_DOWNLOADS_SCAN_FILES) break
             if (entry.isDirectory) {
                 if (depth < MAX_DOWNLOADS_SCAN_DEPTH) {
-                    collectCredentialFiles(entry, depth + 1, out)
+                    collectCredentialFiles(entry, depth + 1, out, seenPaths)
                 }
             } else if (isCredentialEnvFileName(entry.name) &&
-                entry.length() in 1..MAX_DOWNLOADS_SCAN_FILE_BYTES
+                entry.length() in 1..MAX_DOWNLOADS_SCAN_FILE_BYTES &&
+                seenPaths.add(entry.canonicalPath)
             ) {
-                out.add(mapOf("name" to entry.name, "bytes" to entry.readBytes()))
+                out.add(
+                    mapOf(
+                        "name" to entry.name,
+                        "path" to entry.absolutePath,
+                        "bytes" to entry.readBytes(),
+                    )
+                )
             }
         }
+        return true
     }
 
     private fun isCredentialEnvFileName(name: String): Boolean {

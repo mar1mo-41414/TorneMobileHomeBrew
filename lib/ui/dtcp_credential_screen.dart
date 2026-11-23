@@ -175,6 +175,16 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
           privateKey: env.privateKey,
         ),
       );
+      // Metadata only (names and sizes, never contents): the
+      // record that tells "the scan read the file but it did
+      // not pass" apart from "the scan never saw the file",
+      // for when a placed file does not show up (plan 132).
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'credential downloads scan: read '
+        '[${files.map((f) => '${f.name} (${f.bytes.length} bytes)').join(', ')}], '
+        'candidates [${candidates.map((c) => c.name).join(', ')}]',
+      );
       if (candidates.isEmpty) {
         setState(
           () => _error =
