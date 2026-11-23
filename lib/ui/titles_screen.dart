@@ -132,7 +132,11 @@ Future<bool?> showResumeChoiceDialog(
           onPressed: () => Navigator.of(context).pop(false),
           child: const Text('最初から再生'),
         ),
+        // TV: focus starts on the primary choice; without an
+        // autofocus element the dialog opens with no focus in
+        // it at all (plan 134; the plan 131 observation).
         FilledButton(
+          autofocus: isTvVariant(context),
           onPressed: () => Navigator.of(context).pop(true),
           child: const Text('続きから再生'),
         ),
@@ -276,6 +280,7 @@ Future<void> _showDeleteRefusal(BuildContext context, String message) {
       content: Text(message),
       actions: [
         TextButton(
+          autofocus: isTvVariant(context),
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),

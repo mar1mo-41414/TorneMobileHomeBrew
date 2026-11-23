@@ -237,31 +237,39 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
   ) {
     return showDialog<CredentialFileCandidate>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('資格情報ファイルが見つかりました'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: candidates.length,
-            itemBuilder: (context, index) {
-              final candidate = candidates[index];
-              return ListTile(
-                leading: const Icon(Icons.insert_drive_file),
-                title: Text(candidate.name),
-                subtitle: Text(formatBytes(candidate.sizeBytes)),
-                onTap: () => Navigator.pop(context, candidate),
-              );
-            },
+      builder: (context) {
+        // TV: the first candidate takes focus as the dialog
+        // opens. Without an autofocus element the D-pad focus
+        // stays on the screen behind the dialog, and neither
+        // the list nor cancel can be reached at all (plan 134).
+        final tv = isTvVariant(context);
+        return AlertDialog(
+          title: const Text('資格情報ファイルが見つかりました'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: candidates.length,
+              itemBuilder: (context, index) {
+                final candidate = candidates[index];
+                return ListTile(
+                  autofocus: tv && index == 0,
+                  leading: const Icon(Icons.insert_drive_file),
+                  title: Text(candidate.name),
+                  subtitle: Text(formatBytes(candidate.sizeBytes)),
+                  onTap: () => Navigator.pop(context, candidate),
+                );
+              },
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('キャンセル'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('キャンセル'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -278,7 +286,10 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
             onPressed: () => Navigator.pop(context, false),
             child: const Text('キャンセル'),
           ),
+          // TV: focus the confirm action as the dialog opens
+          // (plan 134).
           TextButton(
+            autofocus: isTvVariant(context),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('取り込む'),
           ),
@@ -353,7 +364,10 @@ class _DtcpCredentialScreenState extends ConsumerState<DtcpCredentialScreen> {
         title: const Text('資格情報を削除'),
         content: const Text('保存済みの証明書と秘密鍵を端末の金庫から削除します。削除すると録画の再生はできなくなります。'),
         actions: [
+          // TV: deletion is destructive, so focus starts on
+          // cancel, not on the delete action (plan 134).
           TextButton(
+            autofocus: isTvVariant(context),
             onPressed: () => Navigator.pop(context, false),
             child: const Text('キャンセル'),
           ),

@@ -22,6 +22,17 @@
 ///    plan 121). [TvFocusAnchor] gives a display-only edge item
 ///    focus — and nothing else — so both ends of a scroll view
 ///    stay reachable. On the standard variant it is the identity.
+///
+///  * A dialog that opens with nothing inside it asking for focus
+///    leaves the D-pad focus where it was — on the screen behind
+///    the modal barrier — so the remote keeps operating the
+///    background and the dialog cannot even be cancelled (plan
+///    134: the Downloads candidate list). Dialogs therefore give
+///    their primary action `autofocus` on the TV variant;
+///    [isTvVariant] is how a dialog builder with no [WidgetRef]
+///    at hand learns the variant. Destructive confirmations
+///    autofocus their cancel action instead, so one stray OK
+///    cannot carry the action out.
 library;
 
 import 'package:flutter/services.dart';
@@ -29,6 +40,28 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app/variant.dart';
+
+/// Whether the running app is the TV variant, read from a plain
+/// [BuildContext] for code that holds no [WidgetRef] — dialog
+/// builders and other free functions. The variant is chosen once
+/// at startup, so a one-shot read is all a dialog needs when it
+/// decides whether an element should ask for focus (see the
+/// library comment).
+///
+/// Outside a [ProviderScope] there is no override to read; the
+/// answer is then the standard variant — the same default
+/// [appVariantProvider] declares for tests and headless contexts,
+/// which are exactly the trees that run without a scope.
+bool isTvVariant(BuildContext context) {
+  try {
+    return ProviderScope.containerOf(
+      context,
+      listen: false,
+    ).read(appVariantProvider).isTv;
+  } on StateError {
+    return false;
+  }
+}
 
 /// A text field that behaves like a plain [TextField] on the
 /// standard variant and like a focus-then-edit shell on TV.

@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/core.dart';
 import 'error_messages.dart';
+import 'tv_focus.dart';
 
 /// Full-area loading indicator.
 class LoadingView extends StatelessWidget {
@@ -185,7 +186,12 @@ Future<bool> confirmDialog(
       title: Text(title),
       content: Text(message),
       actions: [
+        // TV: this confirmation is destructive by default (the
+        // default label is 削除), so focus starts on cancel: the
+        // dialog must be operable by remote, but one stray OK
+        // must not carry the action out (plan 134).
         TextButton(
+          autofocus: isTvVariant(context),
           onPressed: () => Navigator.of(context).pop(false),
           child: const Text('キャンセル'),
         ),

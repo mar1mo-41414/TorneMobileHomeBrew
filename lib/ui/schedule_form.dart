@@ -541,7 +541,10 @@ class _ScheduleFormPageState extends ConsumerState<ScheduleFormPage> {
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('キャンセル'),
           ),
+          // TV: focus the primary action as the dialog opens
+          // (plan 134).
           FilledButton(
+            autofocus: isTvVariant(context),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('このまま作成'),
           ),
