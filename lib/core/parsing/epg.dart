@@ -467,24 +467,41 @@ Map<int, Uint8List> parseChannelLogos(List<int> rawResponse) {
 
 /// One service of the binary EPG version table: the
 /// (networkId, transportStreamId, serviceId) triple that keys the
-/// unit-side EPG database.
+/// unit-side EPG database, plus which sides (basic / extended) the
+/// table carries a version block for. A service only ever appears
+/// here when it has at least one block; the sides decide which
+/// segment bitmaps an `EPGGet` request sets for it.
 class EpgServiceRef {
   const EpgServiceRef(
-      this.networkId, this.transportStreamId, this.serviceId);
+    this.networkId,
+    this.transportStreamId,
+    this.serviceId, {
+    this.hasBasic = true,
+    this.hasExtended = true,
+  });
 
   final int networkId;
   final int transportStreamId;
   final int serviceId;
+
+  /// Whether the version table carries a basic-side block.
+  final bool hasBasic;
+
+  /// Whether the version table carries an extended-side block.
+  final bool hasExtended;
 
   @override
   bool operator ==(Object other) =>
       other is EpgServiceRef &&
       other.networkId == networkId &&
       other.transportStreamId == transportStreamId &&
-      other.serviceId == serviceId;
+      other.serviceId == serviceId &&
+      other.hasBasic == hasBasic &&
+      other.hasExtended == hasExtended;
 
   @override
-  int get hashCode => Object.hash(networkId, transportStreamId, serviceId);
+  int get hashCode =>
+      Object.hash(networkId, transportStreamId, serviceId, hasBasic, hasExtended);
 
   @override
   String toString() =>
@@ -494,41 +511,112 @@ class EpgServiceRef {
 /// Header size of the `EPGVersionInfoGet` binary version table.
 const int epgVersionTableHeaderSize = 12;
 
-/// Record size of the version table. Each record is the service
-/// triple (three u16 BE), a flags u16 (0xc000 on every measured
-/// record) and two 68-byte version blocks; the table is trailed by
-/// an 8-byte footer that does not form a record.
-const int epgVersionTableRecordSize = 144;
+/// Offset of the record count in the version table header. The
+/// count covers every record in the table, including records
+/// without version blocks (flags 0x0000): on the measured Sony
+/// terrestrial table it reads 21 for 20 records with blocks plus
+/// one block-less record, and it matches the record count of the
+/// measured satellite tables (59) and of a Buffalo FW 4.50 table
+/// (29) exactly.
+const int epgVersionTableCountOffset = 8;
 
-/// Enumerates the services of a version table, in table order.
+/// Header size of one version-table record: the service triple
+/// (three u16 BE) and a flags u16.
+const int epgVersionRecordHeaderSize = 8;
+
+/// Size of one version block in a version-table record. A record
+/// carries one block per flags bit set: 0x8000 for the basic side,
+/// 0x4000 for the extended side. A record is therefore 144 bytes
+/// with both blocks, 76 with one, and 8 (header only) with none;
+/// a block-less record names a service with no EPG.
+const int epgVersionBlockSize = 68;
+
+/// Flags bit marking the basic-side version block of a record.
+const int epgVersionBasicFlag = 0x8000;
+
+/// Flags bit marking the extended-side version block of a record.
+const int epgVersionExtendedFlag = 0x4000;
+
+/// Size of a version-table record with both version blocks.
+const int epgVersionTableRecordSize =
+    epgVersionRecordHeaderSize + 2 * epgVersionBlockSize;
+
+/// One raw record of the version table, as walked.
+class _VersionRecord {
+  const _VersionRecord(
+      this.networkId, this.transportStreamId, this.serviceId, this.flags);
+
+  final int networkId;
+  final int transportStreamId;
+  final int serviceId;
+  final int flags;
+
+  bool get hasBasic => flags & epgVersionBasicFlag != 0;
+  bool get hasExtended => flags & epgVersionExtendedFlag != 0;
+}
+
+/// Walks the records of a version table in table order.
 ///
-/// Records are read from the end of the header while a whole record
-/// fits and carries the measured flags value; anything else (the
-/// footer, a truncated tail) ends the enumeration. The header's own
-/// count field is NOT the record count (it reads 21 for the 20
-/// measured terrestrial records), so it is deliberately not used.
-List<EpgServiceRef> parseEpgVersionServices(List<int> versionTable) {
-  final services = <EpgServiceRef>[];
+/// Records are packed back to back with no padding; each record's
+/// length follows from its flags (see [epgVersionBlockSize]). The
+/// walk is bounded by the header's record count when one is
+/// declared, and stops at the first record whose length cannot be
+/// derived (flags with unknown bits, or a record that would run
+/// past the end of the table): once the length of one record is
+/// unknown, the start of the next is unknowable.
+Iterable<_VersionRecord> _walkEpgVersionRecords(List<int> versionTable) sync* {
+  if (versionTable.length < epgVersionTableHeaderSize) return;
+  final count = _u16be(versionTable, epgVersionTableCountOffset);
   var offset = epgVersionTableHeaderSize;
-  while (offset + epgVersionTableRecordSize <= versionTable.length) {
-    if (_u16be(versionTable, offset + 6) != 0xc000) break;
-    services.add(EpgServiceRef(
+  var read = 0;
+  while (offset + epgVersionRecordHeaderSize <= versionTable.length &&
+      (count == 0 || read < count)) {
+    final flags = _u16be(versionTable, offset + 6);
+    if (flags & ~(epgVersionBasicFlag | epgVersionExtendedFlag) != 0) break;
+    final length = epgVersionRecordHeaderSize +
+        epgVersionBlockSize *
+            ((flags & epgVersionBasicFlag != 0 ? 1 : 0) +
+                (flags & epgVersionExtendedFlag != 0 ? 1 : 0));
+    if (offset + length > versionTable.length) break;
+    yield _VersionRecord(
       _u16be(versionTable, offset),
       _u16be(versionTable, offset + 2),
       _u16be(versionTable, offset + 4),
-    ));
-    offset += epgVersionTableRecordSize;
+      flags,
+    );
+    offset += length;
+    read++;
   }
-  return services;
 }
 
-/// BS EPG version-table scanner for satellite services.
+/// Enumerates the services of a version table, in table order.
 ///
-/// The terrestrial table has contiguous 0xc000 records, whereas actual
-/// satellite tables can have gaps and non-0xc000 flag values. Match the
-/// complete service triple to an actual VIDEO channel on this nasne and
-/// keep scanning to the end; do not mistake a gap for end-of-table.
-/// Satellite flags are not yet decoded; no flag is used to infer reception.
+/// Records without version blocks (flags 0x0000) name services
+/// with no EPG: they are walked past (later records still count)
+/// but not enumerated.
+List<EpgServiceRef> parseEpgVersionServices(List<int> versionTable) {
+  return [
+    for (final record in _walkEpgVersionRecords(versionTable))
+      if (record.flags != 0)
+        EpgServiceRef(
+          record.networkId,
+          record.transportStreamId,
+          record.serviceId,
+          hasBasic: record.hasBasic,
+          hasExtended: record.hasExtended,
+        ),
+  ];
+}
+
+/// BS EPG version-table enumeration for satellite services.
+///
+/// Satellite tables use the same record format as terrestrial
+/// ones — the measured Sony satellite tables (6,672 bytes, 59
+/// records) contain 76-byte and 8-byte records alongside the
+/// 144-byte ones — so the records are walked the same way. Only
+/// records whose complete service triple matches an actual VIDEO
+/// channel on this nasne are kept: a satellite table also lists
+/// data and radio services that carry no programme guide.
 List<EpgServiceRef> parseSatelliteEpgVersionServices(
     List<int> versionTable, List<Channel> channels) {
   final known = <(int, int, int)>{
@@ -538,16 +626,17 @@ List<EpgServiceRef> parseSatelliteEpgVersionServices(
   };
   final seen = <(int, int, int)>{};
   final out = <EpgServiceRef>[];
-  for (var p = epgVersionTableHeaderSize;
-      p + epgVersionTableRecordSize <= versionTable.length;
-      p += epgVersionTableRecordSize) {
-    final key = (
-      _u16be(versionTable, p),
-      _u16be(versionTable, p + 2),
-      _u16be(versionTable, p + 4),
-    );
+  for (final record in _walkEpgVersionRecords(versionTable)) {
+    if (record.flags == 0) continue;
+    final key = (record.networkId, record.transportStreamId, record.serviceId);
     if (known.contains(key) && seen.add(key)) {
-      out.add(EpgServiceRef(key.$1, key.$2, key.$3));
+      out.add(EpgServiceRef(
+        key.$1,
+        key.$2,
+        key.$3,
+        hasBasic: record.hasBasic,
+        hasExtended: record.hasExtended,
+      ));
     }
   }
   return out;
@@ -600,12 +689,17 @@ const int epgGetRecordSize = 24;
 ///   at +7, then two 8-byte segment bitmaps: basic (table_id
 ///   0x50/0x51 side) at +8 and extended (0x58/0x59 side) at +16.
 ///   Bit i of a bitmap (MSB first) requests segment i + 1 of the
-///   64 segments (8 per day, 3 hours each, 8 days).
+///   64 segments (8 per day, 3 hours each, 8 days). A side's
+///   bitmap is set only when the version table carries that side's
+///   block for the service ([EpgServiceRef.hasBasic] /
+///   [EpgServiceRef.hasExtended]); the [basic] / [extended]
+///   switches gate the sides globally on top of that.
 ///
-/// With both bitmaps all-ones the job returns every section the
-/// unit's EPG database holds for the service — the complete
-/// dataset. The job answers with an error (HTTP 500 at the WebAPI
-/// surface) when a request selects no section at all.
+/// With the bitmaps of the carried sides all-ones the job returns
+/// every section the unit's EPG database holds for the service —
+/// the complete dataset. The job answers with an error (HTTP 500
+/// at the WebAPI surface) when a request selects no section at
+/// all.
 Uint8List buildEpgGetBody(
   List<EpgServiceRef> services, {
   bool basic = true,
@@ -621,8 +715,12 @@ Uint8List buildEpgGetBody(
     _putU16be(out, offset + 2, service.transportStreamId);
     _putU16be(out, offset + 4, service.serviceId);
     out[offset + 6] = includeLinkedDescriptions ? 1 : 0;
-    if (basic) out.fillRange(offset + 8, offset + 16, 0xff);
-    if (extended) out.fillRange(offset + 16, offset + 24, 0xff);
+    if (basic && service.hasBasic) {
+      out.fillRange(offset + 8, offset + 16, 0xff);
+    }
+    if (extended && service.hasExtended) {
+      out.fillRange(offset + 16, offset + 24, 0xff);
+    }
     offset += epgGetRecordSize;
   }
   return out;
