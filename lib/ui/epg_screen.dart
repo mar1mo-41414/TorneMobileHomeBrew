@@ -1179,8 +1179,13 @@ class EpgEventDetailDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final genreLabel = epgGenreLabel(event.genreLevel1);
-    // TV: the primary action (reserve, else watch, else close)
-    // takes focus as the dialog opens (plan 134).
+    // TV: the primary action (reserve — or delete, which
+    // replaces it for a reserved event (plan 124) — else
+    // watch, else close) takes focus as the dialog opens
+    // (plan 134). Exactly one action carries autofocus in
+    // every combination; the destructive step itself is the
+    // confirmation behind the delete action, which focuses
+    // its cancel side (see confirmDialog).
     final tv = isTvVariant(context);
     return AlertDialog(
       title: Text(event.title ?? '番組情報なし'),
@@ -1230,19 +1235,24 @@ class EpgEventDetailDialog extends StatelessWidget {
       ),
       actions: [
         TextButton(
-          autofocus: tv && onWatch == null && onReserve == null,
+          autofocus:
+              tv &&
+              onWatch == null &&
+              onReserve == null &&
+              onDeleteReservation == null,
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),
         if (onWatch != null)
           FilledButton.icon(
-            autofocus: tv && onReserve == null,
+            autofocus: tv && onReserve == null && onDeleteReservation == null,
             onPressed: onWatch,
             icon: const Icon(Icons.live_tv, size: 18),
             label: const Text('試聴'),
           ),
         if (onDeleteReservation != null)
           FilledButton.icon(
+            autofocus: tv,
             onPressed: onDeleteReservation,
             icon: const Icon(Icons.delete_outline, size: 18),
             label: const Text('予約を削除'),

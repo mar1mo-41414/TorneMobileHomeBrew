@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:tmhb/app/providers.dart';
+import 'package:tmhb/app/variant.dart';
 import 'package:tmhb/app/state.dart';
 import 'package:tmhb/core/core.dart';
 import 'package:tmhb/ui/epg_reserved.dart';
@@ -365,6 +366,71 @@ void main() {
       );
       expect(find.text('録画予約'), findsOneWidget);
       expect(find.text('予約を削除'), findsNothing);
+    });
+
+    bool focusIsInside(Finder finder) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return false;
+      final targets = finder.evaluate();
+      if (targets.length != 1) return false;
+      final target = targets.single;
+      var inside = false;
+      context.visitAncestorElements((element) {
+        if (element == target) {
+          inside = true;
+          return false;
+        }
+        return true;
+      });
+      return inside;
+    }
+
+    Finder actionButton(String label) => find.ancestor(
+      of: find.text(label),
+      matching: find.byType(FilledButton),
+    );
+
+    testWidgets('on TV a reserved detail focuses the delete action', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [appVariantProvider.overrideWithValue(AppVariant.tv)],
+          child: MaterialApp(
+            home: Scaffold(
+              body: EpgEventDetailDialog(
+                event: futureEvent,
+                channelName: 'テスト局',
+                onReserve: () {},
+                onDeleteReservation: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(focusIsInside(actionButton('予約を削除')), isTrue);
+    });
+
+    testWidgets('on TV an unreserved detail focuses the reserve action', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [appVariantProvider.overrideWithValue(AppVariant.tv)],
+          child: MaterialApp(
+            home: Scaffold(
+              body: EpgEventDetailDialog(
+                event: futureEvent,
+                channelName: 'テスト局',
+                onReserve: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(focusIsInside(actionButton('録画予約')), isTrue);
     });
 
     Widget host({
