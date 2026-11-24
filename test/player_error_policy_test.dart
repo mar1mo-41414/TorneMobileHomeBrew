@@ -107,13 +107,38 @@ void main() {
         ),
         isTrue,
       );
+    });
+  });
+
+  group('codec errors (measured 2026-11-23)', () {
+    test('isCodecError matches the two measured messages', () {
+      expect(isCodecError('Could not open codec.'), isTrue);
+      expect(isCodecError('Error decoding audio.'), isTrue);
+      expect(isCodecError('Failed to open.'), isFalse);
+      expect(isCodecError('Cannot seek in this stream.'), isFalse);
+    });
+
+    test('codec errors stay fatal before playback starts', () {
+      expect(playerErrorIsFatal('Could not open codec.', live: true), isTrue);
+      expect(playerErrorIsFatal('Error decoding audio.', live: false), isTrue);
+    });
+
+    test('codec errors are non-fatal once playback has started', () {
+      expect(
+        playerErrorIsFatal(
+          'Could not open codec.',
+          live: true,
+          alreadyPlaying: true,
+        ),
+        isFalse,
+      );
       expect(
         playerErrorIsFatal(
           'Error decoding audio.',
           live: false,
           alreadyPlaying: true,
         ),
-        isTrue,
+        isFalse,
       );
     });
   });

@@ -36,6 +36,17 @@ abstract interface class CredentialStore {
     required List<int> privateKey,
   });
 
+  /// Whether [certificate] + [privateKey] would pass the same
+  /// validation [save] applies, without storing anything. The
+  /// Downloads scan (plan 127) lists only files that can actually
+  /// be imported, and routing its check through the store keeps
+  /// the listing and the save from ever disagreeing about what a
+  /// genuine pair is.
+  bool validates({
+    required List<int> certificate,
+    required List<int> privateKey,
+  });
+
   /// Removes the pair from the vault.
   Future<void> delete();
 
@@ -146,6 +157,23 @@ class SecureCredentialStore implements CredentialStore {
   }
 
   @override
+  bool validates({
+    required List<int> certificate,
+    required List<int> privateKey,
+  }) {
+    try {
+      DeviceCredentials(
+        certificate: certificate,
+        privateKey: privateKey,
+        authorityKeys: authorityKeys,
+      );
+      return true;
+    } on NasneError {
+      return false;
+    }
+  }
+
+  @override
   Future<void> delete() async {
     // Delete each key only when it is actually stored. On macOS,
     // flutter_secure_storage_darwin's delete probes the
@@ -194,6 +222,23 @@ class InMemoryCredentialStore implements CredentialStore {
       authorityKeys: authorityKeys,
     );
     _credentials = validated;
+  }
+
+  @override
+  bool validates({
+    required List<int> certificate,
+    required List<int> privateKey,
+  }) {
+    try {
+      DeviceCredentials(
+        certificate: certificate,
+        privateKey: privateKey,
+        authorityKeys: authorityKeys,
+      );
+      return true;
+    } on NasneError {
+      return false;
+    }
   }
 
   @override

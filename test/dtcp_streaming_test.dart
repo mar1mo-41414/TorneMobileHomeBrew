@@ -452,6 +452,156 @@ void main() {
       await expectLater(source.keyForLabel(116), throwsA(isA<NasneError>()));
     });
   });
+
+  group('proxy buffer caps (plan 126)', () {
+    /// A loopback upstream serving [wire] whole, as in the
+    /// groups above.
+    Future<HttpServer> serveWire(Uint8List wire) async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      upstream.listen((request) async {
+        request.response.statusCode = HttpStatus.ok;
+        request.response.add(wire);
+        await request.response.close();
+      });
+      return upstream;
+    }
+
+    Uint8List wireFor(Uint8List plain) => buildPcpPacket(
+      exchangeKey: exchangeKey,
+      label: label,
+      encryptionMode: encryptionMode,
+      nonce: nonceA,
+      plaintext: plain,
+    );
+
+    test('the long-standing caps are in force without overrides', () async {
+      final plain = pattern(64 * 1024, 17);
+      final upstream = await serveWire(wireFor(plain));
+      final lines = <String>[];
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: Uri.parse(
+          'http://127.0.0.1:${upstream.port}/web/video/pvr?id=126a',
+        ),
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+        diag: DiagLog((_, message) => lines.add(message), (_) => true),
+      );
+      try {
+        expect(proxy.prefetchCapBytesInForce, DtcpProxy.prefetchCapBytes);
+        expect(proxy.prefetchCapBytesInForce, 16 * 1024 * 1024);
+        expect(proxy.windowCapBytesInForce, DtcpProxy.windowCapBytes);
+        expect(proxy.windowCapBytesInForce, 32 * 1024 * 1024);
+        expect(
+          lines.any(
+            (l) => l.contains(
+              'buffer caps in force: prefetch 16777216 bytes, '
+              'window 33554432 bytes',
+            ),
+          ),
+          isTrue,
+        );
+      } finally {
+        await proxy.stop();
+        fetcher.close();
+        await upstream.close(force: true);
+      }
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('overrides put the chosen caps in force', () async {
+      final plain = pattern(64 * 1024, 23);
+      final upstream = await serveWire(wireFor(plain));
+      final lines = <String>[];
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: Uri.parse(
+          'http://127.0.0.1:${upstream.port}/web/video/pvr?id=126b',
+        ),
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+        diag: DiagLog((_, message) => lines.add(message), (_) => true),
+        prefetchCapBytesOverride: 64 * 1024,
+        windowCapBytesOverride: 128 * 1024,
+      );
+      try {
+        expect(proxy.prefetchCapBytesInForce, 64 * 1024);
+        expect(proxy.windowCapBytesInForce, 128 * 1024);
+        expect(
+          lines.any(
+            (l) => l.contains(
+              'buffer caps in force: prefetch 65536 bytes, '
+              'window 131072 bytes',
+            ),
+          ),
+          isTrue,
+        );
+      } finally {
+        await proxy.stop();
+        fetcher.close();
+        await upstream.close(force: true);
+      }
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('a small prefetch cap throttles the pump but delivers '
+        'everything, in order', () async {
+      final plain = pattern(256 * 1024, 29);
+      final upstream = await serveWire(wireFor(plain));
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: Uri.parse(
+          'http://127.0.0.1:${upstream.port}/web/video/pvr?id=126c',
+        ),
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+        // An eighth of the content: the pump must wait for the
+        // player to drain, repeatedly, without losing a byte.
+        prefetchCapBytesOverride: 32 * 1024,
+      );
+      try {
+        // Let the prefetch fill to the cap and wait there.
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final client = HttpClient();
+        final request = await client.getUrl(proxy.uri);
+        final response = await request.close();
+        expect(response.statusCode, HttpStatus.ok);
+        final received = await response
+            .fold<BytesBuilder>(
+              BytesBuilder(copy: false),
+              (builder, chunk) => builder..add(chunk),
+            )
+            .then((builder) => builder.takeBytes());
+        client.close();
+        expect(Uint8List.fromList(received), plain);
+      } finally {
+        await proxy.stop();
+        fetcher.close();
+        await upstream.close(force: true);
+      }
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('a seekable proxy runs its window at the override', () async {
+      final plain = pattern(256 * 1024, 37);
+      final upstream = await serveWire(wireFor(plain));
+      final fetcher = DtcpMediaFetcher();
+      final proxy = await DtcpProxy.start(
+        contentUrl: Uri.parse(
+          'http://127.0.0.1:${upstream.port}/web/video/pvr?id=126d',
+        ),
+        keyForLabel: (_) async => exchangeKey,
+        fetcher: fetcher,
+        totalBytes: plain.length,
+        totalDuration: const Duration(seconds: 120),
+        windowCapBytesOverride: 96 * 1024,
+      );
+      try {
+        expect(proxy.windowCapBytesInForce, 96 * 1024);
+      } finally {
+        await proxy.stop();
+        fetcher.close();
+        await upstream.close(force: true);
+      }
+    }, timeout: const Timeout(Duration(seconds: 60)));
+  });
 }
 
 /// A scripted [ExchangeKeySession] for key-source tests.

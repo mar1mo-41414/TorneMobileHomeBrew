@@ -14,6 +14,7 @@ import '../core/core.dart';
 import 'error_messages.dart';
 import 'format.dart';
 import 'schedule_form.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 /// Width at or above which list and detail sit side by side.
@@ -218,17 +219,28 @@ class ScheduleDetailView extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (s.title != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              s.title!,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+        // TV: the head rows are display-only; the heading block
+        // holds focus (TvFocusAnchor) so D-pad traversal can
+        // scroll back to the top of the detail (plan 123). The
+        // action buttons at the bottom already take focus.
+        TvFocusAnchor(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (s.title != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    s.title!,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              FieldRow(
+                label: 'チャンネル',
+                value: channelDisplayName(channels, s.channel),
+              ),
+            ],
           ),
-        FieldRow(
-          label: 'チャンネル',
-          value: channelDisplayName(channels, s.channel),
         ),
         FieldRow(label: '開始', value: formatDateTimeWithWeekdayJst(s.start)),
         FieldRow(label: '終了', value: formatDateTimeWithWeekdayJst(s.end)),

@@ -16,6 +16,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'app/bootstrap.dart';
 import 'app/variant.dart';
+import 'core/diagnostics.dart';
 import 'ui/widgets.dart';
 import 'app/lifecycle_log.dart';
 import 'app/providers.dart';
@@ -40,7 +41,14 @@ Future<void> runTmhbApp(AppVariant variant) async {
   // field log shows when the process was suspended and resumed
   // around a playback session (the wakelock sleep investigation).
   // The binding holds the observer for the app's lifetime.
-  LifecycleLogger(container.read(diagLogProvider)).attach();
+  final diagLog = container.read(diagLogProvider);
+  LifecycleLogger(diagLog).attach();
+  // Which edition this process is goes into the diagnostics log
+  // at startup: the variant is chosen only by the Dart entry
+  // point, and a TV package built from the standard entry point
+  // runs with every TV behaviour silently inert (plan 133), so
+  // a field log has to be able to identify such a build.
+  diagLog(DiagCategory.playback, 'app started: variant ${variant.name}');
   runApp(
     UncontrolledProviderScope(container: container, child: const TmhbApp()),
   );

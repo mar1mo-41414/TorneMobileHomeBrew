@@ -190,7 +190,10 @@ abstract interface class MetadataService {
 
 /// A running playback session (Phase 5): the player reads the
 /// decrypted stream from [mediaUri] (a loopback URL) until [stop]
-/// tears the session down.
+/// tears the session down. [stop] is idempotent — stopping an
+/// already stopped session completes normally — so a caller
+/// replacing one session with another (a channel switch, a
+/// teardown racing a switch) may stop it again safely.
 abstract interface class PlaybackSession {
   Uri get mediaUri;
   Future<void> stop();

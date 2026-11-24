@@ -24,6 +24,20 @@
 /// map from every response, decrypts from the returned start byte
 /// and discards forward to the exact requested offset. Live
 /// content (no known end) keeps the original unseekable behaviour.
+///
+/// Plan 129 adds automatic recovery from upstream drops, enabled
+/// by the engine on Android (other platforms keep the behaviour
+/// above exactly). The motivating environment is plan 126's
+/// unstable link — in a car, over tethering or a VPN path —
+/// where a drop longer than any reasonable bank is a matter of
+/// when, not if, so banking alone cannot be the whole answer.
+/// Live streams reconnect with backoff and a fresh
+/// authentication; seekable recordings resume the producer at
+/// the byte the reader has reached. A failure the source
+/// answered with a committed refusal (a non-transient HTTP
+/// status, a parse failure) is NOT retried: reissuing the
+/// identical request cannot succeed, and the error surfaces as
+/// it always has.
 library;
 
 import 'dart:async';
@@ -33,6 +47,7 @@ import 'dart:typed_data';
 
 import '../diagnostics.dart';
 import '../errors.dart';
+import 'ake.dart';
 import 'pcp.dart';
 
 /// The source's answer to a time-seek content request (plan 61):
@@ -84,10 +99,16 @@ class DtcpMediaFetcher {
       _client ??= _clientFactory()
         ..connectionTimeout = const Duration(seconds: 15);
 
-  void close() {
+  /// Drops the underlying client and every pooled socket, so
+  /// the next request opens a fresh TCP connection. A reconnect
+  /// after a network drop must not be handed a half-open pooled
+  /// socket (plan 129).
+  void resetClient() {
     _client?.close(force: true);
     _client = null;
   }
+
+  void close() => resetClient();
 
   /// Issues the HEAD request that reveals the AKE endpoint
   /// (DTCP1HOST / DTCP1PORT content features).
@@ -320,15 +341,27 @@ class DtcpProxy {
     int? totalBytes,
     Duration? totalDuration,
     int? windowCapBytesOverride,
+    int? prefetchCapBytesOverride,
+    bool isLive = false,
+    bool autoReconnect = false,
+    Future<void> Function()? onReauthenticate,
+    List<Duration> reconnectBackoff = defaultReconnectBackoff,
   }) : _window = _WindowCache(
          capBytes: windowCapBytesOverride ?? windowCapBytes,
        ),
+       _prefetchCapBytes = prefetchCapBytesOverride ?? prefetchCapBytes,
        _contentUrl = contentUrl, // ignore: prefer_initializing_formals
        _keyForLabel = keyForLabel, // ignore: prefer_initializing_formals
        _fetcher = fetcher, // ignore: prefer_initializing_formals
        _diag = diag, // ignore: prefer_initializing_formals
        _totalBytes = totalBytes, // ignore: prefer_initializing_formals
-       _totalDuration = totalDuration; // ignore: prefer_initializing_formals
+       _totalDuration = totalDuration, // ignore: prefer_initializing_formals
+       _isLive = isLive, // ignore: prefer_initializing_formals
+       _autoReconnect = autoReconnect, // ignore: prefer_initializing_formals
+       // ignore: prefer_initializing_formals
+       _onReauthenticate = onReauthenticate,
+       // ignore: prefer_initializing_formals
+       _reconnectBackoff = reconnectBackoff;
 
   final HttpServer _server;
 
@@ -340,6 +373,26 @@ class DtcpProxy {
   final DtcpMediaFetcher _fetcher;
   final DiagLog _diag;
 
+  /// Whether the content is a live stream (plan 129): a live
+  /// upstream that ends has DROPPED — a live stream has no end
+  /// of its own — while a recording's upstream ending is its
+  /// end.
+  final bool _isLive;
+
+  /// Whether upstream drops are recovered automatically
+  /// (plan 129). Enabled by the engine on Android only; with
+  /// it off, every path below behaves exactly as before.
+  final bool _autoReconnect;
+
+  /// Forces a fresh AKE authentication ahead of a reconnect
+  /// attempt when the failure suggests the old session went
+  /// stale (plan 129). Supplied by the engine; null when
+  /// [_autoReconnect] is off.
+  final Future<void> Function()? _onReauthenticate;
+
+  /// The backoff ladder for reconnect attempts (plan 129).
+  final List<Duration> _reconnectBackoff;
+
   /// Total plaintext size in bytes (recorded content only).
   final int? _totalBytes;
 
@@ -349,6 +402,12 @@ class DtcpProxy {
   /// Seekable mode (plan 61) requires both the size and the
   /// duration: the size is the advertised content length, the
   /// duration drives the byte->time conversion.
+  /// The prefetch queue bound in force (plan 126).
+  int get prefetchCapBytesInForce => _prefetchCapBytes;
+
+  /// The seekable window bound in force (plan 126).
+  int get windowCapBytesInForce => _window.capBytes;
+
   bool get _seekable =>
       _totalBytes != null &&
       _totalBytes > 0 &&
@@ -356,6 +415,11 @@ class DtcpProxy {
       _totalDuration > Duration.zero;
 
   final _PlaintextQueue _queue = _PlaintextQueue();
+
+  /// The prefetch bound in force for this proxy: the caller's
+  /// override (the playback buffer setting, plan 126) or the
+  /// long-standing [prefetchCapBytes].
+  final int _prefetchCapBytes;
   int _cipherBytes = 0;
   int _servedBytes = 0;
   int _requestCount = 0;
@@ -371,11 +435,37 @@ class DtcpProxy {
   _Producer? _producer;
   int _serveGeneration = 0;
 
+  /// The upstream's real end, once a clean end short of the
+  /// declared total has been confirmed as the content's EOF
+  /// (plan 129). Only ever set with auto-reconnect on; while
+  /// null, requests are bounded by the declared total alone,
+  /// as before.
+  int? _eofByte;
+
   /// How long the content stream may go without a single byte
   /// before the proxy gives up (plan 29). The reference client
   /// applies its 30 s timeout as the socket read timeout; an
   /// unbounded wait here left the player spinning forever.
   static const Duration stallTimeout = Duration(seconds: 30);
+
+  /// Backoff ladder for automatic reconnect attempts
+  /// (plan 129): the delay before the attempt following N
+  /// consecutive failures is entry N, clamped at the last
+  /// entry, so a long outage settles into a 10 s rhythm
+  /// instead of hammering the source.
+  static const List<Duration> defaultReconnectBackoff = [
+    Duration(seconds: 3),
+    Duration(seconds: 5),
+    Duration(seconds: 8),
+    Duration(seconds: 10),
+  ];
+
+  /// How close to the declared total a clean upstream end may
+  /// land and still be taken as the content's real end
+  /// (plan 129): the declared cleartext size can overstate the
+  /// actual stream by a small tail, and re-asking at that
+  /// point only reproduces the same end.
+  static const int eofSlackBytes = 2 * 1024 * 1024;
 
   /// Prefetch bound: the pump pauses upstream reads while this
   /// much decrypted plaintext is waiting for the player. Bounds
@@ -430,6 +520,11 @@ class DtcpProxy {
     int? totalBytes,
     Duration? totalDuration,
     int? windowCapBytesOverride,
+    int? prefetchCapBytesOverride,
+    bool isLive = false,
+    bool autoReconnect = false,
+    Future<void> Function()? onReauthenticate,
+    List<Duration> reconnectBackoff = defaultReconnectBackoff,
   }) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final proxy = DtcpProxy._(
@@ -442,8 +537,19 @@ class DtcpProxy {
       totalBytes: totalBytes,
       totalDuration: totalDuration,
       windowCapBytesOverride: windowCapBytesOverride,
+      prefetchCapBytesOverride: prefetchCapBytesOverride,
+      isLive: isLive,
+      autoReconnect: autoReconnect,
+      onReauthenticate: onReauthenticate,
+      reconnectBackoff: reconnectBackoff,
     );
     server.listen(proxy._handle);
+    diag(
+      DiagCategory.playback,
+      'proxy: buffer caps in force: prefetch '
+      '${proxy.prefetchCapBytesInForce} bytes, window '
+      '${proxy.windowCapBytesInForce} bytes',
+    );
     if (proxy._seekable) {
       proxy._seekMap = _SeekMap(
         totalBytes: totalBytes!,
@@ -463,81 +569,108 @@ class DtcpProxy {
     return proxy;
   }
 
+  /// Whether reissuing the identical content request after a
+  /// backoff can plausibly succeed (plan 129): the link failed
+  /// (unreachable-class errors, which is how the fetcher and
+  /// the AKE layer report socket failures and stalls), or the
+  /// source answered with a transient status — server-side
+  /// 5xx, 408, the 512 busy refusal the open path already
+  /// retries (plan 80), and 401/403, which pair with the
+  /// forced re-authentication in [_shouldReauthenticate].
+  /// Everything else — a refusal the device committed to
+  /// (404/406/416 and the other 4xx), a parse or validation
+  /// failure — cannot be fixed by asking again and surfaces
+  /// as it always has.
+  static bool _isTransientReconnectError(Object error) {
+    if (error is NasneError) {
+      if (error.category == NasneErrorCategory.unreachable) return true;
+      if (error.category == NasneErrorCategory.http) {
+        return const {
+          '401',
+          '403',
+          '408',
+          '500',
+          '502',
+          '503',
+          '504',
+          '512',
+        }.contains(error.code);
+      }
+      return false;
+    }
+    // Raw network-layer failures that reach the pumps without
+    // classification: a destroyed upstream socket surfaces as
+    // an HttpException, a key wait across an outage as a
+    // TimeoutException or as the ended AKE session.
+    return error is SocketException ||
+        error is HttpException ||
+        error is TimeoutException ||
+        error is AkeConnectionClosed;
+  }
+
+  /// Whether a reconnect attempt should first force a fresh
+  /// AKE authentication (plan 129): the failure itself names
+  /// authentication or server state (401/403/500/503/512), or
+  /// failures are repeating — the second consecutive failure
+  /// re-authenticates even when each looked purely network,
+  /// because after a long outage the source-side session is
+  /// the prime suspect.
+  static bool _shouldReauthenticate(Object? error, int consecutiveErrors) {
+    if (consecutiveErrors >= 2) return true;
+    if (error is NasneError && error.category == NasneErrorCategory.http) {
+      return const {'401', '403', '500', '503', '512'}.contains(error.code);
+    }
+    return false;
+  }
+
+  /// The backoff before the reconnect attempt that follows
+  /// [failures] consecutive failures, clamped at the ladder's
+  /// last entry.
+  Duration _backoffForAttempt(int failures) {
+    if (_reconnectBackoff.isEmpty) return Duration.zero;
+    return _reconnectBackoff[min(failures, _reconnectBackoff.length - 1)];
+  }
+
+  /// Runs [_onReauthenticate] for a reconnect attempt, logging
+  /// rather than propagating a failure: the attempt itself is
+  /// the next step either way, and its own failure feeds the
+  /// same backoff ladder.
+  Future<void> _reauthenticateForReconnect(String what) async {
+    try {
+      await _onReauthenticate?.call();
+    } catch (e) {
+      _diag(
+        DiagCategory.playback,
+        'proxy: re-authentication before the $what reconnect failed: $e',
+      );
+    }
+  }
+
   /// Pulls the content, decrypts it incrementally and queues the
   /// plaintext for the player. Runs from [start] until the
   /// upstream ends, fails, or the session is stopped.
+  ///
+  /// Plan 129: with auto-reconnect on and live content, an
+  /// upstream drop — a transient error, or an end, which a live
+  /// stream never reaches on its own — is retried with backoff
+  /// until the session stops or the player goes away. The queue
+  /// stays open across attempts, so the player sees one
+  /// continuous stream (and a stall while the link is down,
+  /// absorbed by the plan-126 bank). Every other combination
+  /// keeps the single-attempt behaviour exactly: in particular
+  /// an unseekable recording is never restarted, because its
+  /// stream cannot resume mid-way and a fresh GET would serve
+  /// it again from byte 0 into the same queue, corrupting what
+  /// the player receives.
   Future<void> _pump() async {
     final stopwatch = Stopwatch()..start();
     var packets = 0;
     var plainBytes = 0;
     var lastMilestone = 0;
     var firstPlainLogged = false;
-    String endKind;
-    try {
-      _diag(
-        DiagCategory.playback,
-        'proxy: prefetch started, content GET started',
-      );
-      final response = await _fetcher.openContent(_contentUrl);
-      final decryptor = PcpDecryptor(keyForLabel: _keyForLabel);
-      final timed = response.timeout(
-        stallTimeout,
-        onTimeout: (sink) {
-          sink.addError(
-            NasneError.unreachable(
-              'dtcp:proxy',
-              cause:
-                  'the content stream stalled for '
-                  '${stallTimeout.inSeconds} seconds',
-            ),
-          );
-          sink.close();
-        },
-      );
-      final iterator = StreamIterator<List<int>>(timed);
-      _iterator = iterator;
-      try {
-        while (!_stopRequested) {
-          if (_queue.bufferedBytes >= prefetchCapBytes) {
-            await _waitForDrain();
-            continue;
-          }
-          if (!await iterator.moveNext()) break;
-          final chunk = iterator.current;
-          _cipherBytes += chunk.length;
-          final pieces = await decryptor.add(chunk);
-          packets = decryptor.packetsDecrypted;
-          plainBytes = decryptor.plaintextBytes;
-          for (final piece in pieces) {
-            if (!firstPlainLogged) {
-              firstPlainLogged = true;
-              _diag(
-                DiagCategory.playback,
-                'proxy: first plaintext out, ${piece.length} bytes, '
-                '${stopwatch.elapsedMilliseconds} ms after the '
-                'content GET',
-              );
-            }
-            _queue.add(piece);
-          }
-          if (packets > lastMilestone && (packets == 1 || packets % 50 == 0)) {
-            lastMilestone = packets;
-            _diag(
-              DiagCategory.playback,
-              'proxy: $packets packets, $plainBytes bytes decrypted '
-              'so far',
-            );
-          }
-        }
-      } finally {
-        await iterator.cancel();
-      }
-      endKind = _downstreamGone
-          ? 'stopped (the player went away)'
-          : _stopRequested
-          ? 'stopped (session end)'
-          : 'the upstream ended the stream';
-      _queue.close();
+    var consecutiveErrors = 0;
+
+    void logEnd(String endKind) {
       _diag(
         DiagCategory.playback,
         'proxy: stream ended: $endKind; received $_cipherBytes '
@@ -545,8 +678,9 @@ class DtcpProxy {
         '${stopwatch.elapsedMilliseconds} ms after the content GET, '
         'player ${_claimed ? 'attached' : 'never connected'}',
       );
-    } catch (e) {
-      _queue.close(e);
+    }
+
+    void logError(Object e) {
       _diag(
         DiagCategory.playback,
         'proxy: upstream closed with an error after $_cipherBytes '
@@ -555,6 +689,130 @@ class DtcpProxy {
         'content GET: $e',
       );
     }
+
+    while (true) {
+      Object? attemptError;
+      var unexpectedEof = false;
+      final basePackets = packets;
+      final basePlainBytes = plainBytes;
+      try {
+        _diag(
+          DiagCategory.playback,
+          'proxy: prefetch started, content GET started',
+        );
+        final response = await _fetcher.openContent(_contentUrl);
+        final decryptor = PcpDecryptor(keyForLabel: _keyForLabel);
+        final timed = response.timeout(
+          stallTimeout,
+          onTimeout: (sink) {
+            sink.addError(
+              NasneError.unreachable(
+                'dtcp:proxy',
+                cause:
+                    'the content stream stalled for '
+                    '${stallTimeout.inSeconds} seconds',
+              ),
+            );
+            sink.close();
+          },
+        );
+        final iterator = StreamIterator<List<int>>(timed);
+        _iterator = iterator;
+        try {
+          while (!_stopRequested) {
+            if (_queue.bufferedBytes >= _prefetchCapBytes) {
+              await _waitForDrain();
+              continue;
+            }
+            if (!await iterator.moveNext()) {
+              if (_autoReconnect && _isLive && !_stopRequested) {
+                unexpectedEof = true;
+              }
+              break;
+            }
+            final chunk = iterator.current;
+            _cipherBytes += chunk.length;
+            final pieces = await decryptor.add(chunk);
+            packets = basePackets + decryptor.packetsDecrypted;
+            plainBytes = basePlainBytes + decryptor.plaintextBytes;
+            for (final piece in pieces) {
+              consecutiveErrors = 0;
+              if (!firstPlainLogged) {
+                firstPlainLogged = true;
+                _diag(
+                  DiagCategory.playback,
+                  'proxy: first plaintext out, ${piece.length} bytes, '
+                  '${stopwatch.elapsedMilliseconds} ms after the '
+                  'content GET',
+                );
+              }
+              _queue.add(piece);
+            }
+            if (packets > lastMilestone &&
+                (packets == 1 || packets % 50 == 0)) {
+              lastMilestone = packets;
+              _diag(
+                DiagCategory.playback,
+                'proxy: $packets packets, $plainBytes bytes decrypted '
+                'so far',
+              );
+            }
+          }
+        } finally {
+          await iterator.cancel();
+          if (identical(_iterator, iterator)) _iterator = null;
+        }
+      } catch (e) {
+        attemptError = e;
+      }
+
+      // An error the reconnect machinery will not (or must not)
+      // absorb surfaces exactly as it did before plan 129.
+      if (attemptError != null &&
+          !(_autoReconnect &&
+              _isLive &&
+              !_stopRequested &&
+              !_downstreamGone &&
+              _isTransientReconnectError(attemptError))) {
+        _queue.close(attemptError);
+        logError(attemptError);
+        return;
+      }
+      if (_stopRequested || _downstreamGone) {
+        _queue.close();
+        logEnd(
+          _downstreamGone
+              ? 'stopped (the player went away)'
+              : 'stopped (session end)',
+        );
+        return;
+      }
+      if (attemptError == null && !unexpectedEof) {
+        _queue.close();
+        logEnd('the upstream ended the stream');
+        return;
+      }
+      // A live drop: back off, drop the fetcher's pooled
+      // sockets, re-authenticate when the failure points at
+      // the session, and pull again.
+      final delay = _backoffForAttempt(consecutiveErrors);
+      consecutiveErrors++;
+      _diag(
+        DiagCategory.playback,
+        'proxy: live upstream dropped '
+        '(${attemptError ?? 'the stream ended'}); reconnect '
+        'attempt $consecutiveErrors after ${delay.inMilliseconds} ms',
+      );
+      if (delay > Duration.zero) await Future<void>.delayed(delay);
+      if (_stopRequested || _downstreamGone) {
+        _queue.close();
+        return;
+      }
+      _fetcher.resetClient();
+      if (_shouldReauthenticate(attemptError, consecutiveErrors)) {
+        await _reauthenticateForReconnect('live');
+      }
+    }
   }
 
   /// Waits while the prefetch buffer is at the cap, until the
@@ -562,7 +820,7 @@ class DtcpProxy {
   Future<void> _waitForDrain() async {
     while (!_stopRequested &&
         !_queue.isClosed &&
-        _queue.bufferedBytes >= prefetchCapBytes) {
+        _queue.bufferedBytes >= _prefetchCapBytes) {
       await _queue.waitChange();
     }
   }
@@ -791,6 +1049,21 @@ class DtcpProxy {
               'a time seek',
             );
           } on NasneError catch (e) {
+            if (_autoReconnect &&
+                !(e.category == NasneErrorCategory.http && e.code == '406')) {
+              // In reconnect mode the serving loop owns retries
+              // (plan 129): a transient refusal is retried there
+              // with backoff and re-authentication, and a
+              // committed refusal (404 and friends) must surface
+              // as itself. Collapsing either into the plain-GET
+              // fallback here would mask the refusal behind the
+              // fallback's own failures and re-pull the whole
+              // recording from byte 0 on every blip. The one
+              // refusal the fallback exists for — 406, the
+              // measured time-seek refusal mode — still falls
+              // back.
+              rethrow;
+            }
             // A source that refuses the time seek still serves
             // the plain stream; fetch-and-discard from 0 is slow
             // but correct, and keeps playback working.
@@ -990,14 +1263,31 @@ class DtcpProxy {
     }
     final ranged = range != null;
     final reqStart = ranged ? range.$1 : 0;
-    final reqEnd = ranged ? range.$2 : total - 1;
+    var reqEnd = ranged ? range.$2 : total - 1;
+    // A previously confirmed real end (plan 129) bounds this
+    // request exactly like the declared total does: ranges
+    // starting at or past it are unsatisfiable, and the
+    // reported total becomes the real end.
+    final eofByte = _eofByte;
+    if (eofByte != null && reqStart >= eofByte) {
+      response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+      response.headers.set('Content-Range', 'bytes */$eofByte');
+      response.contentLength = 0;
+      await response.close();
+      return;
+    }
+    if (eofByte != null && reqEnd >= eofByte) reqEnd = eofByte - 1;
+    final reportedTotal = eofByte ?? total;
     response.headers.contentType = ContentType('video', 'mp2t');
     response.headers.set('Accept-Ranges', 'bytes');
     response.headers.set('transferMode.dlna.org', 'Streaming');
     if (request.method == 'HEAD') {
       response.statusCode = ranged ? HttpStatus.partialContent : HttpStatus.ok;
       if (ranged) {
-        response.headers.set('Content-Range', 'bytes $reqStart-$reqEnd/$total');
+        response.headers.set(
+          'Content-Range',
+          'bytes $reqStart-$reqEnd/$reportedTotal',
+        );
       }
       response.contentLength = reqEnd - reqStart + 1;
       await response.close();
@@ -1050,12 +1340,14 @@ class DtcpProxy {
       }
       if (serveStart > reqEnd) {
         response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
-        response.headers.set('Content-Range', 'bytes */$total');
+        response.headers.set('Content-Range', 'bytes */$reportedTotal');
         response.contentLength = 0;
         await response.close();
         return;
       }
-    } else if (_producer == null && reqStart == _window.end) {
+    } else if (_producer == null &&
+        reqStart == _window.end &&
+        _eofByte == null) {
       // The window is complete up to here but nothing is
       // producing the rest (an earlier stream ended early).
       _startProducer(reqStart);
@@ -1063,12 +1355,16 @@ class DtcpProxy {
 
     response.statusCode = ranged ? HttpStatus.partialContent : HttpStatus.ok;
     if (ranged) {
-      response.headers.set('Content-Range', 'bytes $serveStart-$reqEnd/$total');
+      response.headers.set(
+        'Content-Range',
+        'bytes $serveStart-$reqEnd/$reportedTotal',
+      );
     }
     response.contentLength = reqEnd - serveStart + 1;
     var pos = serveStart;
     var servedHere = 0;
     var stalledRestarts = 0;
+    var consecutiveReconnectErrors = 0;
     var lastEnd = _window.end;
     var retriedProducerError = false;
     var completed = false;
@@ -1085,6 +1381,7 @@ class DtcpProxy {
         _window.setPin(pos, generation);
         final chunk = _window.readChunk(pos, 1024 * 1024);
         if (chunk != null) {
+          consecutiveReconnectErrors = 0;
           final take = min(chunk.length, reqEnd - pos + 1);
           response.add(
             take == chunk.length
@@ -1112,6 +1409,70 @@ class DtcpProxy {
         }
         final error = producer?.error;
         if (error != null) {
+          if (_autoReconnect && _isTransientReconnectError(error)) {
+            // Resume at the reader's byte (plan 129): back off,
+            // drop the pooled sockets, re-authenticate when the
+            // failure points at the session, and re-establish
+            // the producer at pos. The window re-anchors at pos,
+            // so bytes past it are re-fetched rather than trusted
+            // across a producer change; a resume that can only
+            // start PAST pos ends the response instead of
+            // serving bytes at wrong offsets. Establishment
+            // failures retry on the same ladder while they stay
+            // transient; a committed refusal ends the response,
+            // surfacing the failure as the truncated stream a
+            // mid-stream failure has always produced.
+            var reconnected = false;
+            Object? lastError = error;
+            while (!_stopRequested && generation == _serveGeneration) {
+              final delay = _backoffForAttempt(consecutiveReconnectErrors);
+              consecutiveReconnectErrors++;
+              _diag(
+                DiagCategory.playback,
+                'proxy: request #$requestNo: reconnecting at byte '
+                '$pos after ${delay.inMilliseconds} ms (attempt '
+                '$consecutiveReconnectErrors, err=$lastError)',
+              );
+              if (delay > Duration.zero) {
+                await Future<void>.delayed(delay);
+              }
+              if (_stopRequested || generation != _serveGeneration) break;
+              _fetcher.resetClient();
+              if (_shouldReauthenticate(
+                lastError,
+                consecutiveReconnectErrors,
+              )) {
+                await _reauthenticateForReconnect('seekable');
+              }
+              if (_stopRequested || generation != _serveGeneration) break;
+              _cancelProducer();
+              final retry = _startProducer(pos);
+              try {
+                final actual = await retry.established.future.timeout(
+                  seekEstablishTimeout,
+                );
+                if (actual <= pos) {
+                  reconnected = true;
+                } else {
+                  lastError = StateError(
+                    'the resumed producer starts past byte $pos '
+                    '(at $actual)',
+                  );
+                }
+                break;
+              } catch (e) {
+                lastError = e;
+                if (!_isTransientReconnectError(e)) break;
+              }
+            }
+            if (reconnected) continue;
+            _diag(
+              DiagCategory.playback,
+              'proxy: request #$requestNo: the resume at byte $pos '
+              'did not re-establish: $lastError',
+            );
+            break;
+          }
           // One fresh attempt when nothing has been served yet
           // (e.g. the primer failed before the player connected);
           // a failure mid-stream just ends the response.
@@ -1147,11 +1508,31 @@ class DtcpProxy {
           break;
         }
         if (_window.end >= total || pos >= total) break;
+        if (_eofByte != null && _window.end >= _eofByte!) break;
         // The producer ended before the content did (a truncated
         // upstream stream): continue from the window end. Guard
         // against a source that keeps ending at the same byte.
         if (_window.end == lastEnd) {
           stalledRestarts++;
+          if (_autoReconnect) {
+            // A clean end short of the declared total, close to
+            // it, is the content's real end (plan 129): the
+            // declared size can overstate the actual stream, and
+            // re-asking at the same byte only reproduces the
+            // same end. Record it so later requests are bounded
+            // by it too.
+            final remaining = total - _window.end;
+            if (remaining <= eofSlackBytes || remaining * 50 <= total) {
+              _eofByte = _window.end;
+              _diag(
+                DiagCategory.playback,
+                'proxy: request #$requestNo: the upstream ended '
+                'at byte ${_window.end} of $total; treating it '
+                'as the end of the content',
+              );
+              break;
+            }
+          }
           if (stalledRestarts >= 3) {
             _diag(
               DiagCategory.playback,
@@ -1160,13 +1541,31 @@ class DtcpProxy {
             );
             break;
           }
+          if (_autoReconnect) {
+            // A clean end far from the declared total is a drop
+            // that presented as an end: back off and resume
+            // from the window end like any other drop
+            // (plan 129).
+            final delay = _backoffForAttempt(stalledRestarts - 1);
+            _diag(
+              DiagCategory.playback,
+              'proxy: request #$requestNo: the upstream ended '
+              'early at byte ${_window.end}; resuming after '
+              '${delay.inMilliseconds} ms',
+            );
+            if (delay > Duration.zero) {
+              await Future<void>.delayed(delay);
+            }
+            if (_stopRequested || generation != _serveGeneration) break;
+            _fetcher.resetClient();
+          }
         } else {
           stalledRestarts = 0;
           lastEnd = _window.end;
         }
         _startProducer(_window.end);
       }
-      if (pos > reqEnd) {
+      if (pos > reqEnd || (_eofByte != null && pos >= _eofByte!)) {
         completed = true;
         await response.close();
         _diag(
@@ -1283,6 +1682,9 @@ class _WindowCache {
   /// [DtcpProxy.windowCapBytes]; tests override it so the
   /// pause/pin behaviour is reachable with small fixtures).
   final int _capBytes;
+
+  /// The window bound in force (see [_capBytes]).
+  int get capBytes => _capBytes;
 
   final List<Uint8List> _chunks = [];
   int _start = 0;

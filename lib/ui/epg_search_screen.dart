@@ -33,6 +33,7 @@ import 'epg_screen.dart';
 import 'epg_search.dart';
 import 'format.dart';
 import 'live_screen.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 class EpgSearchScreen extends ConsumerStatefulWidget {
@@ -123,7 +124,7 @@ class _EpgSearchScreenState extends ConsumerState<EpgSearchScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: TextField(
+            child: AppTextField(
               controller: _queryController,
               autofocus: true,
               decoration: InputDecoration(

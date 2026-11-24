@@ -173,6 +173,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' as services;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:media_kit/media_kit.dart';
@@ -189,6 +190,25 @@ import 'player_seek_policy.dart';
 import 'player_speed_policy.dart';
 import 'player_teardown_policy.dart';
 import 'player_track_policy.dart';
+import 'player_zap_policy.dart';
+
+/// A channel the viewer can move to from inside the
+/// player (live viewing only): the name the header strip
+/// shows, and the start that opens the channel's session —
+/// the same start the channel's detail view runs for its
+/// own viewing (see live_screen.dart). Switching channels
+/// is starting the new channel's session after stopping
+/// the old one (see PlaybackEngine.startLivePlayback).
+class PlayerZapTarget {
+  const PlayerZapTarget({required this.name, required this.start});
+
+  /// Display name: the channel's name, as the player's
+  /// title for that channel.
+  final String name;
+
+  /// Starts this channel's playback session.
+  final Future<PlaybackSession> Function() start;
+}
 
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({
@@ -199,6 +219,8 @@ class PlayerScreen extends ConsumerStatefulWidget {
     this.initialStart,
     this.onResumePosition,
     this.loadChapters,
+    this.zapTargets,
+    this.zapIndex = 0,
   });
 
   /// Display heading: a recording's title, or a live channel's
@@ -253,6 +275,22 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// logged and dropped: chapters decorate playback and
   /// must not delay or fail it.
   final Future<List<Duration>> Function()? loadChapters;
+
+  /// The channels the viewer can move between without
+  /// leaving the player (live viewing only, owner request
+  /// 2026-11-23): the band's playable channels in the order
+  /// the live list shows them, with the channel this screen
+  /// opened at [zapIndex]. The header shows the previous
+  /// and next channels beside the current one, and the
+  /// up / down keys move as well (see player_zap_policy).
+  /// Null — recordings, and live viewing whose band has a
+  /// single playable channel — keeps the plain title and
+  /// offers no movement.
+  final List<PlayerZapTarget>? zapTargets;
+
+  /// Where [zapTargets] starts: the index of the channel
+  /// [session] is playing.
+  final int zapIndex;
 
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
@@ -383,10 +421,49 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// teardown (see player_teardown_policy).
   late final DiagLog _diag;
 
+  /// The session currently playing: [PlayerScreen.session]
+  /// at the first open, and the zap target's own session
+  /// after a channel switch (see _zapTo). Leaving the
+  /// screen stops this one; a switch stops the replaced
+  /// one as it swaps.
+  late PlaybackSession _session;
+
+  /// Where the viewer stands in [PlayerScreen.zapTargets].
+  int _zapIndex = 0;
+
+  /// A channel switch is in flight: the old session is
+  /// stopping or the new one is starting. Movement input
+  /// is ignored meanwhile, so a held key or a double tap
+  /// cannot queue competing starts against one tuner.
+  bool _zapping = false;
+
+  /// An open is in flight (the first open, or a switch's):
+  /// channel movement and the in-place resume wait for it
+  /// to land, so two opens never race on the one player.
+  bool _opening = false;
+
+  /// Whether channel movement is offered (see
+  /// player_zap_policy).
+  bool get _canZap =>
+      canZap(live: widget.live, targetCount: widget.zapTargets?.length ?? 0);
+
   @override
   void initState() {
     super.initState();
     _diag = ref.read(diagLogProvider);
+    _session = widget.session;
+    _zapIndex = widget.zapIndex;
+    final zapTargets = widget.zapTargets;
+    if (zapTargets != null &&
+        (_zapIndex < 0 || _zapIndex >= zapTargets.length)) {
+      // A caller-supplied index outside the targets must
+      // not reach the header's lookups; fall back to the
+      // first target rather than failing the screen.
+      _zapIndex = 0;
+    }
+    if (_canZap) {
+      services.HardwareKeyboard.instance.addHandler(_onZapKeyEvent);
+    }
     _player = Player();
     _videoController = VideoController(_player);
     _wakelockSession = ref.read(playbackWakelockProvider).openSession();
@@ -397,6 +474,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         _wakelockSession.setPlaying(playing);
         final wasPlaying = _playingNow;
         _playingNow = playing;
+        if (_zapping) {
+          // A channel switch is in flight: this event may
+          // still belong to the channel being left, so it
+          // must not drive the start / interruption state
+          // machine. _zapTo reconciles from _playingNow
+          // when the switch completes.
+          return;
+        }
         if (playing) {
           _playing = true;
           _watchdog?.cancel();
@@ -479,6 +564,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     _subscriptions.add(
       _player.stream.error.listen((error) {
         _diag(DiagCategory.playback, 'player: error: $error');
+        if (_zapping) {
+          // An error surfacing during a channel switch may
+          // belong to the channel being left (its proxy is
+          // closing): it must not cancel the new channel's
+          // watchdog or cover the new channel with the
+          // start error. The switch's own open arbitrates
+          // the new channel's start.
+          _diag(
+            DiagCategory.playback,
+            'player: ignoring an error during a channel switch',
+          );
+          return;
+        }
         if (!playerErrorIsFatal(
           error,
           live: widget.live,
@@ -581,6 +679,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// re-applies the caption selection when the new track
   /// list settles, exactly as at the first open.
   Future<void> _resume() async {
+    if (_zapping || _opening) return;
     _diag(
       DiagCategory.playback,
       'player: resuming after an interruption at '
@@ -591,17 +690,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _interrupted = false;
       _interruptDetail = null;
     });
+    // The resume's open holds the same in-flight flag as a
+    // switch's open (import adjustment, 2026-11-23): without
+    // it a channel switch could start while this open is
+    // still landing, and the two opens would race on the one
+    // player — the switch stops the session this open is
+    // reopening.
+    _opening = true;
     try {
       await _player.open(
         Media(
-          widget.session.mediaUri.toString(),
+          _session.mediaUri.toString(),
           start: (!widget.live && _lastPosition > Duration.zero)
               ? _lastPosition
               : null,
         ),
       );
+      _opening = false;
       _diag(DiagCategory.playback, 'player: resume open completed');
     } catch (e) {
+      _opening = false;
       _diag(DiagCategory.playback, 'player: resume failed: $e');
       if (mounted) {
         setState(() {
@@ -610,6 +718,129 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         });
       }
     }
+  }
+
+  /// A key event for channel movement (desktop): the up
+  /// key moves to the previous channel, the down key to
+  /// the next, and the event is claimed, so the desktop
+  /// controls do not also take it (their up / down keys
+  /// are volume there; the on-screen volume control keeps
+  /// working). Anything else — and any key while a menu
+  /// or dialog sits over this screen, or while a switch
+  /// or an open is in flight — passes through untouched.
+  /// The keys stay live on the start error, so a channel
+  /// whose start failed can be left by key as well as by
+  /// tap.
+  bool _onZapKeyEvent(services.KeyEvent event) {
+    if (event is! services.KeyDownEvent) return false;
+    if (_zapping || _opening) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? false)) return false;
+    if (event.logicalKey == services.LogicalKeyboardKey.arrowUp) {
+      _zapBy(-1);
+      return true;
+    }
+    if (event.logicalKey == services.LogicalKeyboardKey.arrowDown) {
+      _zapBy(1);
+      return true;
+    }
+    return false;
+  }
+
+  /// Moves [delta] channels from the current one, wrapping
+  /// at the band's ends (see player_zap_policy).
+  void _zapBy(int delta) {
+    if (!_canZap || _zapping || _opening) return;
+    _zapTo(
+      zapIndexAfter(
+        current: _zapIndex,
+        delta: delta,
+        count: widget.zapTargets!.length,
+      ),
+    );
+  }
+
+  /// Switches playback to the zap target at [index], in
+  /// place: the current session stops, the target's
+  /// session starts and opens on this screen's player, and
+  /// the header follows. A start that fails lands on the
+  /// start error this screen already shows for a failed
+  /// open — the header strip stays, so the viewer can move
+  /// back — and a switch that finishes after the screen
+  /// went away stops the session it started, like the
+  /// launcher does with a late start.
+  ///
+  /// The switch stays in flight until the new channel's
+  /// open completes: player events arriving meanwhile may
+  /// belong to the channel being left, so the listeners
+  /// hold them back from the start / interruption state
+  /// machine, and this method reconciles the playing
+  /// state from the latest event when it lands.
+  Future<void> _zapTo(int index) async {
+    if (!_canZap || _zapping || _opening || index == _zapIndex) return;
+    final target = widget.zapTargets![index];
+    _diag(
+      DiagCategory.playback,
+      'player: zapping to channel ${target.name} '
+      '(index $index of ${widget.zapTargets!.length})',
+    );
+    setState(() => _zapping = true);
+    try {
+      await _session.stop();
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: zap: old session stop failed: $e');
+    }
+    if (!mounted) return;
+    final PlaybackSession newSession;
+    try {
+      newSession = await target.start();
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: zap: start failed: $e');
+      if (mounted) {
+        setState(() {
+          _zapping = false;
+          _error = '$e';
+        });
+      }
+      return;
+    }
+    if (!mounted) {
+      await newSession.stop();
+      return;
+    }
+    _session = newSession;
+    // The new channel starts the way the first one did:
+    // the watchdog arbitrates its start, and the playing /
+    // interruption signals begin clean. The player's own
+    // properties persist across the switch, and _open
+    // re-pins what it pins at every open.
+    _watchdog?.cancel();
+    _watchdog = Timer(startTimeout, _onStartTimeout);
+    _stallTimer?.cancel();
+    _playing = false;
+    _playingNow = false;
+    _completed = false;
+    _bufferingSincePlaying = false;
+    setState(() {
+      _zapIndex = index;
+      _interrupted = false;
+      _interruptDetail = null;
+      _error = null;
+      _tracks = const Tracks();
+      _selectedTrack = const Track();
+    });
+    await _open();
+    if (!mounted) return;
+    setState(() {
+      _zapping = false;
+      // Player events were held back while the switch was
+      // in flight; if the new channel already reached
+      // playing in that window, take up the started state
+      // the playing listener would have set.
+      if (_playingNow) {
+        _playing = true;
+        _watchdog?.cancel();
+      }
+    });
   }
 
   /// Applies the caption selection for the current toggle
@@ -788,7 +1019,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _open() async {
-    _diag(DiagCategory.playback, 'player: opening ${widget.session.mediaUri}');
+    _opening = true;
+    _diag(DiagCategory.playback, 'player: opening ${_session.mediaUri}');
     try {
       final platform = _player.platform;
       if (platform is NativePlayer) {
@@ -821,13 +1053,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         final cacheMode = mpvCacheMode(live: widget.live);
         await platform.setProperty('cache', cacheMode);
         if (!widget.live) {
-          await platform.setProperty(
-            'demuxer-max-bytes',
-            '$recordingDemuxerMaxBytes',
-          );
+          // The forward demuxer limit follows the viewer's
+          // playback buffer choice (plan 126); the back limit
+          // stays at its long-standing value (backward scans
+          // are not link buffering — see player_cache_policy).
+          final bufferSeconds = ref.read(playbackBufferProvider);
+          final demuxerMaxBytes = recordingDemuxerMaxBytesFor(bufferSeconds);
+          await platform.setProperty('demuxer-max-bytes', '$demuxerMaxBytes');
           await platform.setProperty(
             'demuxer-max-back-bytes',
             '$recordingDemuxerMaxBackBytes',
+          );
+          _diag(
+            DiagCategory.playback,
+            'player: mpv demuxer-max-bytes=$demuxerMaxBytes '
+            '(playback buffer: '
+            '${bufferSeconds == playbackBufferStandardSeconds ? 'standard' : '$bufferSeconds s'})',
           );
         }
         _diag(
@@ -848,11 +1089,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           '(plan 86)',
         );
       }
-      await _player.open(
-        Media(widget.session.mediaUri.toString(), start: start),
-      );
+      await _player.open(Media(_session.mediaUri.toString(), start: start));
       _diag(DiagCategory.playback, 'player: open completed');
       await _applySubtitleSelection();
+      _opening = false;
     } catch (e) {
       _diag(DiagCategory.playback, 'player: open failed: $e');
       if (!playerErrorIsFatal('$e', live: widget.live)) {
@@ -862,10 +1102,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           DiagCategory.playback,
           'player: ignoring the seek complaint for live viewing',
         );
+        _opening = false;
         return;
       }
       _watchdog?.cancel();
       if (mounted) setState(() => _error = '$e');
+      _opening = false;
     }
   }
 
@@ -1113,7 +1355,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// stop can never hold up the rest of the teardown.
   Future<void> _stopSession() async {
     try {
-      await widget.session.stop();
+      await _session.stop();
     } catch (e) {
       _diag(
         DiagCategory.playback,
@@ -1124,6 +1366,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   void dispose() {
+    if (_canZap) {
+      services.HardwareKeyboard.instance.removeHandler(_onZapKeyEvent);
+    }
     // What leaving reports to the unit is decided first,
     // from plain fields, before anything is torn down
     // (plan 104).
@@ -1163,6 +1408,72 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     super.dispose();
   }
 
+  /// The header while channel movement is offered
+  /// (owner request, 2026-11-23): the previous channel on
+  /// the left, the channel being watched in the centre and
+  /// the next channel on the right; tapping a side moves
+  /// to that channel. Each name ellipsizes inside its
+  /// third of the bar, so a long channel name never pushes
+  /// the others out, and the centre keeps the title's
+  /// usual style and place.
+  Widget _buildZapTitle(BuildContext context) {
+    final targets = widget.zapTargets!;
+    final count = targets.length;
+    final prevIndex = zapIndexAfter(
+      current: _zapIndex,
+      delta: -1,
+      count: count,
+    );
+    final nextIndex = zapIndexAfter(current: _zapIndex, delta: 1, count: count);
+    final theme = Theme.of(context);
+    final sideStyle = theme.textTheme.titleMedium?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+
+    Widget side(int index, {required bool previous}) {
+      return InkWell(
+        onTap: _zapping ? null : () => _zapTo(index),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            mainAxisAlignment: previous
+                ? MainAxisAlignment.start
+                : MainAxisAlignment.end,
+            children: [
+              if (previous) const Icon(Icons.chevron_left, size: 20),
+              Flexible(
+                child: Text(
+                  targets[index].name,
+                  style: sideStyle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: previous ? TextAlign.left : TextAlign.right,
+                ),
+              ),
+              if (!previous) const Icon(Icons.chevron_right, size: 20),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(child: side(prevIndex, previous: true)),
+        Expanded(
+          child: Text(
+            targets[_zapIndex].name,
+            style: theme.textTheme.titleLarge,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ),
+        Expanded(child: side(nextIndex, previous: false)),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // The device's bottom view padding — the home
@@ -1176,7 +1487,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final bottomViewPadding = MediaQuery.viewPaddingOf(context).bottom;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: _canZap ? _buildZapTitle(context) : Text(widget.title),
         actions: [
           if (canChangePlaybackSpeed(live: widget.live))
             PopupMenuButton<double>(

@@ -73,7 +73,9 @@ void main() {
     expect(found[0].udn, 'uuid:fake-1');
     expect(found[1].isNasne, isTrue);
     expect(
-      found[1].controlUrl('urn:schemas-xsrs-org:service:X_ScheduledRecording:2'),
+      found[1].controlUrl(
+        'urn:schemas-xsrs-org:service:X_ScheduledRecording:2',
+      ),
       Uri.parse('http://192.0.2.9:64230/XSRS'),
     );
     expect(describer.describedHosts, ['192.0.2.7', '192.0.2.9']);
@@ -125,15 +127,24 @@ void main() {
       expect(order, ['ssdp', 'scan']);
     });
 
-    test('stops at the first non-empty result', () async {
+    test('merges the results of every implementation', () async {
       final order = <String>[];
       final composite = CompositeDiscoveryService([
         _StubDiscovery('ssdp', [device('192.0.2.7')], order),
         _StubDiscovery('scan', [device('192.0.2.9')], order),
       ]);
       final found = await composite.discover();
+      expect(found.map((d) => d.host), ['192.0.2.7', '192.0.2.9']);
+      expect(order, ['ssdp', 'scan']);
+    });
+
+    test('deduplicates a host reported by both', () async {
+      final composite = CompositeDiscoveryService([
+        _StubDiscovery('ssdp', [device('192.0.2.7')], []),
+        _StubDiscovery('scan', [device('192.0.2.7')], []),
+      ]);
+      final found = await composite.discover();
       expect(found.map((d) => d.host), ['192.0.2.7']);
-      expect(order, ['ssdp']);
     });
   });
 }
@@ -152,6 +163,5 @@ class _StubDiscovery implements DiscoveryService {
   }
 
   @override
-  Future<NasneDevice> describe(Uri location) =>
-      throw UnimplementedError();
+  Future<NasneDevice> describe(Uri location) => throw UnimplementedError();
 }

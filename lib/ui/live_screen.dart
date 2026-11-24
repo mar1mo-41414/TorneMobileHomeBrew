@@ -27,6 +27,7 @@ import 'format.dart';
 import 'playback_launcher.dart';
 import 'player_screen.dart';
 import 'schedules_screen.dart' show twoPaneBreakpoint;
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 class LiveScreen extends ConsumerStatefulWidget {
@@ -380,7 +381,15 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text(ch.programTitle, style: Theme.of(context).textTheme.titleLarge),
+        // TV: the heading and the closing note are display-only;
+        // both hold focus (TvFocusAnchor) so D-pad traversal can
+        // scroll to both ends of the detail (plan 123).
+        TvFocusAnchor(
+          child: Text(
+            ch.programTitle,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+        ),
         const SizedBox(height: 12),
         if (ch.channelName != null)
           FieldRow(label: 'チャンネル', value: ch.channelName!),
@@ -426,7 +435,9 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
           label: const Text('視聴'),
         ),
         const SizedBox(height: 8),
-        const Text('視聴には DTCP-IP の資格情報が必要です (設定画面からインポートできます)。'),
+        const TvFocusAnchor(
+          child: Text('視聴には DTCP-IP の資格情報が必要です (設定画面からインポートできます)。'),
+        ),
       ],
     );
   }
@@ -451,16 +462,63 @@ class _LiveChannelDetailViewState extends ConsumerState<LiveChannelDetailView> {
         context: context,
         ref: ref,
         start: () => engine.startLivePlayback(channel, res),
-        buildPlayer: (session) => PlayerScreen(
-          title: channel.channelName ?? channel.programTitle,
-          session: session,
-          live: true,
-        ),
+        buildPlayer: (session) {
+          final zap = _zapTargetsFor(engine);
+          return PlayerScreen(
+            title: channel.channelName ?? channel.programTitle,
+            session: session,
+            live: true,
+            zapTargets: zap?.targets,
+            zapIndex: zap?.index ?? 0,
+          );
+        },
         unsupportedSubject: 'TV視聴',
         startFailureMessage: '視聴を開始できませんでした',
       );
     } finally {
       if (mounted) setState(() => _starting = false);
     }
+  }
+
+  /// The zap targets for viewing [channel] (channel
+  /// movement inside the player, owner request
+  /// 2026-11-23): the playable channels of the same band,
+  /// in the order the live list shows them — the
+  /// subchannel setting applied, as the list applies it —
+  /// each with the start this view's own viewing runs, at
+  /// this visit's quality, and the index of [channel]
+  /// among them. Null when the channel list is not at hand
+  /// (its fetch has not landed) or the band offers no
+  /// second playable channel: the player then keeps its
+  /// plain title and offers no movement.
+  ({List<PlayerZapTarget> targets, int index})? _zapTargetsFor(
+    PlaybackEngine engine,
+  ) {
+    final bands = ref.read(liveChannelsProvider(reg)).value;
+    if (bands == null) return null;
+    final visible = liveBandsWithSubchannelSetting(
+      bands,
+      ref.read(showSubchannelsProvider),
+    );
+    for (final band in visible) {
+      if (!band.channels.any((c) => c.id == channel.id)) continue;
+      final useMobile = _useMobile;
+      final targets = <PlayerZapTarget>[];
+      var index = -1;
+      for (final c in band.channels) {
+        if (c.res.isEmpty) continue;
+        if (c.id == channel.id) index = targets.length;
+        final res = (useMobile ? c.mobileRes : c.originalRes) ?? c.res.first;
+        targets.add(
+          PlayerZapTarget(
+            name: c.channelName ?? c.programTitle,
+            start: () => engine.startLivePlayback(c, res),
+          ),
+        );
+      }
+      if (targets.length < 2 || index < 0) return null;
+      return (targets: targets, index: index);
+    }
+    return null;
   }
 }

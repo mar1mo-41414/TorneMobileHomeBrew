@@ -30,6 +30,7 @@ import 'format.dart';
 import 'live_screen.dart';
 import 'schedule_form.dart';
 import 'epg_subchannel_visibility.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 /// Vertical scale of the grid: pixels per broadcast minute.
@@ -1178,6 +1179,9 @@ class EpgEventDetailDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final genreLabel = epgGenreLabel(event.genreLevel1);
+    // TV: the primary action (reserve, else watch, else close)
+    // takes focus as the dialog opens (plan 134).
+    final tv = isTvVariant(context);
     return AlertDialog(
       title: Text(event.title ?? '番組情報なし'),
       content: SingleChildScrollView(
@@ -1226,11 +1230,13 @@ class EpgEventDetailDialog extends StatelessWidget {
       ),
       actions: [
         TextButton(
+          autofocus: tv && onWatch == null && onReserve == null,
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),
         if (onWatch != null)
           FilledButton.icon(
+            autofocus: tv && onReserve == null,
             onPressed: onWatch,
             icon: const Icon(Icons.live_tv, size: 18),
             label: const Text('試聴'),
@@ -1243,6 +1249,7 @@ class EpgEventDetailDialog extends StatelessWidget {
           )
         else if (onReserve != null)
           FilledButton.icon(
+            autofocus: tv,
             onPressed: onReserve,
             icon: const Icon(Icons.fiber_manual_record, size: 18),
             label: const Text('録画予約'),

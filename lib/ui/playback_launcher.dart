@@ -15,6 +15,7 @@ import '../app/providers.dart';
 import '../core/core.dart';
 import 'dtcp_credential_screen.dart';
 import 'error_messages.dart';
+import 'tv_focus.dart';
 import 'widgets.dart';
 
 /// Starts a session via [start] and shows the player built by
@@ -113,7 +114,10 @@ Future<void> showPlaybackErrorDialog(BuildContext context, NasneError e) {
         ),
       ),
       actions: [
+        // TV: the single action takes focus as the dialog
+        // opens, so the remote can close it (plan 134).
         TextButton(
+          autofocus: isTvVariant(context),
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),
@@ -144,6 +148,7 @@ Future<void> showCredentialGuidanceDialog(
           child: const Text('閉じる'),
         ),
         FilledButton(
+          autofocus: isTvVariant(context),
           onPressed: () {
             final navigator = Navigator.of(context);
             navigator.pop();
@@ -174,7 +179,10 @@ Future<void> showPlaybackUnsupportedDialog(
         'が必要です。資格情報ペアが得られていないため、再生は未実装です。',
       ),
       actions: [
+        // TV: the single action takes focus as the dialog
+        // opens, so the remote can close it (plan 134).
         TextButton(
+          autofocus: isTvVariant(context),
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),
         ),
