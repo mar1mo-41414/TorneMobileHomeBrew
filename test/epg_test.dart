@@ -172,11 +172,17 @@ List<int> wrapEpgResponse(List<int> plain) {
 }
 
 /// Builds a synthetic EPG version table (plan 24): a 12-byte
-/// header, one 144-byte record per service (triple + 0xc000 flags
-/// + zeroed version blocks) and the 8-byte footer.
+/// header (the record count, at +8, covers every record), one
+/// 144-byte record per service (triple + 0xc000 flags + zeroed
+/// version blocks) and a trailing 8-byte block-less record (a
+/// service with no EPG, as on the measured units).
 List<int> versionTableOf(List<EpgServiceRef> services) {
   final out = BytesBuilder();
-  out.add(List.filled(12, 0));
+  final header = List.filled(12, 0);
+  final count = services.length + 1;
+  header[8] = count >> 8;
+  header[9] = count & 0xff;
+  out.add(header);
   for (final s in services) {
     out.add([
       s.networkId >> 8, s.networkId & 0xff,
@@ -187,6 +193,31 @@ List<int> versionTableOf(List<EpgServiceRef> services) {
     out.add(List.filled(136, 0));
   }
   out.add(List.filled(8, 0));
+  return out.toBytes();
+}
+
+/// Builds a synthetic version table from explicit records:
+/// (networkId, transportStreamId, serviceId, flags) tuples laid
+/// out back to back at their flags-derived lengths, with the
+/// header count set to the record count.
+List<int> versionTableWithFlags(
+    List<(int, int, int, int)> records) {
+  final out = BytesBuilder();
+  final header = List.filled(12, 0);
+  header[8] = records.length >> 8;
+  header[9] = records.length & 0xff;
+  out.add(header);
+  for (final (nid, tsid, sid, flags) in records) {
+    out.add([
+      nid >> 8, nid & 0xff,
+      tsid >> 8, tsid & 0xff,
+      sid >> 8, sid & 0xff,
+      flags >> 8, flags & 0xff,
+    ]);
+    final blocks =
+        (flags & 0x8000 != 0 ? 1 : 0) + (flags & 0x4000 != 0 ? 1 : 0);
+    out.add(List.filled(68 * blocks, 0));
+  }
   return out.toBytes();
 }
 
@@ -372,16 +403,79 @@ void main() {
       ]);
     });
 
-    test('enumeration stops at a record without the flags value', () {
-      final table = versionTableOf(const [
+    test('a block-less record is walked past, later services still read',
+        () {
+      // Buffalo FW 4.50 shape (issue 2): a flags 0x0000 record in
+      // the middle of the table must not end the enumeration.
+      final table = versionTableWithFlags(const [
+        (0x1111, 0x2222, 0x3333, 0xc000),
+        (0x1111, 0x2222, 0x7777, 0x0000),
+        (0x4444, 0x5555, 0x6666, 0xc000),
+      ]);
+      expect(parseEpgVersionServices(table), const [
         EpgServiceRef(0x1111, 0x2222, 0x3333),
         EpgServiceRef(0x4444, 0x5555, 0x6666),
       ]);
-      table[12 + 144 + 6] = 0x00; // second record's flags high byte
-      expect(parseEpgVersionServices(table),
-          const [EpgServiceRef(0x1111, 0x2222, 0x3333)]);
       expect(parseEpgVersionServices(const []), isEmpty);
       expect(parseEpgVersionServices(List.filled(12, 0)), isEmpty);
+    });
+
+    test('unknown flag bits stop the enumeration', () {
+      final table = versionTableWithFlags(const [
+        (0x1111, 0x2222, 0x3333, 0xc000),
+        (0x4444, 0x5555, 0x6666, 0xa000), // 0x2000 is not understood
+        (0x7777, 0x8888, 0x9999, 0xc000),
+      ]);
+      expect(parseEpgVersionServices(table),
+          const [EpgServiceRef(0x1111, 0x2222, 0x3333)]);
+    });
+
+    test('a basic-only record enumerates with hasExtended false', () {
+      final table = versionTableWithFlags(const [
+        (0x1111, 0x2222, 0x3333, 0x8000),
+        (0x4444, 0x5555, 0x6666, 0x4000),
+      ]);
+      expect(parseEpgVersionServices(table), const [
+        EpgServiceRef(0x1111, 0x2222, 0x3333, hasExtended: false),
+        EpgServiceRef(0x4444, 0x5555, 0x6666, hasBasic: false),
+      ]);
+    });
+
+    test('the Buffalo FW 4.50 layout reads every service with a block',
+        () {
+      // Issue 2's measured table: 3,780 bytes, header count 29 =
+      // 21 full records, one block-less record, 3 full records and
+      // 4 basic-only records; 28 services have a block.
+      final records = <(int, int, int, int)>[
+        for (var i = 0; i < 21; i++) (0x4004, 0x4000, 0x100 + i, 0xc000),
+        (0x4004, 0x4000, 0x1f0, 0x0000),
+        for (var i = 0; i < 3; i++) (0x4004, 0x4000, 0x200 + i, 0xc000),
+        for (var i = 0; i < 4; i++) (0x4004, 0x4000, 0x300 + i, 0x8000),
+      ];
+      final table = versionTableWithFlags(records);
+      expect(table.length, 3780);
+      final services = parseEpgVersionServices(table);
+      expect(services.length, 28);
+      expect(services.first, const EpgServiceRef(0x4004, 0x4000, 0x100));
+      // The services behind the block-less record are still read.
+      expect(services[21], const EpgServiceRef(0x4004, 0x4000, 0x200));
+      expect(services.sublist(24), [
+        for (var i = 0; i < 4; i++)
+          EpgServiceRef(0x4004, 0x4000, 0x300 + i, hasExtended: false),
+      ]);
+    });
+
+    test('request body sets only the bitmaps a service carries', () {
+      final body = buildEpgGetBody(const [
+        EpgServiceRef(0x1111, 0x2222, 0x3333, hasExtended: false),
+        EpgServiceRef(0x4444, 0x5555, 0x6666, hasBasic: false),
+      ]);
+      // Basic-only service: basic bitmap set, extended clear.
+      expect(body.sublist(8 + 8, 8 + 16), List.filled(8, 0xff));
+      expect(body.sublist(8 + 16, 8 + 24), List.filled(8, 0));
+      // Extended-only service: basic clear, extended set.
+      expect(body.sublist(32 + 8, 32 + 16), List.filled(8, 0));
+      expect(body.sublist(32 + 16, 32 + 24), List.filled(8, 0xff));
     });
 
     test('request body layout: header count, records, bitmaps', () {
