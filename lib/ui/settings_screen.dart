@@ -5,6 +5,8 @@
 /// scope (plan 1.2).
 library;
 
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -19,6 +21,7 @@ import 'dtcp_credential_screen.dart';
 import 'epg_hidden_genres_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
+import 'player_hwdec_policy.dart';
 import 'tv_focus.dart';
 import 'widgets.dart';
 
@@ -247,6 +250,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // this round (plan 126); the desktop builds do not
           // show it.
           if (!isDesktopStorePlatform) const PlaybackBufferSetting(),
+          // The video decode mode is Android only this round
+          // (plan 139): the failure it answers is Android
+          // hardware's, and the desktop builds are out of
+          // scope (see player_hwdec_policy.dart).
+          if (Platform.isAndroid) const VideoHwdecSetting(),
           const Divider(),
           _sectionTitle(context, '録画再生 (DTCP-IP)'),
           ListTile(
@@ -560,5 +568,94 @@ class PlaybackBufferSetting extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+/// The video decode mode choice (plan 139): how much of the
+/// video decoding mpv may hand to the device's hardware
+/// decoder (see player_hwdec_policy.dart for the modes and
+/// the failure they answer). Shown on Android only — the
+/// settings screen gates it — where the hardware paths this
+/// steers live. The tile shows the mode in force; tapping
+/// opens the picker dialog.
+class VideoHwdecSetting extends ConsumerWidget {
+  const VideoHwdecSetting({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(videoHwdecModeProvider);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('映像デコード方式', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(mode.shortLabel),
+            subtitle: Text(mode.description),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickMode(context, ref, mode),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '元画質 (DR) で映像が出ない端末では、「MPEG-2 のみソフトウェア」で'
+            '改善することがあります。次の再生から反映されます。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickMode(
+    BuildContext context,
+    WidgetRef ref,
+    VideoHwdecMode current,
+  ) async {
+    final picked = await showDialog<VideoHwdecMode>(
+      context: context,
+      builder: (context) {
+        // TV: the mode in force takes focus as the dialog
+        // opens — the picker's primary position — so the
+        // D-pad starts inside the dialog instead of staying
+        // on the screen behind it (plan 134).
+        final tv = isTvVariant(context);
+        return AlertDialog(
+          title: const Text('映像デコード方式'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: VideoHwdecMode.values.length,
+              itemBuilder: (context, index) {
+                final mode = VideoHwdecMode.values[index];
+                return ListTile(
+                  autofocus: tv && mode == current,
+                  leading: Icon(
+                    mode == current
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                  ),
+                  title: Text(mode.shortLabel),
+                  subtitle: Text(mode.description),
+                  onTap: () => Navigator.pop(context, mode),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('キャンセル'),
+            ),
+          ],
+        );
+      },
+    );
+    if (picked != null && picked != current) {
+      await ref.read(videoHwdecModeProvider.notifier).set(picked);
+    }
   }
 }

@@ -168,9 +168,21 @@
 /// controls lay it out with (see player_chapter_policy
 /// and _ChapterTicksOverlay). Live viewing has no
 /// chapters and is untouched.
+///
+/// Plan 139: two Fire TV field failures, both on the player
+/// side of an otherwise healthy stream. On Android at API 28
+/// or below (Fire OS 7), media_kit's async initialization
+/// can wait forever for an event reply, so the player is
+/// created with the synchronous property path there (see
+/// app/mpv_compat.dart). And the viewer's decode-mode
+/// setting (see player_hwdec_policy.dart) can move MPEG-2 —
+/// or all decoding — off a hardware path that never
+/// produces a picture; it is applied before open, alongside
+/// the cache mode.
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' as services;
@@ -179,11 +191,13 @@ import 'package:material_ui/material_ui.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../app/mpv_compat.dart';
 import '../app/providers.dart';
 import '../core/core.dart';
 import 'player_cache_policy.dart';
 import 'player_chapter_policy.dart';
 import 'player_error_policy.dart';
+import 'player_hwdec_policy.dart';
 import 'player_resume_policy.dart';
 import 'player_safe_area_policy.dart';
 import 'player_seek_policy.dart';
@@ -300,6 +314,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   late final Player _player;
   late final VideoController _videoController;
   late final WakelockSession _wakelockSession;
+
+  /// Whether this screen's player runs media_kit's
+  /// synchronous property path (plan 139): Android at API 28
+  /// or below, decided once in [initState] from the SDK int
+  /// read at startup (see app/mpv_compat.dart).
+  bool _legacySyncMpvInit = false;
+
+  /// The viewer's video decode mode in force for this screen
+  /// (plan 139; see player_hwdec_policy.dart), snapshotted in
+  /// [initState] so the video controller and the properties
+  /// [_open] sets cannot disagree. A settings change applies
+  /// from the next playback, like the buffer choice.
+  late final VideoHwdecMode _hwdecMode;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _watchdog;
   bool _playing = false;
@@ -464,8 +491,38 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     if (_canZap) {
       services.HardwareKeyboard.instance.addHandler(_onZapKeyEvent);
     }
-    _player = Player();
-    _videoController = VideoController(_player);
+    // The player's mpv initialization follows the device's
+    // Android generation (plan 139; see app/mpv_compat.dart):
+    // at API 28 or below the async initialization can wait
+    // forever for an event reply, so the player is created
+    // with the synchronous property path there. The SDK int
+    // was read at startup (app/android_sdk.dart); an unknown
+    // value keeps the long-standing async default.
+    final androidSdkInt = ref.read(androidSdkIntProvider);
+    _legacySyncMpvInit = shouldUseLegacySyncMpvInit(
+      isAndroid: Platform.isAndroid,
+      androidSdkInt: androidSdkInt,
+    );
+    _player = _legacySyncMpvInit
+        ? Player(configuration: const PlayerConfiguration(async: false))
+        : Player();
+    if (_legacySyncMpvInit) {
+      _diag(
+        DiagCategory.playback,
+        'player: legacy sync mpv init (async: false, android api '
+        '$androidSdkInt)',
+      );
+      unawaited(_kickLegacyMpvAfterInit());
+    }
+    _hwdecMode = ref.read(videoHwdecModeProvider);
+    _videoController = videoControllerHardwareAcceleration(_hwdecMode)
+        ? VideoController(_player)
+        : VideoController(
+            _player,
+            configuration: const VideoControllerConfiguration(
+              enableHardwareAcceleration: false,
+            ),
+          );
     _wakelockSession = ref.read(playbackWakelockProvider).openSession();
     _watchdog = Timer(startTimeout, _onStartTimeout);
     _subscriptions.add(
@@ -1018,16 +1075,87 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
   }
 
+  /// Pokes the mpv event loop once the player's handle
+  /// exists (plan 139; see app/mpv_compat.dart). The kick is
+  /// a backstop beside the synchronous init — its delivery
+  /// goes to the log either way, so a field log shows
+  /// whether libmpv answered at all. Only ever called on the
+  /// legacy path, where the handle getter's initialization
+  /// wait completes.
+  Future<void> _kickLegacyMpvAfterInit() async {
+    try {
+      final kicked = kickMpvEventLoop(await _player.handle);
+      _diag(
+        DiagCategory.playback,
+        'player: mpv wakeup kick after init: '
+        '${kicked ? 'sent' : 'unavailable'}',
+      );
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: mpv wakeup kick failed: $e');
+    }
+  }
+
+  /// Records the decoder state mpv settled on for this start
+  /// (plan 139): the hwdec actually in use, the video codec
+  /// and whether a video output is configured. Together with
+  /// the init timing in [_open], a field log can tell
+  /// "stopped in initialization" from "initialized but never
+  /// decoded" — the two Fire TV failure shapes of this round.
+  /// Best-effort: a failed read is logged and dropped, never
+  /// a failed open.
+  Future<void> _logDecodeStatus() async {
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    try {
+      final hwdecCurrent = await platform.getProperty('hwdec-current');
+      final videoCodec = await platform.getProperty('video-codec');
+      final voConfigured = await platform.getProperty('vo-configured');
+      _diag(
+        DiagCategory.playback,
+        'player: decode status: hwdec-current=$hwdecCurrent '
+        'video-codec=$videoCodec vo-configured=$voConfigured',
+      );
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: decode status read failed: $e');
+    }
+  }
+
   Future<void> _open() async {
     _opening = true;
     _diag(DiagCategory.playback, 'player: opening ${_session.mediaUri}');
     try {
       final platform = _player.platform;
       if (platform is NativePlayer) {
+        // The first property round trip doubles as the init
+        // readiness probe (plan 139): on the devices the
+        // legacy sync init exists for, this is the call the
+        // async path was observed never to return from, so
+        // its duration goes to the log on every start.
+        final initStopwatch = Stopwatch()..start();
         await platform.setProperty(
           'network-timeout',
           '$mpvNetworkTimeoutSeconds',
         );
+        initStopwatch.stop();
+        _diag(
+          DiagCategory.playback,
+          'player: mpv init ready in '
+          '${initStopwatch.elapsedMilliseconds} ms',
+        );
+        if (_legacySyncMpvInit) {
+          // Pre-open wakeup kick (plan 139; see
+          // app/mpv_compat.dart).
+          try {
+            final kicked = kickMpvEventLoop(await _player.handle);
+            _diag(
+              DiagCategory.playback,
+              'player: mpv wakeup kick before open: '
+              '${kicked ? 'sent' : 'unavailable'}',
+            );
+          } catch (e) {
+            _diag(DiagCategory.playback, 'player: mpv wakeup kick failed: $e');
+          }
+        }
         _diag(
           DiagCategory.playback,
           'player: mpv network-timeout set to '
@@ -1040,6 +1168,28 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         // track list settles.
         await platform.setProperty('sid', 'no');
         _diag(DiagCategory.playback, 'player: mpv sid pinned to no (default)');
+        // The viewer's decode mode (plan 139; see
+        // player_hwdec_policy.dart): auto sets nothing and
+        // keeps mpv's defaults exactly as they were; the
+        // MPEG-2-only mode narrows hwdec-codecs so MPEG-2
+        // alone falls back to software decoding; the full
+        // software mode pins hwdec off (its video controller
+        // was already created without hardware acceleration
+        // in initState).
+        final hwdecCodecs = hwdecCodecsPropertyFor(_hwdecMode);
+        if (hwdecCodecs != null) {
+          await platform.setProperty('hwdec-codecs', hwdecCodecs);
+        }
+        final hwdec = hwdecPropertyFor(_hwdecMode);
+        if (hwdec != null) {
+          await platform.setProperty('hwdec', hwdec);
+        }
+        _diag(
+          DiagCategory.playback,
+          'player: video hwdec mode: ${_hwdecMode.name}'
+          '${hwdecCodecs != null ? '; hwdec-codecs=$hwdecCodecs' : ''}'
+          '${hwdec != null ? '; hwdec=$hwdec' : ''}',
+        );
         // mpv's cache follows the playback kind (plans 54
         // and 80; see player_cache_policy). Live keeps it
         // off: with the demuxer cache on, an audio track
@@ -1091,6 +1241,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       }
       await _player.open(Media(_session.mediaUri.toString(), start: start));
       _diag(DiagCategory.playback, 'player: open completed');
+      await _logDecodeStatus();
       await _applySubtitleSelection();
       _opening = false;
     } catch (e) {

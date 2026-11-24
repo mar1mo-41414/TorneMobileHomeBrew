@@ -128,6 +128,12 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "scanDownloads" -> startDownloadsScan(result)
+                    // The Android SDK int (plan 139): the Dart side
+                    // branches the player's mpv initialization on the
+                    // Android generation (lib/app/android_sdk.dart).
+                    // It rides this channel; one integer does not
+                    // warrant a channel of its own.
+                    "getAndroidSdkInt" -> result.success(Build.VERSION.SDK_INT)
                     else -> result.notImplemented()
                 }
             }

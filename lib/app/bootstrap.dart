@@ -36,11 +36,13 @@ const debugLogsDirectoryName = 'debug_logs';
 ProviderContainer fileStoreContainer(
   Directory storeDirectory, {
   AppVariant variant = AppVariant.standard,
+  int? androidSdkInt,
 }) {
   File file(String name) => File('${storeDirectory.path}/$name');
   return ProviderContainer(
     overrides: [
       appVariantProvider.overrideWithValue(variant),
+      androidSdkIntProvider.overrideWithValue(androidSdkInt),
       registrationStoreProvider.overrideWithValue(
         JsonFileRegistrationStore(file(registrationFileName)),
       ),
