@@ -192,6 +192,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../app/mpv_compat.dart';
+import '../app/variant.dart';
 import '../app/providers.dart';
 import '../core/core.dart';
 import 'player_cache_policy.dart';
@@ -204,6 +205,7 @@ import 'player_seek_policy.dart';
 import 'player_speed_policy.dart';
 import 'player_teardown_policy.dart';
 import 'player_track_policy.dart';
+import 'player_tv_controls.dart';
 import 'player_zap_policy.dart';
 
 /// A channel the viewer can move to from inside the
@@ -327,6 +329,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// [_open] sets cannot disagree. A settings change applies
   /// from the next playback, like the buffer choice.
   late final VideoHwdecMode _hwdecMode;
+
+  /// Whether this screen runs on the TV variant, snapshotted
+  /// in [initState] (the variant is chosen once at startup).
+  /// The TV variant replaces the stock video controls with
+  /// the remote-driven ones (plan 147; see
+  /// player_tv_controls.dart) — the stock Material controls
+  /// answer pointer events only, so a remote can neither
+  /// raise them nor focus their buttons.
+  late final bool _tvVariant;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _watchdog;
   bool _playing = false;
@@ -478,6 +489,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void initState() {
     super.initState();
     _diag = ref.read(diagLogProvider);
+    _tvVariant = ref.read(appVariantProvider).isTv;
     _session = widget.session;
     _zapIndex = widget.zapIndex;
     final zapTargets = widget.zapTargets;
@@ -1020,6 +1032,23 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
   }
 
+  /// Seeks to an absolute [target] (plan 147): the TV
+  /// controls' seek bar steps from the current position
+  /// through player_seek_policy and lands here. A refusal
+  /// is classified on the error stream like a skip's (see
+  /// [_skipSeek]).
+  Future<void> _seekToPosition(Duration target) async {
+    _diag(
+      DiagCategory.playback,
+      'player: seek to ${target.inSeconds}s (plan 147)',
+    );
+    try {
+      await _player.seek(target);
+    } catch (e) {
+      _diag(DiagCategory.playback, 'player: seek failed: $e');
+    }
+  }
+
   /// Loads the recording's chapter points once (plan
   /// 112). Runs beside the open, not before it: playback
   /// starts without waiting, and the chapter controls
@@ -1435,6 +1464,34 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     );
   }
 
+  /// The TV variant's video controls (plan 147): the
+  /// remote-driven bar from player_tv_controls.dart, fed
+  /// with this screen's player streams and seek actions.
+  /// The chapter ticks the standard variant overlays on
+  /// the stock seek bar are drawn by the TV seek bar
+  /// itself, so no overlay joins it here.
+  Widget _tvControls(VideoState state) {
+    return TvVideoControls(
+      playingStream: _player.stream.playing,
+      positionStream: _player.stream.position,
+      durationStream: _player.stream.duration,
+      initialPlaying: _player.state.playing,
+      initialPosition: _player.state.position,
+      initialDuration: _player.state.duration,
+      seekable: _seekable,
+      live: widget.live,
+      chapters: _chapters,
+      onTogglePlayPause: () => _player.playOrPause(),
+      onPlay: () => _player.play(),
+      onPause: () => _player.pause(),
+      onSkip: _skipSeek,
+      onChapterSeek: (forward) => _seekToChapter(forward: forward),
+      onSeek: _seekToPosition,
+      onToggleFullscreen: () => state.toggleFullscreen(),
+      isFullscreen: () => state.isFullscreen(),
+    );
+  }
+
   /// The position leaving this screen reports to the unit,
   /// or null when nothing is to be reported (plan 102; the
   /// terms are player_resume_policy's). Decided from this
@@ -1745,8 +1802,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                       controller: _videoController,
                       // The stock adaptive controls, with
                       // the chapter ticks overlaid while
-                      // the title has points (plan 112).
-                      controls: _chapters.isEmpty
+                      // the title has points (plan 112). The
+                      // TV variant builds its own remote-
+                      // driven controls instead (plan 147).
+                      controls: _tvVariant
+                          ? _tvControls
+                          : _chapters.isEmpty
                           ? AdaptiveVideoControls
                           : _controlsWithChapterTicks,
                     ),
