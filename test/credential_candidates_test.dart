@@ -45,6 +45,14 @@ void main() {
       expect(isCredentialEnvFileName('credentials.env.env'), isTrue);
     });
 
+    test('matches names with a dotted middle (device-suffixed)', () {
+      // The rule is a prefix plus a suffix, not a single fixed
+      // name: a file named after the device it belongs to, with
+      // that suffix between two dots, is in shape (plan 145).
+      expect(isCredentialEnvFileName('credentials.my-device.env'), isTrue);
+      expect(isCredentialEnvFileName('credentials.phone2.env'), isTrue);
+    });
+
     test('is case-insensitive', () {
       expect(isCredentialEnvFileName('Credentials.ENV'), isTrue);
       expect(isCredentialEnvFileName('CREDENTIALS.env'), isTrue);
@@ -71,6 +79,14 @@ void main() {
       expect(candidates.single.sizeBytes, valid.length);
       expect(bytesToHex(candidates.single.env.certificate), katSinkCert);
       expect(bytesToHex(candidates.single.env.privateKey), katSinkPriv);
+    });
+
+    test('lists a genuine pair under a device-suffixed name', () {
+      final candidates = selectCredentialCandidates([
+        _file('credentials.my-device.env', valid),
+      ], validate: _validateWithTestAuthority);
+      expect(candidates, hasLength(1));
+      expect(candidates.single.name, 'credentials.my-device.env');
     });
 
     test('skips a file that does not parse', () {
