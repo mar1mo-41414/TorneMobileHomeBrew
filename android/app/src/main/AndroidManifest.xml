@@ -13,6 +13,14 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
+    <!-- Lets the TV edition write the recorded debug logs
+         into Downloads/tmhb-log (plan 142). Only the legacy
+         storage model needs it, hence the maxSdkVersion cap;
+         on API 29+ the platform side writes through
+         MediaStore, which asks for nothing. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
     <application
         android:label="torne mobile HB"
         android:name="${applicationName}"

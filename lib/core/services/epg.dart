@@ -75,10 +75,11 @@ class WebApiEpgService {
           cause: 'empty version table');
     }
     // The version table enumerates the services of the unit-side
-    // EPG database; the request asks for every segment of each, on
-    // both the basic and the extended side (plan 24).
-    // Terrestrial retains its validated parser. The BS version table may
-    // contain gaps and non-0xc000 records before valid later services.
+    // EPG database; the request asks for every segment of each
+    // service, on the sides its version record carries (plan 24).
+    // Both parsers walk the records by their flags-derived length;
+    // the satellite one additionally keeps only services that match
+    // a VIDEO channel of this unit.
     final services = broadcastingType == 3
         ? parseSatelliteEpgVersionServices(versionTable, channels)
         : parseEpgVersionServices(versionTable);
