@@ -11,10 +11,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/core.dart';
+import '../ui/player_hwdec_policy.dart';
 import 'ake_socket.dart';
 import 'credential_downloads.dart';
 import 'debug_log.dart';
 import 'file_pick.dart';
+import 'log_export.dart';
 import 'log_folder.dart';
 import 'log_share.dart';
 import 'multicast_lock.dart';
@@ -22,6 +24,14 @@ import 'variant.dart';
 import 'wakelock.dart';
 
 final httpClientProvider = Provider<http.Client>((ref) => http.Client());
+
+/// The device's Android SDK int (plan 139), read from the
+/// platform side once at startup (app/android_sdk.dart) and
+/// handed in as an override by the bootstrap; null — not
+/// Android, or the platform did not answer — in tests and
+/// headless contexts. The player screen branches the mpv
+/// initialization on it (app/mpv_compat.dart).
+final androidSdkIntProvider = Provider<int?>((ref) => null);
 
 /// Sleep suppression for the player screen (plan 32, reworked in
 /// plan 35): a hand-rolled platform channel flips the OS switch
@@ -271,6 +281,38 @@ final playbackBufferProvider = NotifierProvider<PlaybackBufferNotifier, int>(
   PlaybackBufferNotifier.new,
 );
 
+/// The viewer's video decode mode (plan 139): how much of the
+/// video decoding mpv may hand to the device's hardware
+/// decoder (see ui/player_hwdec_policy.dart for the modes and
+/// the failure they answer). The state is a VideoHwdecMode;
+/// auto — nothing stored — leaves mpv's and media_kit_video's
+/// defaults exactly as they were. The player screen snapshots
+/// the value as it opens, so a change applies from the next
+/// playback.
+class VideoHwdecModeNotifier extends Notifier<VideoHwdecMode> {
+  static const _key = 'video_hwdec_mode';
+
+  @override
+  VideoHwdecMode build() {
+    final store = ref.watch(keyValueStoreProvider);
+    Future.microtask(() async {
+      final value = await store.read(_key);
+      state = parseVideoHwdecMode(value);
+    });
+    return VideoHwdecMode.auto;
+  }
+
+  Future<void> set(VideoHwdecMode mode) async {
+    state = mode;
+    await ref.read(keyValueStoreProvider).write(_key, mode.name);
+  }
+}
+
+final videoHwdecModeProvider =
+    NotifierProvider<VideoHwdecModeNotifier, VideoHwdecMode>(
+      VideoHwdecModeNotifier.new,
+    );
+
 /// The app store directory (file stores and the debug log
 /// destination, plan 28; location rule in plan 47).
 /// The bootstrap overrides this with the real directory; null in
@@ -355,6 +397,22 @@ final debugLogFolderOpenerProvider = Provider<DebugLogFolderOpener?>((ref) {
   final dir = ref.watch(storeDirectoryProvider);
   if (dir == null) return null;
   return DebugLogFolderOpener(storeDirectory: dir);
+});
+
+/// Exports the recorded debug logs into `Downloads/tmhb-log/`
+/// (plan 142) — the TV edition's second way out for the logs,
+/// next to the share action above: the TV share sheet offers
+/// too few destinations to get a log off the device (plan
+/// 140), while Downloads is reachable by adb and file tools.
+/// Android only, and null under the same store conditions as
+/// [debugLogSharerProvider]; the settings screen shows the
+/// action on the TV edition only.
+final debugLogDownloadsExporterProvider = Provider<DebugLogDownloadsExporter?>((
+  ref,
+) {
+  final dir = ref.watch(storeDirectoryProvider);
+  if (dir == null || !Platform.isAndroid) return null;
+  return DebugLogDownloadsExporter(storeDirectory: dir);
 });
 
 /// Picks a file's bytes for the credential import (plan 84).

@@ -14,6 +14,7 @@ import 'package:media_kit/media_kit.dart';
 // package:material_ui/material_ui.dart (the scaffold's own import).
 import 'package:material_ui/material_ui.dart';
 
+import 'app/android_sdk.dart';
 import 'app/bootstrap.dart';
 import 'app/variant.dart';
 import 'core/diagnostics.dart';
@@ -36,7 +37,17 @@ Future<void> runTmhbApp(AppVariant variant) async {
   // Split the legacy shared key-value file into per-purpose
   // files before anything reads the stores (plan 96).
   await migrateLegacyKeyValueFiles(storeDirectory);
-  final container = fileStoreContainer(storeDirectory, variant: variant);
+  // The Android SDK int is read before the container
+  // exists: the bootstrap hands it in as an override, and
+  // the player screen branches the mpv initialization on it
+  // (plan 139). Null off Android and whenever the platform
+  // does not answer — the safe side everywhere it is read.
+  final androidSdkInt = await AndroidSdkIntReader().read();
+  final container = fileStoreContainer(
+    storeDirectory,
+    variant: variant,
+    androidSdkInt: androidSdkInt,
+  );
   // App lifecycle transitions go to the debug log (plan 36), so a
   // field log shows when the process was suspended and resumed
   // around a playback session (the wakelock sleep investigation).

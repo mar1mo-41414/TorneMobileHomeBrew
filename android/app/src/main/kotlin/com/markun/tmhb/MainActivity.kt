@@ -2,6 +2,7 @@ package com.markun.tmhb
 
 import android.Manifest
 import android.content.ClipData
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,6 +12,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.view.WindowManager
 import android.system.ErrnoException
 import android.system.Os
@@ -22,17 +24,21 @@ import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.InetAddress
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var pendingDownloadsScanResult: MethodChannel.Result? = null
+    private var pendingLogExportFiles: List<Map<String, Any>>? = null
+    private var pendingLogExportResult: MethodChannel.Result? = null
     private var akeEventSink: EventChannel.EventSink? = null
     private val akeConnections = mutableMapOf<Int, AkeSocketConnection>()
     private val akeExecutor = Executors.newCachedThreadPool()
@@ -128,6 +134,17 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "scanDownloads" -> startDownloadsScan(result)
+                    // The Android SDK int (plan 139): the Dart side
+                    // branches the player's mpv initialization on the
+                    // Android generation (lib/app/android_sdk.dart).
+                    // It rides this channel; one integer does not
+                    // warrant a channel of its own.
+                    "getAndroidSdkInt" -> result.success(Build.VERSION.SDK_INT)
+                    // The debug log export (plan 142) rides this
+                    // channel too: it is the Downloads channel,
+                    // and a second folder convention does not
+                    // warrant a channel of its own.
+                    "exportLogsToDownloads" -> startLogExport(call, result)
                     else -> result.notImplemented()
                 }
             }
@@ -242,13 +259,26 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_READ_EXTERNAL_STORAGE) return
-        val pending = pendingDownloadsScanResult ?: return
-        pendingDownloadsScanResult = null
-        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            runDownloadsScan(pending)
-        } else {
-            pending.error("permission_denied", "READ_EXTERNAL_STORAGE was not granted", null)
+        if (requestCode == REQUEST_READ_EXTERNAL_STORAGE) {
+            val pending = pendingDownloadsScanResult ?: return
+            pendingDownloadsScanResult = null
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                runDownloadsScan(pending)
+            } else {
+                pending.error("permission_denied", "READ_EXTERNAL_STORAGE was not granted", null)
+            }
+            return
+        }
+        if (requestCode == REQUEST_WRITE_EXTERNAL_STORAGE) {
+            val pending = pendingLogExportResult ?: return
+            val files = pendingLogExportFiles ?: emptyList()
+            pendingLogExportResult = null
+            pendingLogExportFiles = null
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                runLogExportLegacy(files, pending)
+            } else {
+                pending.error("permission_denied", "WRITE_EXTERNAL_STORAGE was not granted", null)
+            }
         }
     }
 
@@ -341,6 +371,120 @@ class MainActivity : FlutterActivity() {
         return lower.startsWith("credentials") && lower.endsWith(".env")
     }
 
+    // Debug log export to Downloads (plan 142): the TV share
+    // sheet offers too few destinations to get a log off the
+    // device (plan 140), so the TV edition writes the recorded
+    // logs into Downloads/tmhb-log/ instead, where a USB cable,
+    // adb or a file manager can reach them without any account
+    // or network state. The Dart side has already stamped every
+    // file name with the export time, so a re-export never
+    // overwrites an earlier export's files.
+    //
+    // Under scoped storage (API 29+) the files go through
+    // MediaStore, which asks for no permission for files the
+    // app itself creates. Under the legacy storage model
+    // (API 28 and below, which covers the Fire TV targets) the
+    // write is a direct file write into the public Downloads
+    // folder and needs WRITE_EXTERNAL_STORAGE, requested on
+    // first use the same way the Downloads scan requests its
+    // read permission above.
+    private fun startLogExport(call: MethodCall, result: MethodChannel.Result) {
+        @Suppress("UNCHECKED_CAST")
+        val files = call.argument<List<Map<String, Any>>>("files") ?: emptyList()
+        if (files.isEmpty()) {
+            result.error("export_failed", "no files to export", null)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            runLogExportMediaStore(files, result)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            if (pendingLogExportResult != null) {
+                result.error(
+                    "export_failed",
+                    "a log export is already waiting for permission",
+                    null,
+                )
+                return
+            }
+            pendingLogExportFiles = files
+            pendingLogExportResult = result
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                REQUEST_WRITE_EXTERNAL_STORAGE,
+            )
+            return
+        }
+        runLogExportLegacy(files, result)
+    }
+
+    // Legacy storage model: a direct write into
+    // Downloads/tmhb-log/, creating the folder first. Answers
+    // the folder's absolute path.
+    private fun runLogExportLegacy(
+        files: List<Map<String, Any>>,
+        result: MethodChannel.Result,
+    ) {
+        try {
+            val downloads = Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS
+            )
+            val dir = File(downloads, LOG_EXPORT_DIRECTORY_NAME)
+            if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) {
+                throw SecurityException("cannot create ${dir.absolutePath}")
+            }
+            for (file in files) {
+                val name = file["name"] as String
+                val bytes = file["bytes"] as ByteArray
+                File(dir, name).writeBytes(bytes)
+            }
+            result.success(dir.absolutePath)
+        } catch (e: SecurityException) {
+            result.error("permission_denied", e.message, null)
+        } catch (e: Exception) {
+            result.error("export_failed", e.message, null)
+        }
+    }
+
+    // Scoped storage (API 29+): insert each file into the
+    // Downloads collection under tmhb-log/. Files the app
+    // creates this way need no storage permission, and they
+    // are visible to the user and to adb like any other
+    // Downloads content. Answers the public relative path.
+    private fun runLogExportMediaStore(
+        files: List<Map<String, Any>>,
+        result: MethodChannel.Result,
+    ) {
+        try {
+            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            val relativePath =
+                Environment.DIRECTORY_DOWNLOADS + "/" + LOG_EXPORT_DIRECTORY_NAME
+            for (file in files) {
+                val name = file["name"] as String
+                val bytes = file["bytes"] as ByteArray
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, name)
+                    put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                    put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+                }
+                val uri = contentResolver.insert(collection, values)
+                    ?: throw IOException("MediaStore insert returned no URI for $name")
+                val stream = contentResolver.openOutputStream(uri)
+                    ?: throw IOException("MediaStore opened no stream for $name")
+                stream.use { it.write(bytes) }
+            }
+            result.success(relativePath)
+        } catch (e: SecurityException) {
+            result.error("permission_denied", e.message, null)
+        } catch (e: Exception) {
+            result.error("export_failed", e.message, null)
+        }
+    }
+
     companion object {
         private const val MULTICAST_LOCK_CHANNEL = "com.markun.tmhb/multicast_lock"
         private const val WAKELOCK_CHANNEL = "com.markun.tmhb/wakelock"
@@ -349,6 +493,8 @@ class MainActivity : FlutterActivity() {
         private const val AKE_SOCKET_EVENTS_CHANNEL = "com.markun.tmhb/ake_socket_events"
         private const val CREDENTIAL_DOWNLOADS_CHANNEL = "com.markun.tmhb/credential_downloads"
         private const val REQUEST_READ_EXTERNAL_STORAGE = 7411
+        private const val REQUEST_WRITE_EXTERNAL_STORAGE = 7412
+        private const val LOG_EXPORT_DIRECTORY_NAME = "tmhb-log"
         private const val MAX_DOWNLOADS_SCAN_DEPTH = 3
         private const val MAX_DOWNLOADS_SCAN_FILES = 64
         private const val MAX_DOWNLOADS_SCAN_FILE_BYTES = 256L * 1024L

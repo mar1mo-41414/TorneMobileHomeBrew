@@ -5,10 +5,13 @@
 /// scope (plan 1.2).
 library;
 
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app/debug_log.dart';
+import '../app/log_export.dart';
 import '../app/log_folder.dart';
 import '../app/log_share.dart';
 import '../app/providers.dart';
@@ -19,6 +22,7 @@ import 'dtcp_credential_screen.dart';
 import 'epg_hidden_genres_screen.dart';
 import 'error_messages.dart';
 import 'format.dart';
+import 'player_hwdec_policy.dart';
 import 'tv_focus.dart';
 import 'widgets.dart';
 
@@ -36,6 +40,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _registering = false;
   bool _sharingLogs = false;
   bool _openingLogFolder = false;
+  bool _exportingLogs = false;
   final _manualHost = TextEditingController();
 
   @override
@@ -247,6 +252,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // this round (plan 126); the desktop builds do not
           // show it.
           if (!isDesktopStorePlatform) const PlaybackBufferSetting(),
+          // The video decode mode is Android only this round
+          // (plan 139): the failure it answers is Android
+          // hardware's, and the desktop builds are out of
+          // scope (see player_hwdec_policy.dart).
+          if (Platform.isAndroid) const VideoHwdecSetting(),
           const Divider(),
           _sectionTitle(context, '録画再生 (DTCP-IP)'),
           ListTile(
@@ -326,6 +336,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       : () => _shareDebugLogs(tileContext),
                 ),
               ),
+          // The TV edition also writes the logs into
+          // Downloads/tmhb-log (plan 142): the TV share sheet
+          // offers too few destinations to get a log off the
+          // device (plan 140), while Downloads is reachable by
+          // adb and file tools without any account or network
+          // state.
+          if (storeDir != null && isTvVariant(context))
+            ListTile(
+              leading: const Icon(Icons.save_alt),
+              title: const Text('デバッグログを Downloads に書き出す'),
+              subtitle: const Text(
+                '保存済みの診断ログを Downloads の tmhb-log フォルダに書き出します',
+              ),
+              enabled: !_exportingLogs,
+              onTap: _exportingLogs ? null : _exportDebugLogs,
+            ),
           const Divider(),
           TvFocusAnchor(
             child: Padding(
@@ -383,6 +409,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .showSnackBar(const SnackBar(content: Text('ログの共有に失敗しました')));
     } finally {
       if (mounted) setState(() => _sharingLogs = false);
+    }
+  }
+
+  /// Writes the recorded debug logs into `Downloads/tmhb-log/`
+  /// (plan 142), the TV edition's counterpart of the share
+  /// action: nothing visibly leaves the device, so the outcome
+  /// is always answered with a message — a tap that quietly
+  /// does nothing is the failure shape plan 69 taught.
+  Future<void> _exportDebugLogs() async {
+    final exporter = ref.read(debugLogDownloadsExporterProvider);
+    if (exporter == null || _exportingLogs) return;
+    setState(() => _exportingLogs = true);
+    try {
+      final result = await exporter.export();
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'debug log export: outcome=${result.outcome.name} '
+        'count=${result.fileCount} dir=${result.directoryPath}',
+      );
+      if (!mounted) return;
+      final message = switch (result.outcome) {
+        DebugLogExportOutcome.exported =>
+          'Downloads の tmhb-log フォルダに ${result.fileCount} 件のログを書き出しました',
+        DebugLogExportOutcome.noLogs => '書き出せるログがありません',
+        DebugLogExportOutcome.unsupported => 'このプラットフォームではログを書き出せません',
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      ref.read(diagLogProvider)(DiagCategory.ui, 'debug log export failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('ログの書き出しに失敗しました')));
+    } finally {
+      if (mounted) setState(() => _exportingLogs = false);
     }
   }
 
@@ -560,5 +621,94 @@ class PlaybackBufferSetting extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+/// The video decode mode choice (plan 139): how much of the
+/// video decoding mpv may hand to the device's hardware
+/// decoder (see player_hwdec_policy.dart for the modes and
+/// the failure they answer). Shown on Android only — the
+/// settings screen gates it — where the hardware paths this
+/// steers live. The tile shows the mode in force; tapping
+/// opens the picker dialog.
+class VideoHwdecSetting extends ConsumerWidget {
+  const VideoHwdecSetting({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(videoHwdecModeProvider);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('映像デコード方式', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(mode.shortLabel),
+            subtitle: Text(mode.description),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pickMode(context, ref, mode),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '元画質 (DR) で映像が出ない端末では、「MPEG-2 のみソフトウェア」で'
+            '改善することがあります。次の再生から反映されます。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickMode(
+    BuildContext context,
+    WidgetRef ref,
+    VideoHwdecMode current,
+  ) async {
+    final picked = await showDialog<VideoHwdecMode>(
+      context: context,
+      builder: (context) {
+        // TV: the mode in force takes focus as the dialog
+        // opens — the picker's primary position — so the
+        // D-pad starts inside the dialog instead of staying
+        // on the screen behind it (plan 134).
+        final tv = isTvVariant(context);
+        return AlertDialog(
+          title: const Text('映像デコード方式'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: VideoHwdecMode.values.length,
+              itemBuilder: (context, index) {
+                final mode = VideoHwdecMode.values[index];
+                return ListTile(
+                  autofocus: tv && mode == current,
+                  leading: Icon(
+                    mode == current
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                  ),
+                  title: Text(mode.shortLabel),
+                  subtitle: Text(mode.description),
+                  onTap: () => Navigator.pop(context, mode),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('キャンセル'),
+            ),
+          ],
+        );
+      },
+    );
+    if (picked != null && picked != current) {
+      await ref.read(videoHwdecModeProvider.notifier).set(picked);
+    }
   }
 }
