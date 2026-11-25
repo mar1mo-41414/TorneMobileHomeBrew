@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app/debug_log.dart';
+import '../app/log_export.dart';
 import '../app/log_folder.dart';
 import '../app/log_share.dart';
 import '../app/providers.dart';
@@ -39,6 +40,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _registering = false;
   bool _sharingLogs = false;
   bool _openingLogFolder = false;
+  bool _exportingLogs = false;
   final _manualHost = TextEditingController();
 
   @override
@@ -334,6 +336,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       : () => _shareDebugLogs(tileContext),
                 ),
               ),
+          // The TV edition also writes the logs into
+          // Downloads/tmhb-log (plan 142): the TV share sheet
+          // offers too few destinations to get a log off the
+          // device (plan 140), while Downloads is reachable by
+          // adb and file tools without any account or network
+          // state.
+          if (storeDir != null && isTvVariant(context))
+            ListTile(
+              leading: const Icon(Icons.save_alt),
+              title: const Text('デバッグログを Downloads に書き出す'),
+              subtitle: const Text(
+                '保存済みの診断ログを Downloads の tmhb-log フォルダに書き出します',
+              ),
+              enabled: !_exportingLogs,
+              onTap: _exportingLogs ? null : _exportDebugLogs,
+            ),
           const Divider(),
           TvFocusAnchor(
             child: Padding(
@@ -391,6 +409,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .showSnackBar(const SnackBar(content: Text('ログの共有に失敗しました')));
     } finally {
       if (mounted) setState(() => _sharingLogs = false);
+    }
+  }
+
+  /// Writes the recorded debug logs into `Downloads/tmhb-log/`
+  /// (plan 142), the TV edition's counterpart of the share
+  /// action: nothing visibly leaves the device, so the outcome
+  /// is always answered with a message — a tap that quietly
+  /// does nothing is the failure shape plan 69 taught.
+  Future<void> _exportDebugLogs() async {
+    final exporter = ref.read(debugLogDownloadsExporterProvider);
+    if (exporter == null || _exportingLogs) return;
+    setState(() => _exportingLogs = true);
+    try {
+      final result = await exporter.export();
+      ref.read(diagLogProvider)(
+        DiagCategory.ui,
+        'debug log export: outcome=${result.outcome.name} '
+        'count=${result.fileCount} dir=${result.directoryPath}',
+      );
+      if (!mounted) return;
+      final message = switch (result.outcome) {
+        DebugLogExportOutcome.exported =>
+          'Downloads の tmhb-log フォルダに ${result.fileCount} 件のログを書き出しました',
+        DebugLogExportOutcome.noLogs => '書き出せるログがありません',
+        DebugLogExportOutcome.unsupported => 'このプラットフォームではログを書き出せません',
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      ref.read(diagLogProvider)(DiagCategory.ui, 'debug log export failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('ログの書き出しに失敗しました')));
+    } finally {
+      if (mounted) setState(() => _exportingLogs = false);
     }
   }
 

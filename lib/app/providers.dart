@@ -16,6 +16,7 @@ import 'ake_socket.dart';
 import 'credential_downloads.dart';
 import 'debug_log.dart';
 import 'file_pick.dart';
+import 'log_export.dart';
 import 'log_folder.dart';
 import 'log_share.dart';
 import 'multicast_lock.dart';
@@ -396,6 +397,22 @@ final debugLogFolderOpenerProvider = Provider<DebugLogFolderOpener?>((ref) {
   final dir = ref.watch(storeDirectoryProvider);
   if (dir == null) return null;
   return DebugLogFolderOpener(storeDirectory: dir);
+});
+
+/// Exports the recorded debug logs into `Downloads/tmhb-log/`
+/// (plan 142) — the TV edition's second way out for the logs,
+/// next to the share action above: the TV share sheet offers
+/// too few destinations to get a log off the device (plan
+/// 140), while Downloads is reachable by adb and file tools.
+/// Android only, and null under the same store conditions as
+/// [debugLogSharerProvider]; the settings screen shows the
+/// action on the TV edition only.
+final debugLogDownloadsExporterProvider = Provider<DebugLogDownloadsExporter?>((
+  ref,
+) {
+  final dir = ref.watch(storeDirectoryProvider);
+  if (dir == null || !Platform.isAndroid) return null;
+  return DebugLogDownloadsExporter(storeDirectory: dir);
 });
 
 /// Picks a file's bytes for the credential import (plan 84).
