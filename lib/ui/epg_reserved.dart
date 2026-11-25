@@ -80,35 +80,44 @@ class EpgReservedIndex {
     for (final s in schedules) {
       final bt = s.channel.broadcastingType;
       final sid = s.channel.serviceId;
-      _byStart.add((bt, sid, s.start.millisecondsSinceEpoch));
+      _byStart.putIfAbsent((bt, sid, s.start.millisecondsSinceEpoch), () => s);
       final eventId = desiredMatchingEventId(s.desiredMatchingId);
       if (eventId != null && eventId != 0) {
-        _byEvent.add((bt, sid, eventId));
+        _byEvent.putIfAbsent((bt, sid, eventId), () => s);
       }
     }
   }
 
   /// (broadcastingType, serviceId, eventId) of every
-  /// event reservation.
-  final Set<(int, int, int)> _byEvent = {};
+  /// event reservation, with the reservation itself.
+  final Map<(int, int, int), RecordSchedule> _byEvent = {};
 
   /// (broadcastingType, serviceId, start epoch ms) of
-  /// every reservation, event and manual alike.
-  final Set<(int, int, int)> _byStart = {};
+  /// every reservation, event and manual alike, with the
+  /// reservation itself.
+  final Map<(int, int, int), RecordSchedule> _byStart = {};
 
   bool get isEmpty => _byEvent.isEmpty && _byStart.isEmpty;
 
   /// Whether [event] on [channel] already has a
   /// reservation.
   bool isReserved(Channel channel, EpgEvent event) =>
-      _byEvent.contains((
-        channel.broadcastingType,
-        channel.serviceId,
-        event.eventId,
-      )) ||
-      _byStart.contains((
+      scheduleFor(channel, event) != null;
+
+  /// The reservation covering [event] on [channel], or
+  /// null when the event is not reserved. An event
+  /// reservation matches by event id and wins over a
+  /// start-time match: the event id is the exact identity,
+  /// while a start match could belong to a manual
+  /// reservation that merely begins with the event. The
+  /// returned reservation is the concrete listed instance,
+  /// so deleting it deletes exactly what the guide marked
+  /// (plan 124).
+  RecordSchedule? scheduleFor(Channel channel, EpgEvent event) =>
+      _byEvent[(channel.broadcastingType, channel.serviceId, event.eventId)] ??
+      _byStart[(
         channel.broadcastingType,
         channel.serviceId,
         event.start.millisecondsSinceEpoch,
-      ));
+      )];
 }

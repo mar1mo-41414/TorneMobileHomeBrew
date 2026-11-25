@@ -28,6 +28,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app/bs_epg_providers.dart';
 import '../app/state.dart';
 import '../core/core.dart';
+import 'epg_reserved.dart';
 import 'epg_screen.dart';
 import 'epg_search.dart';
 import 'format.dart';
@@ -181,6 +182,14 @@ class _EpgSearchScreenState extends ConsumerState<EpgSearchScreen> {
     bool searched,
     List<EpgSearchHit> hits,
   ) {
+    // Reserved marking (plans 120/124): the same
+    // reservation list the guide grid frames in red, so a
+    // hit that is already reserved offers deleting the
+    // reservation from its detail, exactly like the grid.
+    final reservedIndex = EpgReservedIndex.fromSchedules(
+      ref.watch(schedulesProvider(widget.reg)).value ??
+          const <RecordSchedule>[],
+    );
     if (guides.isEmpty) return const LoadingView();
     if (!searched) {
       return const Center(
@@ -216,6 +225,9 @@ class _EpgSearchScreenState extends ConsumerState<EpgSearchScreen> {
             channel: hit.channel,
             channelName: hit.channelName,
             event: event,
+            reservedSchedule: reservedIndex.scheduleFor(hit.channel, event),
+            onDeleteReserved: (schedule) =>
+                deleteScheduleAndInvalidate(ref, widget.reg, schedule),
             onWatch: () => openLiveChannelForEpg(
               context,
               ref,
