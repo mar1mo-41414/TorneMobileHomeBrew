@@ -1,6 +1,7 @@
 package com.markun.tmhb
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ContentValues
 import android.content.Context
@@ -148,6 +149,13 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, EXTERNAL_BROWSER_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "openUrl" -> result.success(openUrlInBrowser(call.arguments as? String))
+                    else -> result.notImplemented()
+                }
+            }
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, AKE_SOCKET_EVENTS_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -158,6 +166,24 @@ class MainActivity : FlutterActivity() {
                     akeEventSink = null
                 }
             })
+    }
+
+    // Opens a URL in the system browser (plan 154): the Dart
+    // side hands over the nasneHOME URL of a registered unit.
+    // A device with no activity able to take the VIEW intent
+    // (a TV without a browser, say) answers false so the Dart
+    // side can tell the user instead of the tap looking dead.
+    private fun openUrlInBrowser(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        return try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            true
+        } catch (e: ActivityNotFoundException) {
+            false
+        }
     }
 
     private fun emitAkeEvent(event: Map<String, Any?>) {
@@ -492,6 +518,7 @@ class MainActivity : FlutterActivity() {
         private const val AKE_SOCKET_CHANNEL = "com.markun.tmhb/ake_socket"
         private const val AKE_SOCKET_EVENTS_CHANNEL = "com.markun.tmhb/ake_socket_events"
         private const val CREDENTIAL_DOWNLOADS_CHANNEL = "com.markun.tmhb/credential_downloads"
+        private const val EXTERNAL_BROWSER_CHANNEL = "com.markun.tmhb/external_browser"
         private const val REQUEST_READ_EXTERNAL_STORAGE = 7411
         private const val REQUEST_WRITE_EXTERNAL_STORAGE = 7412
         private const val LOG_EXPORT_DIRECTORY_NAME = "tmhb-log"

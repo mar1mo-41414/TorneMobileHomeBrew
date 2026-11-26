@@ -14,6 +14,18 @@ library;
 /// service identifies itself with an X-AV-Server-Info header.
 const int mediaServicePort = 64220;
 
+/// Path of nasneHOME, the unit's built-in web UI, on the WebAPI
+/// port (plan 154). Measured on a stock-firmware unit
+/// (2026-11-26): the page answers 200 at this path with the
+/// title "nasne HOME", and the unit's port-80 root redirects
+/// here — this is the canonical location, so the app links
+/// straight to it instead of relying on the redirector.
+const String nasneHomePath = '/nasne_home/index.html';
+
+/// The nasneHOME URL of the unit at [host] (a registered
+/// nasne's address), for opening in the system browser.
+String nasneHomeUrl(String host) => 'http://$host:64210$nasneHomePath';
+
 /// Response payload kind of a WebAPI endpoint.
 enum ApiResponseKind { json, binary }
 

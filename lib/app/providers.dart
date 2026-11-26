@@ -15,6 +15,7 @@ import '../ui/player_hwdec_policy.dart';
 import 'ake_socket.dart';
 import 'credential_downloads.dart';
 import 'debug_log.dart';
+import 'external_browser.dart';
 import 'file_pick.dart';
 import 'log_export.dart';
 import 'log_folder.dart';
@@ -398,6 +399,13 @@ final debugLogFolderOpenerProvider = Provider<DebugLogFolderOpener?>((ref) {
   if (dir == null) return null;
   return DebugLogFolderOpener(storeDirectory: dir);
 });
+
+/// Opens URLs in the system browser (plan 154): the
+/// registered-nasne menu's nasneHOME action. Needs no store
+/// or platform setup, so it is never null.
+final externalBrowserOpenerProvider = Provider<ExternalBrowserOpener>(
+  (ref) => ExternalBrowserOpener(),
+);
 
 /// Exports the recorded debug logs into `Downloads/tmhb-log/`
 /// (plan 142) — the TV edition's second way out for the logs,

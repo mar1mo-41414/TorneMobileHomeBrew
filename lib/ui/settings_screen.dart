@@ -111,6 +111,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           child: Text('登録を検証'),
                         ),
                         const PopupMenuItem(
+                          value: 'home',
+                          child: Text('nasneHOME を開く'),
+                        ),
+                        const PopupMenuItem(
                           value: 'remove',
                           child: Text('登録を解除'),
                         ),
@@ -557,6 +561,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         } on NasneError catch (e) {
           if (!mounted) return;
           showSnack(context, userMessageForError(e));
+        }
+      case 'home':
+        // nasneHOME is the unit's own web UI: hand its URL to
+        // the system browser (plan 154). A platform that cannot
+        // open it answers false, and a desktop opener failure
+        // throws — both land on the same visible failure, never
+        // a dead tap.
+        var opened = false;
+        try {
+          opened = await ref
+              .read(externalBrowserOpenerProvider)
+              .open(nasneHomeUrl(reg.host));
+        } catch (_) {
+          opened = false;
+        }
+        if (!mounted) return;
+        if (!opened) {
+          showSnack(context, 'ブラウザを開けませんでした');
         }
       case 'remove':
         final ok = await confirmDialog(
