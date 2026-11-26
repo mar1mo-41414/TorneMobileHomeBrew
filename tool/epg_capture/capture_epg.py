@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""nasne EPG 採取スクリプト (torne mobile HB の BS 番組表ジャンル色検証用).
+"""nasne EPG 採取スクリプト (torne mobile HB の BS 番組表ジャンル色検証 / CS 版数表の採取用).
 
 アプリ (torne mobile HB) と同一の経路で nasne から番組表 (EPG) を取得し,
 生データをファイルに保存する。あわせて, 取得できたイベントのうち
@@ -12,6 +12,12 @@
      (放送波の EIT にジャンルが含まれること自体は規格上確定している)
   2. アプリのパーサが BS (衛星) 経路でそれを拾える形で届いているか
      (セクションの table_id の内訳が手がかりになる)
+
+あわせて, 版数表 (EPGVersionInfoGet の応答) はバイナリ全量をそのまま
+保存する。衛星バンド (type 3) には BS と CS のサービスが混在するため,
+CS が受信できる環境で実行すれば, CS の版数表に現れる flags の分布と
+レコード長を確定させるためのフィクスチャとしても使える
+(CS の番組表対応に必要)。
 
 アプリの取得経路 (lib/core/services/epg.dart, plan 21/24 の実測形式):
   1. GET /status/networkIfInfoGet           -> MAC アドレス (トークン導出用)
@@ -323,7 +329,8 @@ def parse_section_events(plain, start, end):
 def main():
     parser = argparse.ArgumentParser(
         description="nasne からアプリと同一経路で EPG を取得し, "
-                    "ジャンル (content descriptor) の有無を集計する")
+                    "ジャンル (content descriptor) の有無を集計する。"
+                    "版数表などの生データ一式も保存する")
     parser.add_argument("host", help="nasne の IP アドレス (例: 192.168.1.10)")
     parser.add_argument("--type", type=int, default=3,
                         help="broadcastingType (3=衛星 BS/CS, 2=地デジ; 既定 3)")
