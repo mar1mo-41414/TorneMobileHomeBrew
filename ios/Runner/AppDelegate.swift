@@ -30,6 +30,12 @@ import UIKit
     {
       ShareHub.shared.register(messenger: shareRegistrar.messenger())
     }
+    // Native external browser channel (plan 154).
+    if let browserRegistrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "ExternalBrowserChannels")
+    {
+      ExternalBrowserHub.shared.register(messenger: browserRegistrar.messenger())
+    }
   }
 }
 
@@ -132,5 +138,35 @@ final class ShareHub {
       controller = presented
     }
     return controller
+  }
+}
+
+/// Native external browser channel (plan 154): opens the URL
+/// the Dart side hands over — a registered unit's nasneHOME —
+/// in the system browser, and answers whether the platform
+/// took it, so a refusal reaches the user as a visible failure
+/// instead of a dead tap.
+final class ExternalBrowserHub {
+  static let shared = ExternalBrowserHub()
+
+  func register(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "com.markun.tmhb/external_browser", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "openUrl":
+        guard let urlString = call.arguments as? String,
+          let url = URL(string: urlString)
+        else {
+          result(false)
+          return
+        }
+        UIApplication.shared.open(url, options: [:]) { success in
+          result(success)
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
   }
 }
